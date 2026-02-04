@@ -1,6 +1,6 @@
 # ChainRecon
 
-> A framework for IoT device reconnaissance and security analysis, built for the Purdue VIP ChainVisor project.
+> A framework for IoT device reconnaissance and security analysis, built for the Purdue ChainVisor project.
 
 ## What is this?
 
