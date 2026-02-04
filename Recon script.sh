@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==========================================
-# PURDUE VIP: IOT SECURITY RECON AUTOMATION
+# IOT SECURITY RECON AUTOMATION
 # ==========================================
 # This script automates network setup for MitM,
 # port scanning, traffic capture, and SSL analysis.
@@ -1007,7 +1007,7 @@ ssl_rsa_analysis() {
 # --- MAIN MENU ---
 clear
 echo "=============================================="
-echo "    IoT Research Recon Tool (Purdue VIP)      "
+echo "    IoT Research Recon Tool                   "
 echo "=============================================="
 setup_variables
 
