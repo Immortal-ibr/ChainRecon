@@ -14,10 +14,13 @@ The main goal is to figure out what an IoT device is doing on the network: what 
 - be able to generate a comprehensive report based on the captured traffic and analysis results
 - give logs to help track steps taken during each process
 - prompt the user and exit gracefully when an error occurs, providing helpful error messages to guide the user in resolving the issue
+
+## Non-Functional Requirements
 - designed to be modular and extensible, allowing for easy addition of new features and analysis techniques in the future
 
 ## Future Features
 - allows for plug-ins to translate data into user-customizable reports (using a provided base class)
 - ability to resume interrupted sessions or re-run specific steps without starting over
 
-
+## Design
+The tool will use bash scripting for the main CLI interface and network setup, while Python will be used for the analysis and report generation components. This allows us to leverage powerful libraries for network analysis and report generation while keeping the user interface simple and accessible. The modular design will allow for easy maintenance and future expansion, with clear separation between the different components of the tool.
