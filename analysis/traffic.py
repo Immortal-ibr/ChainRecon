@@ -1,3 +1,5 @@
+# example analysis module for traffic analysis using pyshark
+
 import pyshark
 import collections
 
@@ -43,4 +45,6 @@ def analyze_pcap(pcap_path):
         print(f"{req['method']} {req['host']}{req['uri']}")
 
 if __name__ == "__main__":
-    analyze_pcap("path/to/your.pcap")
+    # PCAP_FILE="$OUTPUT_DIR/traffic_$(date +%Y%m%d_%H%M%S).pcap"
+    # analyze_pcap(PCAP_FILE)
+    pass
