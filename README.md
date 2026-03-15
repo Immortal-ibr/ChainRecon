@@ -59,6 +59,30 @@ Deep dive into the device's SSL/TLS implementation:
 
 The TLS fingerprinting is based on research showing that many IoT devices use customized or outdated SSL libraries, which can be identified by their cipher suite ordering and TLS handshake parameters.
 
+## Python Analysis CLI
+
+ChainRecon now includes a Python-first analysis layer for parsing saved artifacts and generating reports without changing the existing bash workflow.
+
+### What it covers
+
+- `TrafficAnalyzer` parses packet captures into structured DNS, HTTP, TLS SNI, protocol, external-IP, and conversation data
+- `SSLAnalyzer` probes certificates, flags weak TLS posture, and optionally computes a JA3-style hash from a saved pcap
+- `ScannerAnalyzer` parses saved Nmap output and can optionally enrich hosts with Shodan data if you provide an API key
+- `ReportGenerator` aggregates analyzer output and renders JSON, HTML, or CSV reports through plugins
+
+### CLI usage
+
+Run the Python CLI from the repo root:
+
+```bash
+python chainrecon.py analyze-traffic ./captures/device.pcap --format html --output ./reports/traffic.html
+python chainrecon.py analyze-ssl 192.168.1.50 --ports 443 8443 --format json --output ./reports/ssl.json
+python chainrecon.py analyze-scan ./scans/device_scan.xml --shodan-api-key "$SHODAN_API_KEY"
+python chainrecon.py report ./reports --format html --output ./reports/final_report.html
+```
+
+Each analyzer prints structured JSON to stdout. If `--format` and `--output` are provided, the result is also rendered through the report plugin system.
+
 ## Requirements
 
 **Must have:**
@@ -73,6 +97,12 @@ The TLS fingerprinting is based on research showing that many IoT devices use cu
 - `tshark` (for advanced traffic analysis) - `apt install tshark`
 - `RsaCtfTool` (for RSA key weakness detection) - `git clone https://github.com/RsaCtfTool/RsaCtfTool.git`
 - `vulners.nse` (for better vulnerability scanning) - Download from [vulnersCom/nmap-vulners](https://github.com/vulnersCom/nmap-vulners)
+
+**Python dependencies:**
+- Install with `pip install -r requirements.txt`
+- Optional integrations:
+  - `shodan` for internet-facing host enrichment
+  - `pyja3` for future JA3-specific parsing workflows
 
 The script will work without the optional tools, but you'll get way better results with them installed.
 

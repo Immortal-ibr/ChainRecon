@@ -1,1 +1,12 @@
-# Python requirements for ChainRecon analysis modules
+# Core analysis dependencies
+pyshark
+jinja2
+requests
+defusedxml
+cryptography
+
+# Optional integrations
+python-nmap
+scapy
+pyja3
+shodan
