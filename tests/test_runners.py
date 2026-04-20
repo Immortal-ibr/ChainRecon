@@ -131,7 +131,7 @@ class NmapRunnerScanTests(unittest.TestCase):
             self.assertIn("-oN", cmd)
             self.assertEqual(result["profile"], "quick")
             self.assertEqual(result["target"], "10.0.0.1")
-            self.assertEqual(len(result["output_files"]), 1)
+            self.assertEqual(len(result["output_files"]), 2)  # .txt + .xml
 
     @patch("runners.nmap_runner.check_tool", return_value="/usr/bin/nmap")
     def test_iot_scan_runs_two_commands(self, _):

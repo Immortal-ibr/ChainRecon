@@ -20,15 +20,20 @@ The core analysis modules. Each one takes either a file path or a network target
 - `report_generator.py` — Aggregates results from whichever analyzers ran and passes them to an output plugin.
 - `endpoint_analyzer.py` — Attributing IP addresses to cloud providers (AWS, GCP, Azure, Cloudflare, Akamai, Fastly) and identifying risky ports/protocols.
 - `pcap_stats.py` — Lower-level pcap statistics: packet counts, byte totals, protocol distribution, top talkers.
-- `webrtc_analyzer.py` — Detects STUN, DTLS, and SRTP traffic in a packet list, which indicates video/audio streaming.
+- `webrtc_analyzer.py` -- Detects STUN, DTLS, and SRTP traffic in a packet list, which indicates video/audio streaming.
+- `entropy_analyzer.py` -- Shannon entropy analysis per packet and per stream. Classifies traffic as plaintext/structured/compressed/encrypted and flags anomalies like low entropy on encrypted ports.
+- `rtp_analyzer.py` -- RTP/SRTP stream identification from UDP payloads. Protocol classification by first-byte heuristics (STUN, DTLS, RTP, TURN). H.264 NAL unit detection. Codec identification and packet loss estimation.
+- `cert_analyzer.py` -- Extracts DER-encoded X.509 certificates from TLS/DTLS handshakes in pcap. Checks RSA key size, signature algorithm, expiry, self-signed status, and Fermat factorisation vulnerability.
+- `mqtt_analyzer.py` -- MQTT traffic analysis including deep byte-level parsing of CONNECT/PUBLISH/SUBSCRIBE from raw TCP, and XOR key detection on opaque payloads.
 
 ## runners/
 
 Subprocess wrappers. The goal is one consistent place that handles timeouts, encoding, and error handling for all external tool calls.
 
 - `base.py` — `run_subprocess()` with UTF-8 encoding and error replacement, `check_tool()` for verifying tool availability, and `make_output_dir()` for timestamped output directories.
-- `nmap_runner.py` — Builds nmap command lines for the different scan profiles and invokes them.
-- `frida_runner.py` — Manages frida-server connections and script injection.
+- `nmap_runner.py` -- Builds nmap command lines for the different scan profiles and invokes them. Now outputs both .txt and .xml for every scan.
+- `extended_scanner.py` -- Python-native scanning without external tools: TCP connect scan with banner grabbing, ARP network discovery (Scapy or ARP cache), and service fingerprinting with protocol probes (HTTP, RTSP, MQTT).
+- `frida_runner.py` -- Manages frida-server connections and script injection.
 - `capture_runner.py` — Handles tshark/tcpdump captures with duration limits and file rotation.
 - `frida_scripts/` — JavaScript snippets loaded by the frida runner: SSL pinning bypass, crypto monitor, method hooks, class listing.
 

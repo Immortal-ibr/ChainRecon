@@ -86,17 +86,36 @@ class DashboardScreen(Screen):
         ("q", "app.quit", "Quit"),
     ]
 
+    DEFAULT_CSS = """
+    #dashboard {
+        padding: 1 2;
+    }
+    #dashboard #title {
+        text-style: bold;
+        color: $accent;
+        margin-bottom: 1;
+    }
+    #menu-section {
+        margin: 0 0 1 0;
+        height: auto;
+    }
+    #tools-section {
+        height: auto;
+        margin-bottom: 1;
+    }
+    """
+
     def compose(self) -> ComposeResult:
         import platform
         yield Header()
         with Vertical(id="dashboard"):
-            yield Label("[bold]ChainRecon — IoT Security Assessment Framework[/]", id="title")
-            yield Label("")
-            yield Label("[bold underline]Menu[/]")
-            for key, _screen, label in _MENU_ITEMS:
-                yield Label(f"  [bold cyan]{key}[/]  {label}")
-            yield Label("")
-            yield Label("[bold underline]Tool Status[/]")
+            yield Label("[bold]ChainRecon[/] [dim]IoT Security Assessment Framework[/]", id="title")
+            with Vertical(id="menu-section"):
+                yield Label("[bold underline]Menu[/]")
+                for key, _screen, label in _MENU_ITEMS:
+                    yield Label(f"  [bold cyan]{key}[/]  {label}")
+            with Vertical(id="tools-section"):
+                yield Label("[bold underline]Tool Status[/]")
             # tshark replaces tcpdump on Windows
             tools = ["nmap", "tshark", "adb", "frida", "jadx", "apktool"]
             if platform.system() != "Windows":

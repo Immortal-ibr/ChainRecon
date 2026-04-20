@@ -62,7 +62,7 @@ class ScannerAnalyzer:
         if path.suffix.lower() == ".xml":
             hosts = self._parse_xml(path)
         else:
-            hosts = self._parse_text(path.read_text(encoding="utf-8"))
+            hosts = self._parse_text(path.read_text(encoding="utf-8", errors="replace"))
 
         services = [service for host in hosts for service in host["services"]]
         iot_services = self.identify_iot_services(services)
@@ -137,7 +137,7 @@ class ScannerAnalyzer:
         return hints
 
     def _parse_xml(self, path: Path) -> List[Dict[str, Any]]:
-        xml_text = path.read_text(encoding="utf-8")
+        xml_text = path.read_text(encoding="utf-8", errors="replace")
         if SafeET is not None:
             root = SafeET.fromstring(xml_text)
         else:

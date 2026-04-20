@@ -90,6 +90,31 @@ stuff. Point it at a .pcap from the Capture screen, or an nmap .txt output.
   check for weak RSA keys in extracted certs), custom protocol decoders,
   or piping output into other tools.
 
+[bold]Entropy Analysis[/]
+
+  Computes Shannon entropy (bits per byte, 0–8) for every payload in the
+  pcap.  Classifies each packet and stream as plaintext (< 4.5), structured
+  (4.5–6.0), compressed (6.0–7.2), or encrypted (> 7.2).  Flags anomalies
+  like low entropy on ports that should be encrypted (443, 8443, 8883).
+  Also detects near-perfect entropy which may indicate XOR obfuscation.
+
+[bold]RTP / Protocol Classification[/]
+
+  Identifies UDP protocols by first-byte heuristics: STUN (magic cookie),
+  DTLS (content types 20–25), RTP/SRTP (version 2), TURN channel data.
+  Groups RTP packets by SSRC to identify media streams, extracts payload
+  types (H.264, Opus, PCMU, etc.), and estimates packet loss from sequence
+  number gaps.  Detects H.264 NAL units (SPS, PPS, IDR, FU-A) in RTP
+  payloads.
+
+[bold]Certificate Extraction (from pcap)[/]
+
+  Scans TLS and DTLS handshakes for DER-encoded X.509 certificates.
+  Parses each certificate and checks: RSA key size, signature algorithm
+  (SHA-1 / MD5 = weak), expiry date, self-signed status, and Fermat
+  factorisation vulnerability (p ≈ q).  Requires the 'cryptography'
+  package for full analysis.
+
 [dim]pyshark requires tshark installed (it shells out to tshark internally)
 Analyzer code: analysis/ directory
 openssl must be on PATH for SSL cert checks[/]
@@ -126,6 +151,9 @@ class AnalyzeScreen(Screen):
                     ("MQTT", "mqtt"),
                     ("Endpoint Map (IPs + Cloud)", "endpoint"),
                     ("Credential Scan (plaintext passwords)", "credentials"),
+                    ("Entropy Analysis (encryption detection)", "entropy"),
+                    ("RTP / Protocol Classification", "rtp"),
+                    ("Certificate Extraction (from pcap)", "certs"),
                     ("Custom Script...", "custom"),
                 ],
                 value="traffic",
@@ -193,10 +221,10 @@ class AnalyzeScreen(Screen):
             try:
                 result = self._dispatch(analyzer, filepath)
 
-                # Save to output/
+                # Save to output directory (from config)
                 from datetime import datetime
-                outdir = Path("output")
-                outdir.mkdir(exist_ok=True)
+                from utils.config import get_output_dir
+                outdir = get_output_dir()
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 outfile = outdir / f"analysis_{analyzer}_{ts}.json"
                 outfile.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
@@ -248,8 +276,8 @@ class AnalyzeScreen(Screen):
                 else:
                     self.app.call_from_thread(log.append, "[green]Custom script complete.[/]")
 
-                outdir = Path("output")
-                outdir.mkdir(exist_ok=True)
+                from utils.config import get_output_dir
+                outdir = get_output_dir()
                 from datetime import datetime
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 safe = re.sub(r"[^a-z0-9_]", "_", Path(script_path).stem.lower())
@@ -288,7 +316,7 @@ class AnalyzeScreen(Screen):
             from analysis.scanner import ScannerAnalyzer
             return ScannerAnalyzer().parse_nmap_output(filepath)
 
-        elif analyzer in ("pcap_stats", "webrtc", "mqtt", "endpoint", "credentials"):
+        elif analyzer in ("pcap_stats", "webrtc", "mqtt", "endpoint", "credentials", "entropy", "rtp", "certs"):
             # These analyzers consume a packet list — load via TrafficAnalyzer's helper
             from analysis.traffic import TrafficAnalyzer
             ta = TrafficAnalyzer()
@@ -303,6 +331,15 @@ class AnalyzeScreen(Screen):
                 elif analyzer == "endpoint":
                     from analysis.endpoint_analyzer import EndpointAnalyzer
                     return EndpointAnalyzer().analyze(packets)
+                elif analyzer == "entropy":
+                    from analysis.entropy_analyzer import EntropyAnalyzer
+                    return EntropyAnalyzer().analyze(packets)
+                elif analyzer == "rtp":
+                    from analysis.rtp_analyzer import RTPAnalyzer
+                    return RTPAnalyzer().analyze(packets)
+                elif analyzer == "certs":
+                    from analysis.cert_analyzer import CertAnalyzer
+                    return CertAnalyzer().analyze(packets)
                 elif analyzer == "credentials":
                     findings = ta.detect_plaintext_credentials(packets)
                     return {

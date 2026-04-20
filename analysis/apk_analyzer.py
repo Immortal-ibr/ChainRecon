@@ -33,7 +33,7 @@ _PATTERNS_FILE = Path(__file__).resolve().parent.parent / "config" / "apk_patter
 def _load_patterns(path: Optional[Path] = None) -> Dict[str, Any]:
     path = path or _PATTERNS_FILE
     if path.exists():
-        with open(path, encoding="utf-8") as fh:
+        with open(path, encoding="utf-8", errors="replace") as fh:
             return yaml.safe_load(fh) or {}
     return {}
 
@@ -389,20 +389,42 @@ class APKAnalyzer:
         if not source_dir.exists():
             source_dir = decompiled
 
-        # Build a single pass over the file tree
-        all_text = ""
+        # Check each SDK's markers against file paths and content
+        # without loading everything into memory at once.
+        remaining = {i: sdk for i, sdk in enumerate(sdk_defs)}
+        found: List[Dict[str, str]] = []
+
         for java_file in source_dir.rglob("*.java"):
+            if not remaining:
+                break
+            # Quick path-based check first (cheap)
+            fpath = str(java_file)
+            matched_ids = []
+            for idx, sdk in remaining.items():
+                for marker in sdk.get("markers", []):
+                    if marker in fpath:
+                        found.append({"name": sdk["name"], "marker": marker})
+                        matched_ids.append(idx)
+                        break
+            for mid in matched_ids:
+                remaining.pop(mid, None)
+            if not remaining:
+                break
+
+            # Content-based check only if we still have unmatched SDKs
             try:
-                all_text += java_file.read_text(encoding="utf-8", errors="replace")
+                text = java_file.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-
-        found: List[Dict[str, str]] = []
-        for sdk in sdk_defs:
-            for marker in sdk.get("markers", []):
-                if marker in all_text:
-                    found.append({"name": sdk["name"], "marker": marker})
-                    break  # one hit per SDK is enough
+            matched_ids = []
+            for idx, sdk in remaining.items():
+                for marker in sdk.get("markers", []):
+                    if marker in text:
+                        found.append({"name": sdk["name"], "marker": marker})
+                        matched_ids.append(idx)
+                        break
+            for mid in matched_ids:
+                remaining.pop(mid, None)
 
         return found
 

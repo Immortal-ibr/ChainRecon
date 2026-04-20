@@ -48,7 +48,8 @@ To edit this screen: tui/screens/reports.py[/]
 
 def _load_output_files(log_func=None) -> dict:
     """Scan output/ for saved JSON analysis files and merge them into one dict."""
-    outdir = Path("output")
+    from utils.config import get_output_dir
+    outdir = get_output_dir()
     sections: dict = {}
     if not outdir.exists():
         return sections

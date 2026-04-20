@@ -36,7 +36,7 @@ class WelcomeScreen(Screen):
         width: 90%;
         max-width: 100;
         height: auto;
-        border: double $accent;
+        border: solid $accent;
         background: $surface;
         padding: 2 4;
     }

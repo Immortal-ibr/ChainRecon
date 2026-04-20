@@ -161,15 +161,39 @@ class SSLAnalyzer:
             return {"port": port, "reachable": False, "error": str(exc)}
 
     def _probe_port(self, target: str, port: int) -> Dict[str, Any]:
+        # Strip CIDR notation — user may have pasted a subnet like 10.0.0.1/24
+        clean_target = target.split("/")[0].strip()
+        if not clean_target:
+            return {"port": port, "reachable": False, "error": "Empty target"}
+
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
 
-        with socket.create_connection((target, port), timeout=self.timeout) as tcp_socket:
-            with context.wrap_socket(tcp_socket, server_hostname=target) as tls_socket:
-                der_cert = tls_socket.getpeercert(binary_form=True)
-                cipher_info = tls_socket.cipher()
-                version = tls_socket.version()
+        # SNI server_hostname must be a hostname, not an IP address.
+        # Passing an IP as server_hostname causes "label empty or too long" on some stacks.
+        import ipaddress
+        try:
+            ipaddress.ip_address(clean_target)
+            sni_host = None  # numeric IP — skip SNI
+        except ValueError:
+            sni_host = clean_target  # hostname — use for SNI
+
+        try:
+            with socket.create_connection((clean_target, port), timeout=self.timeout) as tcp_socket:
+                with context.wrap_socket(tcp_socket, server_hostname=sni_host) as tls_socket:
+                    der_cert = tls_socket.getpeercert(binary_form=True)
+                    cipher_info = tls_socket.cipher()
+                    version = tls_socket.version()
+        except socket.gaierror as exc:
+            return {
+                "port": port, "reachable": False,
+                "error": f"DNS/network error: {exc} — ensure target is a reachable IP or hostname",
+            }
+        except ssl.SSLError as exc:
+            return {"port": port, "reachable": False, "error": f"TLS handshake failed: {exc}"}
+        except (socket.timeout, ConnectionRefusedError, OSError) as exc:
+            return {"port": port, "reachable": False, "error": f"Connection failed: {exc}"}
 
         subject, issuer, serial_number, not_before, not_after = (
             self._parse_der_certificate(der_cert) if der_cert else (None, None, None, None, None)

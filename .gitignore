@@ -9,3 +9,5 @@ build/
 *.pcap
 *.cap
 *.apk
+output/
+nooie_analysis/

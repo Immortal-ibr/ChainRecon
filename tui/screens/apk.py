@@ -134,22 +134,29 @@ class APKScreen(Screen):
                 self.app.call_from_thread(log.append, f"[dim]{line}[/]")
 
             try:
-                result = APKAnalyzer().analyze(path, progress_cb=_on_progress)
-
-                # Save to output/
                 from datetime import datetime
-                outdir = Path("output")
-                outdir.mkdir(exist_ok=True)
+                from utils.config import get_output_dir
+                outdir = get_output_dir()
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                outfile = outdir / f"apk_analysis_{ts}.json"
+                apk_name = Path(path).stem
+                decompiled_dir = outdir / f"apk_decompiled_{apk_name}_{ts}"
+
+                result = APKAnalyzer().analyze(path, output_dir=str(decompiled_dir), progress_cb=_on_progress)
+
+                outfile = outdir / f"apk_analysis_{apk_name}_{ts}.json"
                 outfile.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
 
                 text = json.dumps(result, indent=2, default=str)[:4000]
-                self.app.call_from_thread(log.append, f"[green]Done. Saved: {outfile}[/]\n{text}")
+                self.app.call_from_thread(
+                    log.append,
+                    f"[green]Done.[/]\n[dim]Analysis: {outfile}[/]\n[dim]Decompiled: {decompiled_dir}[/]\n{text}"
+                )
                 if custom_path:
                     self.app.call_from_thread(self._run_custom_inline, path, custom_path, custom_interp, log)
             except Exception as exc:
-                self.app.call_from_thread(log.append, f"[red]Error: {exc}[/]")
+                import traceback
+                tb = traceback.format_exc()
+                self.app.call_from_thread(log.append, f"[red]Error: {exc}\n{tb[:1500]}[/]")
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -183,8 +190,8 @@ class APKScreen(Screen):
                 else:
                     self.app.call_from_thread(log.append, "[green]Custom script complete.[/]")
 
-                outdir = Path("output")
-                outdir.mkdir(exist_ok=True)
+                from utils.config import get_output_dir
+                outdir = get_output_dir()
                 from datetime import datetime
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 safe = re.sub(r"[^a-z0-9_]", "_", Path(script_path).stem.lower())

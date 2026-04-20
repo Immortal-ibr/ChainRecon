@@ -350,7 +350,7 @@ def load_report_inputs(inputs: Iterable[str]):
             files.append(path)
 
     for file_path in files:
-        payload = json.loads(file_path.read_text(encoding="utf-8"))
+        payload = json.loads(file_path.read_text(encoding="utf-8", errors="replace"))
         merged[infer_section(payload, file_path.name)] = payload
     return merged
 

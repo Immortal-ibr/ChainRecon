@@ -1,9 +1,0 @@
-# Nmap 7.99 scan initiated Sun Apr 19 19:07:30 2026 as: "C:\\Program Files (x86)\\Nmap\\nmap.EXE" -Pn -sV --script vuln -T4 -oN nooie_analysis\\nmap_vuln.txt 192.168.123.99
-Nmap scan report for 192.168.123.99
-Host is up (0.00071s latency).
-All 1000 scanned ports on 192.168.123.99 are in ignored states.
-Not shown: 1000 closed tcp ports (reset)
-MAC Address: C6:41:1E:37:B4:F8 (Unknown)
-
-Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
-# Nmap done at Sun Apr 19 19:08:20 2026 -- 1 IP address (1 host up) scanned in 50.44 seconds

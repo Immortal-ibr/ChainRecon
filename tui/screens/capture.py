@@ -245,8 +245,8 @@ class CaptureScreen(Screen):
                 else:
                     self.app.call_from_thread(log.append, "[green]Custom script complete.[/]")
 
-                outdir = Path("output")
-                outdir.mkdir(exist_ok=True)
+                from utils.config import get_output_dir
+                outdir = get_output_dir()
                 from datetime import datetime
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 safe = re.sub(r"[^a-z0-9_]", "_", Path(script_path).stem.lower())

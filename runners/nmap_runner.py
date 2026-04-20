@@ -28,6 +28,7 @@ SCAN_PROFILES: Dict[str, Dict[str, Any]] = {
         "description": "All 65535 ports with OS/version detection (-A)",
         "args": ["-Pn", "-A", "-p-", "-T4", "--version-intensity", "9"],
         "suffix": "nmap_full",
+        "timeout": 7200,
     },
     "iot": {
         "label": "IoT Protocol Scan",
@@ -41,6 +42,7 @@ SCAN_PROFILES: Dict[str, Dict[str, Any]] = {
         "description": "NSE vuln scripts + version detection",
         "args": ["-Pn", "-sV", "--script", "vuln", "-T4"],
         "suffix": "nmap_vuln",
+        "timeout": 3600,
     },
     "ssl": {
         "label": "SSL / Cert Scan",
@@ -81,26 +83,28 @@ class NmapRunner:
         logger.info("Running nmap '%s' scan against %s", profile, target)
 
         output_files: List[str] = []
+        default_timeout = cfg.get("timeout", 900)
 
         if profile == "iot":
             tcp_file = str(out_dir / f"{cfg['suffix']}_tcp.txt")
             udp_file = str(out_dir / f"{cfg['suffix']}_udp.txt")
             self._executor(
                 [nmap_path] + cfg["tcp_args"] + [target, "-oN", tcp_file],
-                timeout=600,
+                timeout=default_timeout,
             )
             self._executor(
                 [nmap_path] + cfg["udp_args"] + [target, "-oN", udp_file],
-                timeout=600,
+                timeout=default_timeout,
             )
             output_files = [tcp_file, udp_file]
         else:
             out_file = str(out_dir / f"{cfg['suffix']}.txt")
+            xml_file = str(out_dir / f"{cfg['suffix']}.xml")
             self._executor(
-                [nmap_path] + cfg["args"] + [target, "-oN", out_file],
-                timeout=900,
+                [nmap_path] + cfg["args"] + [target, "-oN", out_file, "-oX", xml_file],
+                timeout=default_timeout,
             )
-            output_files = [out_file]
+            output_files = [out_file, xml_file]
 
         return {
             "profile": profile,

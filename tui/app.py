@@ -35,25 +35,49 @@ Screen {
 Input {
     margin-bottom: 1;
 }
+Select {
+    margin-bottom: 1;
+}
 Button {
     margin: 1 1 0 0;
+    min-width: 12;
+}
+Button.primary {
+    color: $text;
+}
+Label {
+    margin-bottom: 0;
+}
+LogViewer {
+    margin-top: 1;
+    min-height: 10;
+}
+RichLog {
+    margin-top: 1;
+    min-height: 10;
 }
 
 /* ---- Admin PowerShell / conhost.exe ASCII fallback ----
-   When WT_SESSION is not set we add the ascii-mode class to the App
-   root. Every bordered widget then gets ASCII chars (+, -, |) instead
-   of the Unicode box-drawing characters that conhost cannot render. */
+   conhost.exe cannot render Unicode box-drawing characters even with VT
+   mode.  When WT_SESSION is missing we add .ascii-mode on the App root
+   and force every bordered widget to plain ASCII (+, -, |).
+
+   Textual specificity: App.CSS > Widget.DEFAULT_CSS so these win over
+   the widget-level border: solid rules.  */
+.ascii-mode * {
+    scrollbar-size: 1 1;
+}
 .ascii-mode SelectCurrent {
-    border: ascii $border;
+    border: ascii $accent;
 }
 .ascii-mode SelectOverlay {
-    border: ascii $border;
+    border: ascii $accent;
 }
 .ascii-mode Input {
-    border: ascii $border;
+    border: ascii $accent;
 }
 .ascii-mode Button {
-    border-bottom: ascii $panel-darken-3;
+    border: ascii $accent;
 }
 .ascii-mode LogViewer {
     border: ascii $accent;
@@ -61,8 +85,26 @@ Button {
 .ascii-mode RichLog {
     border: ascii $accent;
 }
+.ascii-mode TextArea {
+    border: ascii $accent;
+}
+.ascii-mode Static {
+    border: none;
+}
 .ascii-mode #welcome-box {
     border: ascii $accent;
+}
+.ascii-mode #modal-box {
+    border: ascii $accent;
+}
+.ascii-mode #help-box {
+    border: ascii $accent;
+}
+.ascii-mode Vertical {
+    border: none;
+}
+.ascii-mode Horizontal {
+    border: none;
 }
 """
 

@@ -17,7 +17,7 @@ class HelpPanel(VerticalScroll):
     HelpPanel {
         display: none;
         background: $boost;
-        border: tall $accent;
+        border: solid $accent;
         padding: 1 2;
         margin: 0 0 1 0;
         max-height: 50vh;

@@ -159,6 +159,18 @@ def get_network_config() -> Dict[str, Any]:
     return cfg.get("network") or {}
 
 
+def get_output_dir() -> Path:
+    """Return the configured output directory as an absolute Path, creating it if needed."""
+    cfg = get_config()
+    raw = (cfg.get("output") or {}).get("directory", "output")
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        # Resolve relative to the project root (where config/ lives)
+        path = (_CONFIG_DIR.parent / path).resolve()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def save_network_config(data: Dict[str, Any]) -> None:
     """Persist network setup values to config/local.yaml."""
     local_path = _CONFIG_DIR / "local.yaml"

@@ -35,7 +35,7 @@ class HelpScreen(ModalScreen):
     #help-dialog {
         width: 88%;
         height: 88%;
-        border: double $accent;
+        border: solid $accent;
         background: $surface;
     }
 

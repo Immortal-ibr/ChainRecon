@@ -33,10 +33,25 @@ def check_tool(name: str) -> str:
     return path
 
 
-def make_output_dir(base: str = ".") -> Path:
-    """Create and return a timestamped output directory."""
+def make_output_dir(base: Optional[str] = None) -> Path:
+    """Create and return a timestamped output subdirectory.
+
+    If *base* is None, uses the configured output directory from config.
+    Otherwise creates a timestamped subdir under *base*.
+    """
+    if base is None:
+        try:
+            from utils.config import get_output_dir
+            base_path = get_output_dir()
+        except Exception:
+            base_path = Path("output")
+            base_path.mkdir(exist_ok=True)
+    else:
+        base_path = Path(base)
+        base_path.mkdir(parents=True, exist_ok=True)
+
     dirname = f"iot_recon_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    path = Path(base) / dirname
+    path = base_path / dirname
     path.mkdir(parents=True, exist_ok=True)
     return path
 

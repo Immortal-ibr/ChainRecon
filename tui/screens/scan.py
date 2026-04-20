@@ -18,7 +18,7 @@ from tui.widgets.pasteable_input import PasteableInput as Input
 from runners.nmap_runner import NmapRunner
 from tui.screens.help_screen import HelpScreen
 from tui.widgets.log_viewer import LogViewer
-from utils.config import get_config, get_network_config
+from utils.config import get_network_config, get_output_dir
 
 HELP_TEXT = """[bold underline]Network Scan[/]
 
@@ -125,6 +125,9 @@ class ScanScreen(Screen):
                     ("IoT  —  ports 80,443,1883,8883,5353,1900 + UDP", "iot"),
                     ("Vuln  —  NSE --script vuln", "vuln"),
                     ("SSL / Cert  —  ssl-cert + ssl-enum-ciphers scripts", "ssl"),
+                    ("TCP Connect  —  Python socket scan (no nmap)", "tcp_connect"),
+                    ("ARP Discovery  —  find devices on local network", "arp"),
+                    ("Service Fingerprint  —  deep banner/probe on IoT ports", "fingerprint"),
                     ("Custom Script…", "custom"),
                 ],
                 value="iot",
@@ -181,13 +184,17 @@ class ScanScreen(Screen):
             self._run_custom_inline(target, custom_path, custom_interp, log)
             return
 
+        # Extended scans (no nmap required)
+        if profile in ("tcp_connect", "arp", "fingerprint"):
+            self._run_extended_scan(target, profile, log, custom_path, custom_interp)
+            return
+
         if profile == "full":
             log.append("[yellow]Full scan scans all 65535 ports — this can take 20–40 minutes on a home network. "
                        "If it times out, run nmap directly from the command line.[/]")
 
         log.append(f"[bold]Starting {profile} scan on {target}…[/]")
-        cfg = get_config()
-        output_dir = cfg.get("output", {}).get("directory", "output")
+        output_dir = str(get_output_dir())
 
         def _worker() -> None:
             try:
@@ -213,7 +220,7 @@ class ScanScreen(Screen):
             except subprocess.TimeoutExpired:
                 self.app.call_from_thread(
                     log.append,
-                    f"[red]Scan timed out (15-minute limit). The full scan is too slow for the TUI. "
+                    f"[red]Scan timed out. Full scans on all 65535 ports can take over an hour. "
                     f"Run nmap directly:\n  nmap -Pn -A -p- -T4 {target}[/]"
                 )
             except Exception as exc:
@@ -272,6 +279,53 @@ class ScanScreen(Screen):
                     self.app.call_from_thread(log.append, "[dim]Script saved to library.[/]")
             except Exception as exc:
                 self.app.call_from_thread(log.append, f"[red]Custom script error: {exc}[/]")
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _run_extended_scan(self, target: str, profile: str, log: LogViewer, custom_path: str, custom_interp: str) -> None:
+        """Run Python-native scans (no nmap dependency)."""
+        log.append(f"[bold]Starting {profile} scan on {target}…[/]")
+
+        def _progress(msg: str) -> None:
+            self.app.call_from_thread(log.append, msg)
+
+        def _worker() -> None:
+            try:
+                from runners.extended_scanner import ExtendedScanner
+                scanner = ExtendedScanner(progress_cb=_progress)
+
+                if profile == "tcp_connect":
+                    result = scanner.tcp_scan(target)
+                elif profile == "arp":
+                    # Use the target the user typed — already a CIDR or host IP
+                    if "/" in target:
+                        subnet = target
+                    else:
+                        octets = target.split(".")
+                        subnet = f"{octets[0]}.{octets[1]}.{octets[2]}.0/24" if len(octets) == 4 else target
+                    self.app.call_from_thread(log.append, f"[dim]ARP scan on {subnet}...[/]")
+                    result = scanner.arp_scan(subnet=subnet)
+                elif profile == "fingerprint":
+                    from runners.extended_scanner import IOT_PORTS
+                    result = scanner.fingerprint_services(target, IOT_PORTS)
+                else:
+                    self.app.call_from_thread(log.append, f"[red]Unknown extended profile: {profile}[/]")
+                    return
+
+                # Save output
+                from datetime import datetime
+                outdir = get_output_dir()
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                outfile = outdir / f"scan_{profile}_{ts}.json"
+                outfile.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
+
+                text = json.dumps(result, indent=2, default=str)[:4000]
+                self.app.call_from_thread(log.append, f"[green]Done. Saved: {outfile}[/]\n{text}")
+
+                if custom_path:
+                    self.app.call_from_thread(self._run_custom_inline, target, custom_path, custom_interp, log)
+            except Exception as exc:
+                self.app.call_from_thread(log.append, f"[red]Error: {exc}[/]")
 
         threading.Thread(target=_worker, daemon=True).start()
 
