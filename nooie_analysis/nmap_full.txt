@@ -1,0 +1,1 @@
+# Nmap 7.99 scan initiated Sun Apr 19 19:56:59 2026 as: "C:\\Program Files (x86)\\Nmap\\nmap.EXE" -Pn -A -p- -T4 --version-intensity 9 -oN nooie_analysis\\nmap_full.txt 192.168.123.99

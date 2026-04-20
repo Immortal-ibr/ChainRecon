@@ -4,12 +4,176 @@ from __future__ import annotations
 
 import collections
 import ipaddress
+import math
+import struct
+from types import SimpleNamespace
 from typing import Any, Dict, Iterable, List, Optional
+
+from utils.logging_config import get_logger
+
+logger = get_logger("traffic")
 
 try:
     import pyshark  # type: ignore
 except ImportError:  # pragma: no cover
     pyshark = None
+
+try:
+    from scapy.all import rdpcap, IP, TCP, UDP, DNS, Raw as ScapyRaw  # type: ignore
+    _SCAPY_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _SCAPY_AVAILABLE = False
+
+
+# ---------------------------------------------------------------------------
+# Scapy → pyshark-style adapter
+# ---------------------------------------------------------------------------
+
+def _parse_tls_sni(payload: bytes) -> Optional[str]:
+    """Extract SNI hostname from raw TLS ClientHello bytes."""
+    try:
+        if len(payload) < 9 or payload[0] != 0x16 or payload[5] != 0x01:
+            return None
+        idx = 9   # past record header (5) + handshake header (4)
+        idx += 2  # ProtocolVersion
+        idx += 32  # Random
+        if idx >= len(payload):
+            return None
+        session_len = payload[idx]
+        idx += 1 + session_len
+        if idx + 2 > len(payload):
+            return None
+        cipher_len = struct.unpack(">H", payload[idx : idx + 2])[0]
+        idx += 2 + cipher_len
+        if idx >= len(payload):
+            return None
+        comp_len = payload[idx]
+        idx += 1 + comp_len
+        if idx + 2 > len(payload):
+            return None
+        ext_total = struct.unpack(">H", payload[idx : idx + 2])[0]
+        idx += 2
+        end = idx + ext_total
+        while idx + 4 <= end and idx + 4 <= len(payload):
+            ext_type = struct.unpack(">H", payload[idx : idx + 2])[0]
+            ext_len = struct.unpack(">H", payload[idx + 2 : idx + 4])[0]
+            idx += 4
+            if ext_type == 0x0000 and idx + 5 <= len(payload):
+                name_len = struct.unpack(">H", payload[idx + 3 : idx + 5])[0]
+                return payload[idx + 5 : idx + 5 + name_len].decode("utf-8", errors="ignore")
+            idx += ext_len
+    except Exception:
+        pass
+    return None
+
+
+class ScapyPacketAdapter:
+    """Wraps a Scapy packet to expose a pyshark-compatible attribute interface.
+
+    This lets the existing TrafficAnalyzer extraction methods work unchanged
+    regardless of whether packets come from pyshark or Scapy.
+    """
+
+    _HTTP_METHODS = (b"GET ", b"POST ", b"PUT ", b"DELETE ", b"HEAD ", b"OPTIONS ", b"PATCH ")
+
+    def __init__(self, scapy_pkt: Any) -> None:
+        self._pkt = scapy_pkt
+        self._layer_names: set = set()
+        self._build()
+
+    def _build(self) -> None:
+        pkt = self._pkt
+        self.length = len(pkt)
+
+        if pkt.haslayer(IP):
+            ip = pkt[IP]
+            self.ip = SimpleNamespace(src=ip.src, dst=ip.dst, ttl=str(ip.ttl))
+            self._layer_names.add("ip")
+
+        if pkt.haslayer(TCP):
+            tcp = pkt[TCP]
+            ns = SimpleNamespace(
+                srcport=str(tcp.sport), dstport=str(tcp.dport), stream=None
+            )
+            if pkt.haslayer(ScapyRaw):
+                ns.payload = pkt[ScapyRaw].load.hex()
+            self.tcp = ns
+            self._layer_names.add("tcp")
+
+        if pkt.haslayer(UDP):
+            udp = pkt[UDP]
+            ns = SimpleNamespace(srcport=str(udp.sport), dstport=str(udp.dport))
+            if pkt.haslayer(ScapyRaw):
+                ns.payload = pkt[ScapyRaw].load.hex()
+            self.udp = ns
+            self._layer_names.add("udp")
+
+        if pkt.haslayer(DNS):
+            dns = pkt[DNS]
+            qname = qtype = None
+            if dns.qd is not None:
+                try:
+                    qname = dns.qd.qname.decode("utf-8", errors="ignore").rstrip(".")
+                    qtype = str(dns.qd.qtype)
+                except Exception:
+                    pass
+            self.dns = SimpleNamespace(qry_name=qname, qry_type=qtype)
+            self._layer_names.add("dns")
+
+        if pkt.haslayer(ScapyRaw):
+            raw = pkt[ScapyRaw].load
+
+            # HTTP detection
+            if any(raw.startswith(m) for m in self._HTTP_METHODS):
+                try:
+                    text = raw.decode("utf-8", errors="ignore")
+                    lines = text.split("\r\n")
+                    parts = lines[0].split(" ")
+                    method = parts[0] if parts else None
+                    uri = parts[1] if len(parts) > 1 else None
+                    host = None
+                    for line in lines[1:]:
+                        if line.lower().startswith("host:"):
+                            host = line.split(":", 1)[1].strip()
+                            break
+                    self.http = SimpleNamespace(
+                        request_method=method, host=host, request_uri=uri
+                    )
+                    self._layer_names.add("http")
+                except Exception:
+                    pass
+
+            # TLS SNI detection
+            sni = _parse_tls_sni(raw)
+            if sni:
+                self.tls = SimpleNamespace(handshake_extensions_server_name=sni)
+                self._layer_names.add("tls")
+
+            # Raw data layer (for entropy / credential scan)
+            self.data = SimpleNamespace(data_data=raw.hex())
+            self._layer_names.add("data")
+
+        # Determine highest_layer label
+        if "dns" in self._layer_names:
+            self.highest_layer = "DNS"
+        elif "http" in self._layer_names:
+            self.highest_layer = "HTTP"
+        elif "tls" in self._layer_names:
+            self.highest_layer = "TLS"
+        elif "tcp" in self._layer_names:
+            self.highest_layer = "TCP"
+        elif "udp" in self._layer_names:
+            self.highest_layer = "UDP"
+        elif "ip" in self._layer_names:
+            self.highest_layer = "IP"
+        else:
+            self.highest_layer = type(pkt.lastlayer()).__name__.upper()
+
+    def __contains__(self, item: str) -> bool:
+        return item.lower() in self._layer_names
+
+    def __len__(self) -> int:
+        return self.length
 
 
 class TrafficAnalyzer:
@@ -19,6 +183,7 @@ class TrafficAnalyzer:
         self.capture_factory = capture_factory or self._default_capture_factory
 
     def analyze_pcap(self, pcap_path: str) -> Dict[str, Any]:
+        logger.info("Analyzing pcap: %s", pcap_path)
         packets, capture = self._load_packets(pcap_path)
         try:
             dns_queries = self.extract_dns(packets)
@@ -166,12 +331,97 @@ class TrafficAnalyzer:
 
     def _load_packets(self, pcap_path: str):
         capture = self.capture_factory(pcap_path)
-        return list(capture), capture
+        packets = list(capture)
+        # Ensure a close-able handle is always returned
+        if not hasattr(capture, "close"):
+            capture = type("_NullCapture", (), {"close": lambda self=None: None, "closed": False})()
+        return packets, capture
+
+    # ── Entropy & plaintext helpers ──────────────────────────────────
+
+    @staticmethod
+    def shannon_entropy(data: bytes) -> float:
+        """Compute Shannon entropy of *data* in bits per byte (0-8)."""
+        if not data:
+            return 0.0
+        freq = collections.Counter(data)
+        length = len(data)
+        return -sum(
+            (count / length) * math.log2(count / length)
+            for count in freq.values()
+        )
+
+    def detect_encrypted_payloads(
+        self, packets: Iterable[Any], threshold: float = 7.2
+    ) -> List[Dict[str, Any]]:
+        """Return packets whose payload entropy exceeds *threshold*."""
+        results: List[Dict[str, Any]] = []
+        for packet in packets:
+            raw = self._get_raw_payload(packet)
+            if raw is None or len(raw) < 16:
+                continue
+            ent = self.shannon_entropy(raw)
+            if ent >= threshold:
+                results.append({
+                    "src_ip": self._get_ip(packet, "ip", "src"),
+                    "dst_ip": self._get_ip(packet, "ip", "dst"),
+                    "length": len(raw),
+                    "entropy": round(ent, 4),
+                })
+        return results
+
+    def detect_plaintext_credentials(
+        self, packets: Iterable[Any]
+    ) -> List[Dict[str, Any]]:
+        """Scan payloads for common plaintext credential patterns."""
+        import re
+
+        patterns = [
+            ("password", re.compile(rb"(?i)password[=:]\s*\S+")),
+            ("auth_token", re.compile(rb"(?i)(auth|token|bearer)[=:\s]+\S{8,}")),
+            ("basic_auth", re.compile(rb"(?i)authorization:\s*basic\s+[A-Za-z0-9+/=]+")),
+        ]
+        findings: List[Dict[str, Any]] = []
+        for packet in packets:
+            raw = self._get_raw_payload(packet)
+            if raw is None or len(raw) < 8:
+                continue
+            for name, regex in patterns:
+                if regex.search(raw):
+                    findings.append({
+                        "type": name,
+                        "src_ip": self._get_ip(packet, "ip", "src"),
+                        "dst_ip": self._get_ip(packet, "ip", "dst"),
+                        "length": len(raw),
+                    })
+                    break  # one match per packet is enough
+        return findings
+
+    def _get_raw_payload(self, packet: Any) -> Optional[bytes]:
+        """Best-effort extraction of the raw payload bytes from a packet."""
+        for layer_name in ("DATA", "data", "TCP", "tcp", "UDP", "udp"):
+            layer = self._get_layer(packet, layer_name)
+            if layer is None:
+                continue
+            for field in ("data_data", "payload", "data"):
+                raw_hex = self._get_field(layer, field)
+                if raw_hex:
+                    try:
+                        return bytes.fromhex(raw_hex.replace(":", ""))
+                    except ValueError:
+                        continue
+        return None
 
     def _default_capture_factory(self, pcap_path: str):
-        if pyshark is None:
-            raise RuntimeError("pyshark is required to analyze pcap files")
-        return pyshark.FileCapture(pcap_path, only_summaries=False)
+        if _SCAPY_AVAILABLE:
+            raw_packets = rdpcap(pcap_path)
+            return [ScapyPacketAdapter(p) for p in raw_packets]
+        if pyshark is not None:
+            return pyshark.FileCapture(pcap_path, only_summaries=False)
+        raise RuntimeError(
+            "Neither scapy nor pyshark is installed. "
+            "Install scapy: pip install scapy"
+        )
 
     def _has_layer(self, packet: Any, layer_name: str) -> bool:
         try:

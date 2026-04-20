@@ -1,61 +1,73 @@
-## Purpose
-ChainRecon is a system designed to help analyze IoT devices for security research. Instead of running a bunch of different commands manually every time to test a device, this script automates the whole process - from network setup to traffic capture to SSL analysis.
+## What ChainRecon is
 
-The main goal is to figure out what an IoT device is doing on the network: what servers it talks to, what protocols it uses, and whether it has any obvious security issues.
+ChainRecon is an IoT security analysis tool built for the Purdue ChainVisor senior design project. The core idea is that when you're researching an IoT device, you always end up running the same set of tools in the same order — nmap to find open ports, tshark to capture traffic, jadx to look at the APK, frida to hook interesting functions at runtime. Doing that manually for every new device is tedious, so ChainRecon ties it all together into a single TUI that keeps results organized and lets you jump between analysis steps without having to remember every command.
+
+The tool is designed to be used with a physical man-in-the-middle setup: the IoT device connects through a router, the router connects to your computer over Ethernet, and your computer bridges to Wi-Fi. That puts you in a position to see everything the device sends and receives without modifying it.
 
 ## Requirements
 
-### 1. User Interface
-- CLI entry point with named subcommands for each analysis type
-- Interactive menu-driven mode launched when no subcommand is given
-- Session state persists across analysis runs within a session (interface, router IP, target IP, output directory)
-- Preset/default values for all session variables if not specified by the user
-- Logs steps taken during each process for traceability
-- Graceful error handling: prompts user and exits cleanly with a helpful resolution message on failure
-- Report generation in multiple formats (JSON, HTML, CSV) via a plugin interface
-- Plugin base class allowing user-defined report formats
+**Core behavior:**
+- Accept a target device IP, router IP, and network interface names from the user (with sensible defaults where possible)
+- Support four main modes: network setup, device scanning, traffic capture/analysis, and SSL/TLS analysis
+- Operate without root for most analysis tasks; only the network setup requires elevated privileges
+- Gracefully handle missing tools — warn the user and skip that feature rather than crashing
+- Save all output to timestamped directories so nothing gets overwritten
 
-### 2. Network Setup
-- Prompts user for the network interface connected to the router and the interface connected to the internet
-- Enables IP forwarding on the host machine
-- Configures NAT via iptables to establish a man-in-the-middle position
-- Leaves the network in a state where external tools (e.g. Wireshark, tcpdump) can passively capture all device traffic
+**Traffic analysis must produce:**
+- DNS queries and the IPs they resolve to
+- TLS SNI hostnames from HTTPS connections
+- Any plaintext HTTP traffic (headers, bodies, anything unencrypted)
+- Protocol distribution statistics
+- List of external IPs with cloud provider attribution
+- Conversation-level view (who talked to whom, how much data)
 
-### 3. Device Scan
-- Executes nmap with selectable scan profiles: quick, gentle, full, IoT-focused, and vulnerability
-- Gentle profile (-T2, full TCP connect) for fragile or sensitive IoT devices
-- IoT protocol awareness: identifies services on MQTT, CoAP, UPnP, mDNS, BACnet, and similar ports
-- Flags CVE-relevant exposures (telnet, FTP, unprotected HTTP, UPnP)
-- Optional Shodan API enrichment for additional host context
-- Parses and structures nmap output (XML/text) for use in reports
+**APK analysis must produce:**
+- Declared permissions from the manifest, flagging dangerous ones
+- Exported components (activities, services, receivers, providers) that could be entry points
+- Whether cleartext traffic is permitted
+- Any certificate pinning found in the code
+- Hardcoded credentials, API keys, AWS config in the Java source
+- Third-party SDKs detected (Tuya, Firebase, AWS IoT, etc.)
 
-### 4. Traffic Analysis
-- Captures network traffic to a PCAP file for later analysis
-- Extracts DNS queries (query name, type, source IP)
-- Extracts HTTP requests (method, host, URI, user-agent, source IP)
-- Extracts TLS Server Name Indication (SNI) from handshakes
-- Computes protocol distribution statistics (TCP, UDP, ICMP, DNS, TLS, etc.)
-- Identifies external (non-RFC1918) destination IPs
-- Tracks conversations (source/destination pairs and byte counts)
-- Flags unencrypted HTTP traffic as a risk finding
-- Filters analysis to a specific target IP when provided
+**SSL/TLS analysis must produce:**
+- Certificate chain details (CN, SANs, expiry, key size)
+- Cipher suite support with flags for weak/deprecated ciphers
+- TLS version support (flag anything below TLS 1.2)
 
-### 5. TLS Analysis
-- Probes a configurable list of ports on the target for TLS/SSL services
-- Extracts certificate details: subject, issuer, serial, validity dates, version
-- Detects self-signed and expired certificates
-- Tests for weak cipher suites (export ciphers, DES, RC4, NULL)
-- Tests for outdated protocol versions (SSLv3, TLSv1.0)
-- Produces a risk rating (critical / high / medium / low) with per-finding detail
-- Computes JA3 fingerprints from captured TLS handshakes for client library identification
-- Bypasses SSL pinning in Android companion apps (via Frida instrumentation) to capture otherwise-hidden traffic
+**Reports:**
+- At minimum, JSON output that can be piped elsewhere
+- HTML and CSV outputs through the plugin system
+- Plugins should be swappable — provide a base class and let users write their own
 
-## Non-Functional Requirements
-- Modular and extensible: new analysis techniques can be added without modifying existing modules
-- Run with least privilege; prompt for elevated access only where required (network setup)
+## Non-functional requirements
 
-## Future Features
-- Ability to resume interrupted sessions or re-run specific steps without starting over
+- Modular design so analyzers can be used independently from the CLI or imported as a library
+- The TUI should work in Windows Terminal and admin PowerShell
+- Tests should run offline with no real network access or external tools required
+- Config should cascade: built-in defaults < local overrides < environment variables
 
-## Design
-The tool will use bash scripting for the main CLI interface and network setup, while Python will be used for the analysis and report generation components. This allows us to leverage powerful libraries for network analysis and report generation while keeping the user interface simple and accessible. The modular design will allow for easy maintenance and future expansion, with clear separation between the different components of the tool.
+## Architecture
+
+The tool has three layers:
+
+**Bash scripts** (`scripts/`) handle anything that needs system-level access on Linux: setting up iptables rules, enabling IP forwarding, running tshark captures. These are intentionally separate from the Python code so the analysis layer can run on Windows without needing bash.
+
+**Python analysis layer** (`analysis/`, `runners/`) does all the heavy lifting. Each analyzer takes either a file (pcap, nmap XML, APK) or a network target and returns a structured dict. The `runners/` directory wraps subprocess calls to external tools so that the timeout handling, encoding, and error handling is consistent everywhere.
+
+**TUI** (`tui/`) is a Textual application that wraps the analysis layer. Each screen corresponds to one analysis mode and runs its work in a background thread, streaming output to a LogViewer widget as it comes in.
+
+The report plugin system (`plugins/`) sits at the end of the pipeline. The `ReportGenerator` collects results from whichever analyzers were run and passes them to whatever output plugin is selected.
+
+## Configuration
+
+Config is stored in YAML under `config/`. `default.yaml` has the full set of keys with conservative defaults. Users create `config/local.yaml` with just their overrides — tool paths, interface names, API keys, etc. Environment variables (e.g. `CHAINRECON_JADX_PATH`) override everything.
+
+## Decisions made along the way
+
+**Scapy instead of pyshark for traffic analysis:** pyshark requires tshark to be installed and is much slower for offline pcap analysis. Scapy is pure Python, faster for packet-by-packet inspection, and handles the same protocols we care about (DNS, TLS, HTTP, STUN/WebRTC).
+
+**Streaming jadx output:** jadx on a large APK can take several minutes and generates a lot of console output. Running it with `subprocess.run(capture_output=True)` fills the pipe buffer and deadlocks on Windows. The fix is to use `Popen` and read line-by-line, forwarding each line to the TUI log viewer so the user can see progress.
+
+**ASCII border fallback for conhost.exe:** Textual uses Unicode box-drawing characters for widget borders. These don't render in Windows admin PowerShell (conhost.exe) even with VT mode enabled. The app detects this by checking whether `WT_SESSION` is set (Windows Terminal sets it, conhost does not) and applies a CSS class that switches all borders to ASCII (`+`, `-`, `|`).
+
+**PasteableInput widget:** On conhost.exe, Ctrl+V may be consumed by the terminal and never reach the Textual app. The `PasteableInput` widget reads from the Win32 clipboard directly via ctypes so pasting always works in input fields.

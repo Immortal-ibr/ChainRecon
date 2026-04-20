@@ -1,0 +1,22 @@
+# Nooie Baby Monitor Device Profile
+# Usage: chainrecon --config config/nooie_profile.yaml scan <target>
+
+# Device-specific SSL ports observed in traffic analysis
+ssl_ports: [443, 8443, 8883, 80]
+
+# Frida settings for Nooie companion app
+frida:
+  default_package: "com.nooie.home"
+  spawn_mode: false
+
+# Additional IoT ports specific to this device's cloud ecosystem
+iot_ports:
+  1883: "MQTT (Nooie cloud)"
+  8883: "MQTT over TLS (Nooie cloud)"
+  80: "HTTP (Nooie DNS fallback)"
+  443: "HTTPS (Nooie API)"
+  8443: "HTTPS Alt (Nooie API)"
+  5353: "mDNS"
+  1900: "UPnP"
+  3478: "STUN (WebRTC NAT traversal)"
+  5683: "CoAP"

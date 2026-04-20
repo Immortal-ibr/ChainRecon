@@ -1,0 +1,12 @@
+# Nmap 7.99 scan initiated Sun Apr 19 20:00:11 2026 as: "C:\\Program Files (x86)\\Nmap\\nmap.EXE" -Pn --script ssl-cert,ssl-enum-ciphers -p 443,8443,8883,8080 -T4 -oN nooie_analysis\\nmap_ssl.txt 192.168.123.99
+Nmap scan report for 192.168.123.99
+Host is up (0.00041s latency).
+
+PORT     STATE  SERVICE
+443/tcp  closed https
+8080/tcp closed http-proxy
+8443/tcp closed https-alt
+8883/tcp closed secure-mqtt
+MAC Address: C6:41:1E:37:B4:F8 (Unknown)
+
+# Nmap done at Sun Apr 19 20:00:12 2026 -- 1 IP address (1 host up) scanned in 1.04 seconds

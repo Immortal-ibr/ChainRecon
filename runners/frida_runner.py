@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from runners.base import ToolNotFoundError, check_tool, run_subprocess
+from utils.logging_config import get_logger
+
+logger = get_logger("frida")
 
 # Directory containing built-in Frida JS scripts (shipped with ChainRecon)
 _SCRIPTS_DIR = Path(__file__).parent / "frida_scripts"
@@ -42,6 +45,26 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, str]] = {
         "label": "Crypto Monitor",
         "description": "Log encryption, decryption, hashing, and HMAC operations with keys/payloads",
         "file": "crypto_monitor.js",
+    },
+    "shared_preferences_dump": {
+        "label": "SharedPreferences Dump",
+        "description": "Hook SharedPreferences to log all get/put operations and dump stored entries",
+        "file": "shared_preferences_dump.js",
+    },
+    "database_dump": {
+        "label": "Database Monitor",
+        "description": "Hook SQLiteDatabase to log queries, inserts, updates, and raw SQL execution",
+        "file": "database_dump.js",
+    },
+    "http_intercept": {
+        "label": "HTTP Intercept",
+        "description": "Intercept OkHttp, HttpURLConnection, WebView, and Retrofit HTTP traffic",
+        "file": "http_intercept.js",
+    },
+    "certificate_pinning_detect": {
+        "label": "Certificate Pinning Detection",
+        "description": "Detect certificate-pinning implementations without bypassing them",
+        "file": "certificate_pinning_detect.js",
     },
 }
 
@@ -136,6 +159,7 @@ class FridaRunner:
             script_path = str(self.get_script_path(script_key))
 
         cmd = ["frida", "-U", "-n", process_name, "-l", script_path, "--no-pause"]
+        logger.info("Attaching to '%s' with script '%s'", process_name, script_key or custom_script_path)
         result = self._executor(cmd, timeout=120)
 
         return {

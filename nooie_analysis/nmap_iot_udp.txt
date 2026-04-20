@@ -1,0 +1,14 @@
+# Nmap 7.99 scan initiated Sun Apr 19 22:26:30 2026 as: "C:\\Program Files (x86)\\Nmap\\nmap.EXE" -Pn -sU -T4 -p 53,67,123,1900,5353,5683 -oN nooie_analysis\\nmap_iot_udp.txt 192.168.123.99
+Nmap scan report for 192.168.123.99
+Host is up (0.00064s latency).
+
+PORT     STATE  SERVICE
+53/udp   closed domain
+67/udp   closed dhcps
+123/udp  closed ntp
+1900/udp closed upnp
+5353/udp closed zeroconf
+5683/udp closed coap
+MAC Address: C6:41:1E:37:B4:F8 (Unknown)
+
+# Nmap done at Sun Apr 19 22:26:34 2026 -- 1 IP address (1 host up) scanned in 4.26 seconds

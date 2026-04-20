@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from runners.base import check_tool, make_output_dir, run_subprocess
+from utils.logging_config import get_logger
+
+logger = get_logger("nmap")
 
 SCAN_PROFILES: Dict[str, Dict[str, Any]] = {
     "quick": {
@@ -39,6 +42,12 @@ SCAN_PROFILES: Dict[str, Dict[str, Any]] = {
         "args": ["-Pn", "-sV", "--script", "vuln", "-T4"],
         "suffix": "nmap_vuln",
     },
+    "ssl": {
+        "label": "SSL / Cert Scan",
+        "description": "ssl-cert + ssl-enum-ciphers on HTTPS/MQTT-TLS ports",
+        "args": ["-Pn", "--script", "ssl-cert,ssl-enum-ciphers", "-p", "443,8443,8883,8080", "-T4"],
+        "suffix": "nmap_ssl",
+    },
 }
 
 
@@ -60,7 +69,7 @@ class NmapRunner:
         profile: str,
         output_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
-        check_tool("nmap")
+        nmap_path = check_tool("nmap")
 
         if profile not in SCAN_PROFILES:
             raise ValueError(f"Unknown scan profile: {profile}")
@@ -69,24 +78,26 @@ class NmapRunner:
         out_dir = Path(output_dir) if output_dir else make_output_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
 
+        logger.info("Running nmap '%s' scan against %s", profile, target)
+
         output_files: List[str] = []
 
         if profile == "iot":
             tcp_file = str(out_dir / f"{cfg['suffix']}_tcp.txt")
             udp_file = str(out_dir / f"{cfg['suffix']}_udp.txt")
             self._executor(
-                ["nmap"] + cfg["tcp_args"] + [target, "-oN", tcp_file],
+                [nmap_path] + cfg["tcp_args"] + [target, "-oN", tcp_file],
                 timeout=600,
             )
             self._executor(
-                ["nmap"] + cfg["udp_args"] + [target, "-oN", udp_file],
+                [nmap_path] + cfg["udp_args"] + [target, "-oN", udp_file],
                 timeout=600,
             )
             output_files = [tcp_file, udp_file]
         else:
             out_file = str(out_dir / f"{cfg['suffix']}.txt")
             self._executor(
-                ["nmap"] + cfg["args"] + [target, "-oN", out_file],
+                [nmap_path] + cfg["args"] + [target, "-oN", out_file],
                 timeout=900,
             )
             output_files = [out_file]

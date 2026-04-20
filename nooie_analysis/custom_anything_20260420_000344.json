@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "analyzer": "CustomScriptRunner",
+    "description": "anything",
+    "script": "nmap_runner.py",
+    "command": "python nmap_runner.py",
+    "notes": "nothing",
+    "exit_code": 0,
+    "duration_seconds": 0.155296
+  },
+  "findings": {
+    "stdout": "",
+    "stderr": ""
+  },
+  "summary": {
+    "exit_code": 0,
+    "duration_seconds": 0.155296
+  },
+  "risk_indicators": [
+    {
+      "severity": "info",
+      "title": "anything",
+      "details": "Script exited 0 (no output)."
+    }
+  ]
+}

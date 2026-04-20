@@ -1,168 +1,147 @@
-# ChainRecon
+﻿# ChainRecon
 
-> A framework for IoT device reconnaissance and security analysis, built for the Purdue ChainVisor project.
+A network security analysis tool built for the Purdue ChainVisor project. The goal is to figure out what an IoT device actually does on the network â€” what servers it connects to, what protocols it uses, whether its traffic is encrypted, and whether the APK has anything sketchy in it.
 
-## What is this?
+This was written because manually running nmap, tshark, jadx, and frida on every new device gets old fast. ChainRecon wraps all of that into a single TUI that you can actually navigate with a keyboard.
 
-ChainRecon is a bash script I built to help analyze IoT devices during security research. Instead of running a bunch of different commands manually every time I want to test a device, this script automates the whole process - from network setup to traffic capture to SSL analysis.
+## Setup
 
-The main goal is to figure out what an IoT device is doing on the network: what servers it talks to, what protocols it uses, and whether it has any obvious security issues.
-
-## How it works
-
-The setup is pretty straightforward:
-1. Connect your IoT device to a physical router
-2. Connect that router to your computer via Ethernet
-3. Your computer forwards traffic to WiFi (so the IoT device can reach the internet)
-4. Run this script to capture and analyze everything
-
-This gives you a "man-in-the-middle" position where you can see all the traffic without breaking anything.
-
-## Features
-
-### Mode 1: Network Setup
-- Automatically detects available network interfaces
-- Guides you through setting up IP forwarding and NAT
-- Configures iptables rules (including Docker support)
-- Prompts for router IP, IoT device IP, and interface names with helpful instructions
-
-### Mode 2: Device Scanning (Nmap)
-Choose from 5 different scan modes:
-- **Quick Scan** - Fast scan of top 1000 ports (good for initial discovery)
-- **Gentle Scan** - Slow, careful scan that won't crash fragile IoT devices
-- **Full Scan** - Comprehensive scan of all 65535 ports with OS detection
-- **IoT Protocol Scan** - Targets common IoT ports (MQTT, CoAP, UPnP, mDNS, etc.)
-- **Vulnerability Scan** - Uses Nmap NSE scripts to find known vulnerabilities (supports vulners.nse)
-
-### Mode 3: Traffic Capture & Analysis
-This is where tshark really shines. Pick from:
-- **Basic Capture** - Just save raw packets to a pcap file for Wireshark
-- **Live Analysis** - Watch traffic in real-time as it happens
-- **DNS Extraction** - See every domain the device contacts
-- **HTTP Analysis** - Find unencrypted API calls, user-agents, POST data
-- **Protocol Stats** - Get a breakdown of what protocols are being used
-- **Full Analysis** - Does everything above and generates a comprehensive report
-
-The full analysis mode is probably what you want most of the time - it captures everything and then extracts:
-- All DNS queries and resolved IPs
-- HTTP requests (if any unencrypted traffic exists)
-- TLS/HTTPS destinations (via SNI)
-- External IPs the device contacts
-- Protocol hierarchy and conversation statistics
-
-### Mode 4: SSL/TLS Analysis
-Deep dive into the device's SSL/TLS implementation:
-- **Certificate Probe** - Extract certificates from common ports
-- **Cipher Analysis** - Check for weak ciphers and outdated TLS versions
-- **TLS Fingerprinting** - Identify the SSL library (OpenSSL, mbedTLS, wolfSSL, etc.)
-- **RSA Key Analysis** - Check for weak keys using RsaCtfTool (detects ROCA vulnerability)
-
-The TLS fingerprinting is based on research showing that many IoT devices use customized or outdated SSL libraries, which can be identified by their cipher suite ordering and TLS handshake parameters.
-
-## Python Analysis CLI
-
-ChainRecon now includes a Python-first analysis layer for parsing saved artifacts and generating reports without changing the existing bash workflow.
-
-### What it covers
-
-- `TrafficAnalyzer` parses packet captures into structured DNS, HTTP, TLS SNI, protocol, external-IP, and conversation data
-- `SSLAnalyzer` probes certificates, flags weak TLS posture, and optionally computes a JA3-style hash from a saved pcap
-- `ScannerAnalyzer` parses saved Nmap output and can optionally enrich hosts with Shodan data if you provide an API key
-- `ReportGenerator` aggregates analyzer output and renders JSON, HTML, or CSV reports through plugins
-
-### CLI usage
-
-Run the Python CLI from the repo root:
+You need Python 3.10+ and pip. On Windows, run from PowerShell (admin or Windows Terminal):
 
 ```bash
-python chainrecon.py analyze-traffic ./captures/device.pcap --format html --output ./reports/traffic.html
-python chainrecon.py analyze-ssl 192.168.1.50 --ports 443 8443 --format json --output ./reports/ssl.json
-python chainrecon.py analyze-scan ./scans/device_scan.xml --shodan-api-key "$SHODAN_API_KEY"
-python chainrecon.py report ./reports --format html --output ./reports/final_report.html
+pip install -r requirements.txt
 ```
 
-Each analyzer prints structured JSON to stdout. If `--format` and `--output` are provided, the result is also rendered through the report plugin system.
+Then launch the TUI:
 
-## Requirements
+```bash
+python chainrecon.py tui
+```
 
-**Must have:**
-- Linux (tested on Kali/Ubuntu)
-- Root access (`sudo`)
-- `nmap`
-- `tcpdump`
-- `openssl`
-- `iptables`
+Or use the CLI directly if you don't want the TUI:
 
-**Recommended:**
-- `tshark` (for advanced traffic analysis) - `apt install tshark`
-- `RsaCtfTool` (for RSA key weakness detection) - `git clone https://github.com/RsaCtfTool/RsaCtfTool.git`
-- `vulners.nse` (for better vulnerability scanning) - Download from [vulnersCom/nmap-vulners](https://github.com/vulnersCom/nmap-vulners)
+```bash
+python chainrecon.py analyze-traffic captures/device.pcap --format html
+python chainrecon.py analyze-ssl 192.168.1.50 --ports 443 8443
+python chainrecon.py analyze-scan scans/device.xml
+```
 
-**Python dependencies:**
-- Install with `pip install -r requirements.txt`
-- Optional integrations:
-  - `shodan` for internet-facing host enrichment
-  - `pyja3` for future JA3-specific parsing workflows
+## How the network setup works
 
-The script will work without the optional tools, but you'll get way better results with them installed.
+The idea is a classic man-in-the-middle position â€” your computer sits between the IoT device and the router so you can see all the traffic:
 
-## Usage
+1. Connect the IoT device to a physical router
+2. Connect that router to your computer via Ethernet
+3. Your computer forwards traffic to Wi-Fi (so the device can reach the internet)
+4. ChainRecon captures and analyzes everything going through that bridge
 
-1. **Make it executable:**
-   ```bash
-   chmod +x "Recon script.sh"
-   ```
+This doesn't require rooting the device or installing anything on it. You're just watching at the network layer.
 
-2. **Run as root:**
-   ```bash
-   sudo ./Recon\ script.sh
-   ```
+## What it analyzes
 
-3. **Follow the prompts:**
-   - Enter your router IP (e.g., 192.168.123.1)
-   - Enter the IoT device IP (or leave blank to scan for it later)
-   - Choose which mode you want to run
+**Traffic (from a .pcap file or live capture)**
+- DNS queries â€” what domains the device looks up
+- TLS SNI â€” where it actually connects (even HTTPS leaks the hostname)
+- HTTP â€” any unencrypted requests, including headers and POST data
+- External IPs with cloud provider attribution (AWS, GCP, Azure, etc.)
+- Protocol breakdown and conversation statistics
+- WebRTC/STUN activity (common in cameras and video devices)
+- Cleartext credentials (passwords, tokens, API keys in unencrypted traffic)
 
-4. **Typical workflow:**
-   - Start with Mode 1 to set up networking
-   - Run Mode 2 (Quick or IoT Protocol scan) to find open ports
-   - Use Mode 3 (Full Analysis) while interacting with the device
-   - Run Mode 4 if you found SSL/TLS services
+**APK static analysis**
+- Decompiles with jadx and inspects the Java source
+- Reads the AndroidManifest.xml for permissions and exported components
+- Checks network_security_config.xml for cleartext traffic settings and cert pins
+- Scans for hardcoded credentials, API keys, and AWS config in the source
+- Identifies SDKs: Tuya, AWS IoT, Firebase, Paho MQTT, OkHttp, Agora, WebRTC
 
-## Output
+**SSL/TLS**
+- Connects to open ports and reads the certificate chain
+- Flags weak ciphers (RC4, DES, export) and outdated TLS versions (1.0, 1.1)
+- Checks key sizes and signature algorithms
+- Optional JA3-style fingerprinting from a saved pcap
 
-Everything gets saved to a timestamped directory like `iot_recon_20260203_220000/`:
-- Nmap scan results (`.txt` files)
-- Packet captures (`.pcap` files)
-- Traffic analysis reports (`.txt` files)
-- SSL certificates (`.pem` files)
-- TLS fingerprint data
-- RSA key analysis results
+**Device scanning (via nmap)**
+- Five scan profiles: quick, gentle, full, IoT-specific ports, vulnerability
+- IoT-specific: checks MQTT (1883), CoAP (5683), UPnP (1900), mDNS (5353), etc.
+- Optional Shodan enrichment if you have an API key
 
-## Tips
+## External tools
 
-- **For Mode 3:** Interact with the device during capture (open the app, trigger notifications, etc.) to see more traffic
-- **DNS is gold:** Even if everything is encrypted, DNS queries reveal what services the device uses
-- **Check TLS SNI:** Modern HTTPS still leaks the destination hostname via Server Name Indication
-- **Watch for HTTP:** Some IoT devices still send data unencrypted - Mode 3 will catch this
-- **Gentle scans:** If the device is acting weird or crashing, use the Gentle Scan mode
+The TUI will tell you which tools are found on startup. Most work fine without everything installed â€” you only need jadx if you're doing APK analysis, frida if you're doing runtime hooking, etc.
 
-## Research Background
+| Tool | What it's for | Where to get it |
+|------|--------------|----------------|
+| nmap | Device scanning | nmap.org |
+| tshark | Live capture, pcap parsing | wireshark.org |
+| jadx | APK decompilation | github.com/skylot/jadx/releases |
+| apktool | APK resource decoding | apktool.org |
+| frida | Runtime instrumentation | frida.re |
+| adb | Android device communication | developer.android.com |
 
-This tool incorporates findings from IoT security research, particularly:
-- TLS fingerprinting techniques for identifying SSL libraries
-- Common IoT vulnerabilities (weak ciphers, self-signed certs, outdated TLS)
-- IoT-specific protocols and port scanning strategies
-- Traffic analysis patterns for device identification
+For jadx and apktool on Windows, you need to point ChainRecon at the files since they probably won't be on your PATH. Add this to `config/local.yaml` (create it if it doesn't exist):
+
+```yaml
+tools:
+  jadx: 'C:\path\to\jadx-1.5.5\bin\jadx.bat'
+  apktool: 'C:\path\to\apktool\apktool.jar'
+```
+
+Use single quotes for Windows paths â€” double-quoted YAML strings treat backslashes as escape sequences. apktool is a JAR file so you need Java installed; ChainRecon handles the `java -jar` part automatically.
+
+## Configuration
+
+All config lives in the `config/` directory. `config/default.yaml` has the built-in defaults â€” don't edit that one. Put your overrides in `config/local.yaml`:
+
+```yaml
+network:
+  eth_interface: Ethernet
+  internet_interface: Wi-Fi
+  router_ip: 192.168.123.1
+  target_ip: 192.168.123.50
+
+tools:
+  jadx: 'D:\tools\jadx\bin\jadx.bat'
+
+api_keys:
+  shodan: your_key_here
+```
+
+Environment variables also work and take highest priority:
+`CHAINRECON_JADX_PATH`, `CHAINRECON_APKTOOL_PATH`, etc.
+
+## Running tests
+
+```bash
+python -m pytest --tb=short -q
+```
+
+454 tests covering analyzers, runners, CLI, TUI screens, and plugins. They're all offline â€” no real network access or tools needed.
+
+## Project layout
+
+```
+chainrecon.py        CLI entry point
+interactive.py       Interactive CLI (pre-TUI version)
+analysis/            Traffic, SSL, APK, scan analyzers
+runners/             Subprocess wrappers for nmap, frida, tshark, etc.
+tui/                 Textual TUI app and screens
+plugins/             Report output plugins (JSON, HTML, CSV)
+tests/               Test suite
+config/              Default and local configuration files
+scripts/             Bash helper scripts (Linux-focused)
+```
 
 ## Troubleshooting
 
-**"No interface set"** - Run Mode 1 first to configure networking
+**Question marks (?) showing up in the TUI borders** â€” This happens in admin PowerShell / cmd.exe (conhost.exe) because Unicode box-drawing characters don't render. Use Windows Terminal instead, or ChainRecon will automatically detect this and switch to ASCII borders.
 
-**"tshark not found"** - Install with `apt install tshark`, or the script will fall back to basic tcpdump
+**jadx not found** â€” Set the path in `config/local.yaml` as described above. The Settings screen in the TUI also has instructions.
 
-**"Permission denied"** - Make sure you're running with `sudo`
+**APK analysis seems stuck** â€” Large APKs can take 3-5 minutes to decompile. The TUI now shows jadx progress lines as it runs so you can see it's actually working.
 
-**Device can't reach internet** - Check that IP forwarding is enabled and iptables rules are correct (Mode 1 does this)
+**UTF-8 decode errors in analysis output** â€” Fixed in the current version. If you see these, make sure you're running the latest code.
 
-**No traffic captured** - Verify the interface name is correct and the device is actually sending traffic
+**No traffic captured** â€” Check that the interface name in config matches your actual Ethernet adapter name. `ipconfig` on Windows or `ip link` on Linux will show you.
+
+

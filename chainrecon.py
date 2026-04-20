@@ -8,12 +8,17 @@ from pathlib import Path
 from typing import Iterable, List
 
 from analysis import ReportGenerator, ScannerAnalyzer, SSLAnalyzer, TrafficAnalyzer
+from utils.logging_config import get_logger, setup_logging
+
+logger = get_logger("cli")
 
 DEFAULT_SSL_PORTS = [443, 8443, 8008, 8080, 8883, 1883]
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="ChainRecon Python analysis CLI")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug-level logging")
+    parser.add_argument("--log-file", help="Write log output to a file")
     subparsers = parser.add_subparsers(dest="command")
 
     traffic_parser = subparsers.add_parser("analyze-traffic", help="Analyze a packet capture")
@@ -62,7 +67,167 @@ def build_parser() -> argparse.ArgumentParser:
     capture_parser.add_argument("--output")
     capture_parser.set_defaults(handler=handle_capture)
 
+    # ── APK analysis ─────────────────────────────────────────────────
+    apk_parser = subparsers.add_parser("apk", help="Run static analysis on an Android APK")
+    apk_parser.add_argument("apk_path", help="Path to the APK file")
+    apk_parser.add_argument("--format", choices=["json", "html", "csv"])
+    apk_parser.add_argument("--output")
+    apk_parser.set_defaults(handler=handle_apk)
+
+    # ── TUI ──────────────────────────────────────────────────────────
+    subparsers.add_parser("tui", help="Launch the interactive TUI")
+    subparsers.add_parser("interactive", help="Launch the legacy interactive menu")
+    # ── Network config ───────────────────────────────────────────────
+    net_parser = subparsers.add_parser(
+        "network-config",
+        help="Show, save, or apply the network setup (NAT/routing) config",
+    )
+    net_parser.add_argument("--eth", metavar="ADAPTER", help="Ethernet adapter name (IoT side)")
+    net_parser.add_argument("--internet", metavar="ADAPTER", help="Internet adapter name (Wi-Fi)")
+    net_parser.add_argument("--static-ip", default="192.168.123.100/24",
+                            help="Static IP/prefix for Ethernet adapter (default 192.168.123.100/24)")
+    net_parser.add_argument("--target-ip", help="IoT device IP (used for capture BPF filters)")
+    net_parser.add_argument("--router-ip", help="Dedicated router IP")
+    net_parser.add_argument("--apply", action="store_true",
+                            help="Run the network setup script after saving (Windows: requires Admin)")
+    net_parser.add_argument("--remove", action="store_true",
+                            help="Tear down NAT / remove static IP")
+    net_parser.add_argument("--list-interfaces", action="store_true",
+                            help="Print detected network interfaces and exit")
+    net_parser.set_defaults(handler=handle_network_config)
     return parser
+
+
+def handle_network_config(args) -> int:
+    """Save / apply the network setup configuration."""
+    import platform
+    import subprocess as _sp
+    from pathlib import Path as _Path
+    from utils.config import get_network_config, save_network_config, reset_config
+    from utils.network import list_interfaces
+
+    if args.list_interfaces:
+        ifaces = list_interfaces()
+        print(f"{'NAME':<30} {'DEVICE':<60} DESCRIPTION")
+        print("-" * 110)
+        for i in ifaces:
+            print(f"{i['name']:<30} {i.get('device', i['name']):<60} {i.get('description', '')}")
+        return 0
+
+    # Show current config if no save args given
+    if not any([args.eth, args.internet, args.target_ip, args.router_ip]):
+        reset_config()
+        cfg = get_network_config()
+        print(json.dumps({"network_config": cfg}, indent=2))
+        return 0
+
+    # Save
+    data = {
+        "eth_interface": args.eth,
+        "internet_interface": args.internet,
+        "static_ip": args.static_ip,
+        "target_ip": args.target_ip,
+        "router_ip": args.router_ip,
+    }
+    save_network_config(data)
+    reset_config()
+    print(json.dumps({"saved": True, "network_config": get_network_config()}, indent=2))
+
+    if not args.apply and not args.remove:
+        return 0
+
+    # Apply or remove
+    scripts_dir = _Path(__file__).resolve().parent / "scripts"
+    is_win = platform.system() == "Windows"
+
+    if "/" in args.static_ip:
+        ip_part, prefix = args.static_ip.split("/", 1)
+    else:
+        ip_part, prefix = args.static_ip, "24"
+
+    eth = args.eth
+    inet = args.internet
+    if not eth or not inet:
+        print("[!] --eth and --internet are required for --apply / --remove")
+        return 1
+
+    if is_win:
+        script = str(scripts_dir / "network_setup.ps1")
+        ps_args = [
+            "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", script,
+            "-EthInterface", eth,
+            "-InternetInterface", inet,
+            "-StaticIP", ip_part,
+            "-SubnetPrefix", prefix,
+        ]
+        if args.remove:
+            ps_args.append("-Remove")
+
+        # Check elevation — New-NetNat/New-NetIPAddress require admin
+        try:
+            import ctypes
+            _is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            _is_admin = False
+
+        if _is_admin:
+            cmd = ["powershell"] + ps_args
+            print(f"[*] Running (elevated)")
+            result = _sp.run(cmd, timeout=120)
+            return result.returncode
+        else:
+            import tempfile
+            log_path = _Path(tempfile.gettempdir()) / "chainrecon_net_setup.log"
+            wrapper_path = _Path(tempfile.gettempdir()) / "chainrecon_setup_run.ps1"
+
+            # Build script-level args only (no powershell.exe flags in the wrapper)
+            script_args = [
+                "-EthInterface", eth,
+                "-InternetInterface", inet,
+                "-StaticIP", ip_part,
+                "-SubnetPrefix", prefix,
+            ]
+            if args.remove:
+                script_args.append("-Remove")
+
+            # Wrapper: call the PS1 directly and redirect all output to log
+            script_escaped = script.replace("'", "''")
+            log_escaped = str(log_path).replace("'", "''")
+            script_call = f"& '{script_escaped}'"
+            for a in script_args:
+                script_call += f" {a}" if not " " in str(a) else f" '{a}'"
+            wrapper_content = f"{script_call} *> '{log_escaped}'\n"
+            wrapper_path.write_text(wrapper_content, encoding="utf-8")
+
+            wrapper_escaped = str(wrapper_path).replace('"', '`"')
+            ps_inner = f'-NoProfile -ExecutionPolicy Bypass -File "{wrapper_escaped}"'
+
+            print("[*] Requesting elevation via UAC (approve the dialog)...")
+            print(f"[*] Output will be logged to: {log_path}")
+            result = _sp.run(
+                [
+                    "powershell", "-NoProfile", "-Command",
+                    f'Start-Process powershell -Verb RunAs -Wait -ArgumentList \'{ps_inner}\''
+                ],
+                timeout=180,
+            )
+            if log_path.exists():
+                log_text = log_path.read_text(encoding="utf-8", errors="replace").strip()
+                if log_text:
+                    print(log_text)
+            if result.returncode != 0:
+                print()
+                print("[!] Elevation failed or was cancelled.")
+                print("[!] To apply manually, open an ADMIN PowerShell and run:")
+                print(f'    powershell -NoProfile -ExecutionPolicy Bypass -File "{script}" \\')
+                for a in script_args:
+                    print(f"        {a} \\", end="")
+                print()
+            return result.returncode
+    else:
+        print("[!] Linux --apply: run scripts/network_setup.sh manually (requires sudo)")
+        return 1
 
 
 def handle_analyze_traffic(args) -> int:
@@ -167,6 +332,13 @@ def handle_capture(args) -> int:
     return 1
 
 
+def handle_apk(args) -> int:
+    from analysis.apk_analyzer import APKAnalyzer
+
+    result = APKAnalyzer().analyze(args.apk_path)
+    return emit_result(result, "apk", args.format, args.output)
+
+
 def load_report_inputs(inputs: Iterable[str]):
     merged = {"traffic": None, "ssl": None, "scan": None}
     files = []
@@ -211,10 +383,18 @@ def emit_result(result, section, format_name=None, output_path=None) -> int:
 def main(argv: List[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command is None:
+    setup_logging(verbose=args.verbose, log_file=getattr(args, "log_file", None))
+
+    if args.command is None or args.command == "tui":
+        from tui.app import run_tui
+        run_tui()
+        return 0
+
+    if args.command == "interactive":
         from interactive import run_interactive
         run_interactive()
         return 0
+
     return args.handler(args)
 
 

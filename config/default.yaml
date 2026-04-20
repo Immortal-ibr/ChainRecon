@@ -1,0 +1,91 @@
+# ChainRecon Default Configuration
+# Override any value by creating a config/local.yaml or passing --config <path>
+
+# ── Tool Paths ───────────────────────────────────────────────────────────────
+# Leave null to auto-detect from PATH / well-known install directories.
+tools:
+  nmap: null
+  tshark: null
+  tcpdump: null
+  adb: null
+  frida: null
+  openssl: null
+  jadx: null
+  apktool: null
+
+# ── API Keys ─────────────────────────────────────────────────────────────────
+# Prefer environment variables: CHAINRECON_SHODAN_KEY, etc.
+api_keys:
+  shodan: null
+
+# ── Scan Profiles ────────────────────────────────────────────────────────────
+scan_profiles:
+  quick:
+    label: "Quick Scan"
+    description: "Top 1000 ports, fast (-T4)"
+    args: ["-Pn", "-sV", "-T4", "--top-ports", "1000"]
+  gentle:
+    label: "Gentle Scan"
+    description: "Full TCP connect, slow (-T2) -- safe for fragile IoT"
+    args: ["-Pn", "-sT", "-sV", "-T2", "--max-retries", "1", "-r"]
+  full:
+    label: "Full Scan"
+    description: "All 65535 ports with OS/version detection (-A)"
+    args: ["-Pn", "-A", "-p-", "-T4", "--version-intensity", "9"]
+  iot:
+    label: "IoT Protocol Scan"
+    description: "TCP + UDP for IoT ports (UPnP, mDNS, CoAP, MQTT)"
+    tcp_args: ["-Pn", "-sV", "-T4", "-p", "80,443,8080,8443,8008,1883,8883,502,102,47808"]
+    udp_args: ["-Pn", "-sU", "-T4", "-p", "53,67,123,1900,5353,5683"]
+  vuln:
+    label: "Vulnerability Scan"
+    description: "NSE vuln scripts + version detection"
+    args: ["-Pn", "-sV", "--script", "vuln", "-T4"]
+
+# ── IoT Port → Protocol Mapping ─────────────────────────────────────────────
+iot_ports:
+  1883: "MQTT"
+  8883: "MQTT over TLS"
+  5683: "CoAP"
+  5684: "CoAP over DTLS"
+  5353: "mDNS"
+  1900: "UPnP"
+  47808: "BACnet"
+  502: "Modbus"
+  102: "S7comm"
+  8080: "HTTP Alternate"
+  8443: "HTTPS Alternate"
+  161: "SNMP"
+  162: "SNMP Trap"
+  6668: "Zigbee"
+  11095: "Thread"
+
+# ── SSL/TLS Ports To Probe ──────────────────────────────────────────────────
+ssl_ports: [443, 8443, 8008, 8080, 8883, 1883]
+
+# ── Traffic Capture Defaults ─────────────────────────────────────────────────
+capture:
+  default_duration: 60
+  max_file_size_mb: 500
+  interface: null
+
+# ── Frida Settings ───────────────────────────────────────────────────────────
+frida:
+  server_path: null
+  device_serial: null
+  default_package: null
+  spawn_mode: false
+
+# ── Output Settings ──────────────────────────────────────────────────────────
+output:
+  directory: "./nooie_analysis"
+  default_format: "json"
+
+# ── Network Setup ────────────────────────────────────────────────────────────
+# Saved from the Network Setup screen. Values persist across sessions.
+network:
+  eth_interface: null
+  internet_interface: null
+  static_ip: "192.168.123.100/24"
+  target_ip: null
+  router_ip: null

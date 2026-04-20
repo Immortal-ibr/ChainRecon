@@ -1,0 +1,271 @@
+{
+  "metadata": {
+    "packet_count": 4048,
+    "analyzer": "EndpointAnalyzer",
+    "total_endpoints": 8,
+    "external_endpoints": 7,
+    "internal_endpoints": 1
+  },
+  "findings": {
+    "endpoints": [
+      {
+        "ip": "192.168.123.99",
+        "packet_count": 4042,
+        "bytes": 3298860,
+        "is_private": true,
+        "cloud_provider": null,
+        "hostname": null,
+        "ports": [
+          33101,
+          33988,
+          35259,
+          35916,
+          38022,
+          38038,
+          38042,
+          41342,
+          45852,
+          46271,
+          48925,
+          51007,
+          52271,
+          57532
+        ],
+        "services": []
+      },
+      {
+        "ip": "172.233.208.108",
+        "packet_count": 3746,
+        "bytes": 3185967,
+        "is_private": false,
+        "cloud_provider": null,
+        "hostname": null,
+        "ports": [
+          54336
+        ],
+        "services": []
+      },
+      {
+        "ip": "44.193.217.9",
+        "packet_count": 86,
+        "bytes": 23993,
+        "is_private": false,
+        "cloud_provider": null,
+        "hostname": null,
+        "ports": [
+          443
+        ],
+        "services": [
+          "HTTPS"
+        ]
+      },
+      {
+        "ip": "3.224.238.60",
+        "packet_count": 71,
+        "bytes": 13413,
+        "is_private": false,
+        "cloud_provider": "AWS",
+        "hostname": null,
+        "ports": [
+          8883
+        ],
+        "services": [
+          "MQTT/TLS"
+        ]
+      },
+      {
+        "ip": "149.137.137.254",
+        "packet_count": 51,
+        "bytes": 34309,
+        "is_private": false,
+        "cloud_provider": null,
+        "hostname": null,
+        "ports": [
+          443
+        ],
+        "services": [
+          "HTTPS"
+        ]
+      },
+      {
+        "ip": "149.137.140.9",
+        "packet_count": 48,
+        "bytes": 32037,
+        "is_private": false,
+        "cloud_provider": null,
+        "hostname": null,
+        "ports": [
+          443
+        ],
+        "services": [
+          "HTTPS"
+        ]
+      },
+      {
+        "ip": "44.214.160.98",
+        "packet_count": 28,
+        "bytes": 7565,
+        "is_private": false,
+        "cloud_provider": null,
+        "hostname": null,
+        "ports": [
+          443
+        ],
+        "services": [
+          "HTTPS"
+        ]
+      },
+      {
+        "ip": "8.8.8.8",
+        "packet_count": 12,
+        "bytes": 1576,
+        "is_private": false,
+        "cloud_provider": null,
+        "hostname": null,
+        "ports": [
+          53
+        ],
+        "services": [
+          "DNS"
+        ]
+      }
+    ],
+    "external_endpoints": [
+      {
+        "ip": "172.233.208.108",
+        "packet_count": 3746,
+        "bytes": 3185967,
+        "is_private": false,
+        "cloud_provider": null,
+        "hostname": null,
+        "ports": [
+          54336
+        ],
+        "services": []
+      },
+      {
+        "ip": "44.193.217.9",
+        "packet_count": 86,
+        "bytes": 23993,
+        "is_private": false,
+        "cloud_provider": null,
+        "hostname": null,
+        "ports": [
+          443
+        ],
+        "services": [
+          "HTTPS"
+        ]
+      },
+      {
+        "ip": "3.224.238.60",
+        "packet_count": 71,
+        "bytes": 13413,
+        "is_private": false,
+        "cloud_provider": "AWS",
+        "hostname": null,
+        "ports": [
+          8883
+        ],
+        "services": [
+          "MQTT/TLS"
+        ]
+      },
+      {
+        "ip": "149.137.137.254",
+        "packet_count": 51,
+        "bytes": 34309,
+        "is_private": false,
+        "cloud_provider": null,
+        "hostname": null,
+        "ports": [
+          443
+        ],
+        "services": [
+          "HTTPS"
+        ]
+      },
+      {
+        "ip": "149.137.140.9",
+        "packet_count": 48,
+        "bytes": 32037,
+        "is_private": false,
+        "cloud_provider": null,
+        "hostname": null,
+        "ports": [
+          443
+        ],
+        "services": [
+          "HTTPS"
+        ]
+      },
+      {
+        "ip": "44.214.160.98",
+        "packet_count": 28,
+        "bytes": 7565,
+        "is_private": false,
+        "cloud_provider": null,
+        "hostname": null,
+        "ports": [
+          443
+        ],
+        "services": [
+          "HTTPS"
+        ]
+      },
+      {
+        "ip": "8.8.8.8",
+        "packet_count": 12,
+        "bytes": 1576,
+        "is_private": false,
+        "cloud_provider": null,
+        "hostname": null,
+        "ports": [
+          53
+        ],
+        "services": [
+          "DNS"
+        ]
+      }
+    ],
+    "internal_endpoints": [
+      {
+        "ip": "192.168.123.99",
+        "packet_count": 4042,
+        "bytes": 3298860,
+        "is_private": true,
+        "cloud_provider": null,
+        "hostname": null,
+        "ports": [
+          33101,
+          33988,
+          35259,
+          35916,
+          38022,
+          38038,
+          38042,
+          41342,
+          45852,
+          46271,
+          48925,
+          51007,
+          52271,
+          57532
+        ],
+        "services": []
+      }
+    ],
+    "cloud_summary": {
+      "AWS": 1
+    }
+  },
+  "summary": {
+    "total_unique_ips": 8,
+    "external_ips": 7,
+    "cloud_providers": [
+      "AWS"
+    ],
+    "top_external": "172.233.208.108"
+  },
+  "risk_indicators": []
+}

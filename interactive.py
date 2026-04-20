@@ -470,26 +470,39 @@ def _configure_script_variables(runner: FridaRunner, script_key: str) -> None:
     if script_key == "list_classes":
         pkg = input("  Filter by package name (e.g., com.example) or Enter for all: ").strip()
         if pkg:
-            _inject_var(runner, script_key, "FILTER", f'"{pkg}"')
+            _inject_var(runner, script_key, "FILTER", json.dumps(pkg))
     elif script_key == "hook_all_methods":
         classes = input("  Class names to hook (comma-separated): ").strip()
         if classes:
-            class_list = [f'"{c.strip()}"' for c in classes.split(",")]
-            _inject_var(runner, script_key, "TARGET_CLASSES", f"[{', '.join(class_list)}]")
+            class_list = [c.strip() for c in classes.split(",")]
+            _inject_var(runner, script_key, "TARGET_CLASSES", json.dumps(class_list))
     elif script_key == "hook_method":
         cls = input("  Full class name (e.g., com.example.MyClass): ").strip()
         meth = input("  Method name (e.g., myMethod): ").strip()
         if cls:
-            _inject_var(runner, script_key, "TARGET_CLASS", f'"{cls}"')
+            _inject_var(runner, script_key, "TARGET_CLASS", json.dumps(cls))
         if meth:
-            _inject_var(runner, script_key, "TARGET_METHOD", f'"{meth}"')
+            _inject_var(runner, script_key, "TARGET_METHOD", json.dumps(meth))
 
 
 def _inject_var(runner: FridaRunner, script_key: str, var_name: str, value: str) -> None:
-    """Prepend a variable declaration to the script file (idempotent)."""
+    """Prepend a variable declaration to the script file (idempotent).
+
+    ``var_name`` is validated against a strict identifier pattern and
+    ``value`` is serialised via :func:`json.dumps` so that arbitrary
+    user input cannot escape the string literal and inject JavaScript.
+    """
+    import re as _re
+
+    if not _re.fullmatch(r"[A-Z_][A-Z0-9_]*", var_name):
+        raise ValueError(f"Invalid variable name: {var_name}")
+
+    # Re-serialise value through json.dumps to guarantee safe JS literal
+    safe_value = json.dumps(json.loads(value))
+
     path = runner.get_script_path(script_key)
     content = path.read_text(encoding="utf-8")
-    declaration = f"const {var_name} = {value};\n"
+    declaration = f"const {var_name} = {safe_value};\n"
 
     # Remove any previous injection of this variable
     lines = content.splitlines(True)

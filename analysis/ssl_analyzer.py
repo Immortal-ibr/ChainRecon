@@ -8,6 +8,10 @@ import ssl
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Optional
 
+from utils.logging_config import get_logger
+
+logger = get_logger("ssl")
+
 
 class SSLAnalyzer:
     """Collect SSL/TLS posture details from target services."""
@@ -20,6 +24,7 @@ class SSLAnalyzer:
     def probe_certificates(self, target: str, ports: Iterable[int]) -> Dict[str, Any]:
         certificates = []
         normalized_ports = [int(port) for port in ports]
+        logger.info("Probing certificates on %s ports %s", target, normalized_ports)
         for port in normalized_ports:
             result = self._safe_probe(target, port)
             if result.get("reachable"):

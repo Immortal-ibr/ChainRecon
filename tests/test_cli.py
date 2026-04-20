@@ -358,12 +358,26 @@ class BuildParserTests(unittest.TestCase):
 
 
 class InteractiveModeTests(unittest.TestCase):
-    def test_no_args_launches_interactive(self):
+    def test_no_args_launches_tui(self):
         mock_module = MagicMock()
-        with patch.dict("sys.modules", {"interactive": mock_module}):
+        with patch.dict("sys.modules", {"tui": mock_module, "tui.app": mock_module}):
             code = chainrecon.main([])
         self.assertEqual(code, 0)
+        mock_module.run_tui.assert_called_once()
+
+    def test_interactive_subcommand(self):
+        mock_module = MagicMock()
+        with patch.dict("sys.modules", {"interactive": mock_module}):
+            code = chainrecon.main(["interactive"])
+        self.assertEqual(code, 0)
         mock_module.run_interactive.assert_called_once()
+
+    def test_tui_subcommand(self):
+        mock_module = MagicMock()
+        with patch.dict("sys.modules", {"tui": mock_module, "tui.app": mock_module}):
+            code = chainrecon.main(["tui"])
+        self.assertEqual(code, 0)
+        mock_module.run_tui.assert_called_once()
 
 
 # ===========================================================================
@@ -460,6 +474,35 @@ class HandleCaptureCliTests(unittest.TestCase):
                 code = chainrecon.handle_capture(args)
         self.assertEqual(code, 1)
         self.assertIn("No capture output", stdout.getvalue())
+
+
+# ===========================================================================
+# APK subcommand
+# ===========================================================================
+
+
+class HandleAPKCliTests(unittest.TestCase):
+    def test_apk_subcommand_parses(self):
+        parser = chainrecon.build_parser()
+        args = parser.parse_args(["apk", "test.apk"])
+        self.assertEqual(args.command, "apk")
+        self.assertEqual(args.apk_path, "test.apk")
+
+    def test_apk_handler_calls_analyzer(self):
+        args = MagicMock()
+        args.apk_path = "test.apk"
+        args.format = None
+        args.output = None
+
+        mock_analyzer = MagicMock()
+        mock_analyzer.return_value.analyze.return_value = {
+            "findings": {"permissions": []},
+            "risk_indicators": [],
+        }
+        with patch.dict("sys.modules", {"analysis.apk_analyzer": MagicMock(APKAnalyzer=mock_analyzer)}):
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = chainrecon.handle_apk(args)
+        self.assertEqual(code, 0)
 
 
 if __name__ == "__main__":

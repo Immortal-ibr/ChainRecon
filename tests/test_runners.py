@@ -23,13 +23,14 @@ from runners.nmap_runner import SCAN_PROFILES, NmapRunner
 
 
 class CheckToolTests(unittest.TestCase):
-    @patch("runners.base.shutil.which", return_value="/usr/bin/nmap")
+    @patch("utils.platform_info.shutil.which", return_value="/usr/bin/nmap")
     def test_returns_path_when_found(self, mock_which):
         self.assertEqual(check_tool("nmap"), "/usr/bin/nmap")
-        mock_which.assert_called_once_with("nmap")
 
-    @patch("runners.base.shutil.which", return_value=None)
-    def test_raises_when_not_found(self, mock_which):
+    @patch("utils.platform_info.shutil.which", return_value=None)
+    @patch("utils.platform_info.os.path.isfile", return_value=False)
+    @patch("utils.platform_info.os.path.isdir", return_value=False)
+    def test_raises_when_not_found(self, mock_isdir, mock_isfile, mock_which):
         with self.assertRaises(ToolNotFoundError) as ctx:
             check_tool("nmap")
         self.assertIn("nmap", str(ctx.exception))
@@ -123,7 +124,7 @@ class NmapRunnerScanTests(unittest.TestCase):
             result = runner.run_scan("10.0.0.1", "quick", td)
             self.executor.assert_called_once()
             cmd = self.executor.call_args[0][0]
-            self.assertEqual(cmd[0], "nmap")
+            self.assertEqual(cmd[0], "/usr/bin/nmap")
             self.assertIn("-Pn", cmd)
             self.assertIn("-sV", cmd)
             self.assertIn("10.0.0.1", cmd)
@@ -228,8 +229,9 @@ class CaptureRunnerCaptureTests(unittest.TestCase):
     def setUp(self):
         self.executor = MagicMock()
 
+    @patch("runners.capture_runner.is_windows", return_value=False)
     @patch("runners.capture_runner.check_tool", return_value="/usr/sbin/tcpdump")
-    def test_basic_capture_builds_tcpdump_command(self, _):
+    def test_basic_capture_builds_tcpdump_command(self, _ct, _win):
         import tempfile
 
         with tempfile.TemporaryDirectory() as td:
@@ -237,7 +239,9 @@ class CaptureRunnerCaptureTests(unittest.TestCase):
             result = runner.run_capture("eth0", "basic", duration=30, output_dir=td)
             self.executor.assert_called_once()
             cmd = self.executor.call_args[0][0]
-            self.assertEqual(cmd[0], "tcpdump")
+            # check_tool is mocked to return the same path for any tool name;
+            # tshark is tried first so the resolved path is the mocked value
+            self.assertEqual(cmd[0], "/usr/sbin/tcpdump")
             self.assertIn("-i", cmd)
             self.assertIn("eth0", cmd)
             self.assertEqual(result["mode"], "basic")
@@ -251,23 +255,28 @@ class CaptureRunnerCaptureTests(unittest.TestCase):
             runner = CaptureRunner(executor=self.executor)
             result = runner.run_capture("eth0", "live", duration=10, output_dir=td)
             cmd = self.executor.call_args[0][0]
-            self.assertEqual(cmd[0], "tshark")
+            self.assertEqual(cmd[0], "/usr/bin/tshark")
             self.assertIn("-a", cmd)
             self.assertEqual(result["mode"], "live")
 
+    @patch("runners.capture_runner.is_windows", return_value=False)
     @patch("runners.capture_runner.check_tool", return_value="/usr/sbin/tcpdump")
-    def test_bpf_filter_added_with_target_ip(self, _):
+    def test_bpf_filter_added_with_target_ip(self, _ct, _win):
         import tempfile
 
         with tempfile.TemporaryDirectory() as td:
             runner = CaptureRunner(executor=self.executor)
             runner.run_capture("eth0", "basic", target_ip="10.0.0.5", output_dir=td)
             cmd = self.executor.call_args[0][0]
-            self.assertIn("host", cmd)
-            self.assertIn("10.0.0.5", cmd)
+            # tshark uses -f <filter>, so BPF is in the arg after -f
+            self.assertIn("-f", cmd)
+            bpf = cmd[cmd.index("-f") + 1]
+            self.assertIn("host", bpf)
+            self.assertIn("10.0.0.5", bpf)
 
+    @patch("runners.capture_runner.is_windows", return_value=False)
     @patch("runners.capture_runner.check_tool", return_value="/usr/sbin/tcpdump")
-    def test_no_bpf_filter_without_target_ip(self, _):
+    def test_no_bpf_filter_without_target_ip(self, _ct, _win):
         import tempfile
 
         with tempfile.TemporaryDirectory() as td:
@@ -277,7 +286,7 @@ class CaptureRunnerCaptureTests(unittest.TestCase):
             self.assertNotIn("host", cmd)
 
     def test_tshark_fallback_to_tcpdump(self):
-        """When tshark is not found but tcpdump is, live mode falls back."""
+        """When tshark is not found but tcpdump is, capture falls back to tcpdump."""
         import tempfile
 
         def mock_check(name):
@@ -286,18 +295,32 @@ class CaptureRunnerCaptureTests(unittest.TestCase):
             return "/usr/sbin/tcpdump"
 
         with tempfile.TemporaryDirectory() as td:
-            with patch("runners.capture_runner.check_tool", side_effect=mock_check):
-                runner = CaptureRunner(executor=self.executor)
-                result = runner.run_capture("eth0", "live", output_dir=td)
-                cmd = self.executor.call_args[0][0]
-                self.assertEqual(cmd[0], "tcpdump")
+            with patch("runners.capture_runner.is_windows", return_value=False):
+                with patch("runners.capture_runner.check_tool", side_effect=mock_check):
+                    runner = CaptureRunner(executor=self.executor)
+                    result = runner.run_capture("eth0", "live", output_dir=td)
+                    cmd = self.executor.call_args[0][0]
+                    self.assertEqual(cmd[0], "/usr/sbin/tcpdump")
 
-    def test_tcpdump_not_found_raises(self):
-        """When tcpdump is not found at all, error propagates."""
-        with patch("runners.capture_runner.check_tool", side_effect=ToolNotFoundError("not found")):
-            runner = CaptureRunner(executor=self.executor)
-            with self.assertRaises(ToolNotFoundError):
-                runner.run_capture("eth0", "basic")
+    def test_neither_tool_found_raises(self):
+        """When neither tshark nor tcpdump is found, error propagates."""
+        with patch("runners.capture_runner.is_windows", return_value=False):
+            with patch("runners.capture_runner.check_tool", side_effect=ToolNotFoundError("not found")):
+                runner = CaptureRunner(executor=self.executor)
+                with self.assertRaises(ToolNotFoundError):
+                    runner.run_capture("eth0", "basic")
+
+    def test_windows_prefers_tshark_for_tcpdump_modes(self):
+        """On Windows, all modes use tshark with its full resolved path."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch("runners.capture_runner.is_windows", return_value=True):
+                with patch("runners.capture_runner.check_tool", return_value="C:\\Wireshark\\tshark.exe"):
+                    runner = CaptureRunner(executor=self.executor)
+                    result = runner.run_capture("eth0", "basic", output_dir=td)
+                    cmd = self.executor.call_args[0][0]
+                    self.assertEqual(cmd[0], "C:\\Wireshark\\tshark.exe")
 
     def test_invalid_mode_raises_value_error(self):
         runner = CaptureRunner(executor=self.executor)
@@ -305,8 +328,9 @@ class CaptureRunnerCaptureTests(unittest.TestCase):
             runner.run_capture("eth0", "nonexistent")
         self.assertIn("nonexistent", str(ctx.exception))
 
+    @patch("runners.capture_runner.is_windows", return_value=False)
     @patch("runners.capture_runner.check_tool", return_value="/usr/sbin/tcpdump")
-    def test_dns_mode_produces_pcap(self, _):
+    def test_dns_mode_produces_pcap(self, _ct, _win):
         import tempfile
 
         with tempfile.TemporaryDirectory() as td:
@@ -315,17 +339,19 @@ class CaptureRunnerCaptureTests(unittest.TestCase):
             self.assertEqual(result["mode"], "dns")
             self.assertTrue(result["pcap_files"][0].endswith(".pcap"))
 
+    @patch("runners.capture_runner.is_windows", return_value=False)
     @patch("runners.capture_runner.check_tool", return_value="/usr/sbin/tcpdump")
-    def test_duration_passed_to_tcpdump(self, _):
+    def test_duration_passed_to_tcpdump(self, _ct, _win):
         import tempfile
 
         with tempfile.TemporaryDirectory() as td:
             runner = CaptureRunner(executor=self.executor)
             runner.run_capture("eth0", "full", duration=120, output_dir=td)
             cmd = self.executor.call_args[0][0]
-            self.assertIn("-G", cmd)
-            idx = cmd.index("-G")
-            self.assertEqual(cmd[idx + 1], "120")
+            # tshark is now preferred: uses -a duration:N format
+            self.assertIn("-a", cmd)
+            a_idx = cmd.index("-a")
+            self.assertEqual(cmd[a_idx + 1], "duration:120")
 
     @patch("runners.capture_runner.check_tool", return_value="/usr/bin/tshark")
     def test_tshark_duration_flag(self, _):

@@ -1,0 +1,40 @@
+{
+  "metadata": {
+    "target": "nooie_analysis/traffic.pcap",
+    "ports": [
+      443,
+      8443,
+      8883,
+      8080
+    ]
+  },
+  "findings": {
+    "certificates": [
+      {
+        "port": 443,
+        "reachable": false,
+        "error": "[Errno 11001] getaddrinfo failed"
+      },
+      {
+        "port": 8443,
+        "reachable": false,
+        "error": "[Errno 11001] getaddrinfo failed"
+      },
+      {
+        "port": 8883,
+        "reachable": false,
+        "error": "[Errno 11001] getaddrinfo failed"
+      },
+      {
+        "port": 8080,
+        "reachable": false,
+        "error": "[Errno 11001] getaddrinfo failed"
+      }
+    ]
+  },
+  "summary": {
+    "reachable_ports": 0,
+    "certificate_count": 0
+  },
+  "risk_indicators": []
+}

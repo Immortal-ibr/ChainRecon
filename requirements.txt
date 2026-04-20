@@ -1,12 +1,20 @@
 # Core analysis dependencies
-pyshark
-jinja2
-requests
-defusedxml
-cryptography
+pyshark>=0.6
+jinja2>=3.1
+requests>=2.31
+defusedxml>=0.7
+cryptography>=41.0
+pyyaml>=6.0
+rich>=13.0
 
 # Optional integrations
-python-nmap
-scapy
-pyja3
-shodan
+python-nmap>=0.7
+scapy>=2.5
+pyja3>=1.0
+shodan>=1.28
+textual>=0.40
+frida-tools>=12.0
+
+# Development
+pytest>=7.4
+pytest-cov>=4.1

@@ -131,6 +131,20 @@ class ScriptManagementTests(unittest.TestCase):
             content = path.read_text(encoding="utf-8")
             self.assertIn("Java.perform", content)
 
+    def test_new_scripts_registered(self):
+        """Verify the four new Phase-2.3 scripts are in the registry."""
+        expected = {
+            "shared_preferences_dump",
+            "database_dump",
+            "http_intercept",
+            "certificate_pinning_detect",
+        }
+        self.assertTrue(expected.issubset(FRIDA_SCRIPTS.keys()))
+
+    def test_total_script_count(self):
+        """10 scripts total: 6 original + 4 new."""
+        self.assertEqual(len(FRIDA_SCRIPTS), 10)
+
 
 # ===========================================================================
 # Script execution

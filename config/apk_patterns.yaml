@@ -1,0 +1,76 @@
+# APK analysis patterns for ChainRecon
+# Extend these patterns to tailor detection to new device families.
+
+credential_patterns:
+  # Generic secrets
+  - name: "Hardcoded Password"
+    pattern: '(?i)(password|passwd|pwd)\s*[:=]\s*["\x27][^\s"\x27]{4,}["\x27]'
+    severity: "high"
+  - name: "API Key"
+    pattern: '(?i)(api[_-]?key|apikey)\s*[:=]\s*["\x27][A-Za-z0-9_\-]{16,}["\x27]'
+    severity: "high"
+  - name: "Secret Token"
+    pattern: '(?i)(secret|token|auth[_-]?token)\s*[:=]\s*["\x27][A-Za-z0-9_\-/+=]{16,}["\x27]'
+    severity: "high"
+  - name: "AWS Access Key"
+    pattern: 'AKIA[0-9A-Z]{16}'
+    severity: "critical"
+  - name: "Private Key Block"
+    pattern: '-----BEGIN (RSA |EC |DSA )?PRIVATE KEY-----'
+    severity: "critical"
+  - name: "Firebase URL"
+    pattern: 'https://[a-z0-9-]+\.firebaseio\.com'
+    severity: "medium"
+  - name: "Google API Key"
+    pattern: 'AIza[0-9A-Za-z_-]{35}'
+    severity: "high"
+
+iot_sdks:
+  - name: "Tuya Smart"
+    markers: ["com.tuya.smart", "TuyaHomeSdk"]
+  - name: "AWS IoT"
+    markers: ["com.amazonaws.services.iot", "AWSIotMqttManager"]
+  - name: "Firebase"
+    markers: ["com.google.firebase", "FirebaseMessaging"]
+  - name: "MQTT (Eclipse Paho)"
+    markers: ["org.eclipse.paho.client.mqttv3", "MqttClient"]
+  - name: "MQTT (HiveMQ)"
+    markers: ["com.hivemq.client", "Mqtt5Client"]
+  - name: "OkHttp"
+    markers: ["okhttp3.OkHttpClient", "okhttp3.CertificatePinner"]
+  - name: "Retrofit"
+    markers: ["retrofit2.Retrofit", "retrofit2.http"]
+  - name: "Agora RTC"
+    markers: ["io.agora.rtc", "RtcEngine"]
+  - name: "WebRTC"
+    markers: ["org.webrtc.PeerConnection", "org.webrtc.MediaStream"]
+
+pinning_indicators:
+  present:
+    - "CertificatePinner"
+    - "certificatePinner"
+    - "network_security_config"
+    - "TrustManagerFactory"
+    - "X509TrustManager"
+    - "SSLPinning"
+  bypass_risk:
+    - "TrustAllCerts"
+    - "AllowAllHostnameVerifier"
+    - "ALLOW_ALL_HOSTNAME_VERIFIER"
+    - "trustAllCerts"
+    - "setHostnameVerifier"
+    - "checkServerTrusted"  # empty impl = bypass
+
+dangerous_permissions:
+  - "android.permission.CAMERA"
+  - "android.permission.RECORD_AUDIO"
+  - "android.permission.ACCESS_FINE_LOCATION"
+  - "android.permission.READ_CONTACTS"
+  - "android.permission.READ_SMS"
+  - "android.permission.SEND_SMS"
+  - "android.permission.READ_CALL_LOG"
+  - "android.permission.WRITE_EXTERNAL_STORAGE"
+  - "android.permission.READ_EXTERNAL_STORAGE"
+  - "android.permission.INSTALL_PACKAGES"
+  - "android.permission.READ_PHONE_STATE"
+  - "android.permission.ACCESS_BACKGROUND_LOCATION"

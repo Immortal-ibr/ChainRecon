@@ -1,0 +1,9 @@
+network:
+  eth_interface: Ethernet
+  internet_interface: Wi-Fi
+  router_ip: 192.168.123.99
+  static_ip: 192.168.123.100/24
+  target_ip: 192.168.123.99
+tools:
+  jadx: D:\Cyber Security\tools\jadx-1.5.5\bin\jadx.bat
+  apktool: 'D:\Cyber Security\tools\apktool\apktool.jar'

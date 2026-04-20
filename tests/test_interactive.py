@@ -675,5 +675,52 @@ class RunInteractiveTests(unittest.TestCase):
         mock_reconf.assert_called_once()
 
 
+# ===========================================================================
+# _inject_var security tests
+# ===========================================================================
+
+class InjectVarSecurityTests(unittest.TestCase):
+    """Verify that _inject_var sanitises values through json.dumps."""
+
+    def setUp(self):
+        self.runner = MagicMock()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.script_path = Path(self.tmp.name) / "test_script.js"
+        self.script_path.write_text("console.log('hi');\n", encoding="utf-8")
+        self.runner.get_script_path.return_value = self.script_path
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_safe_string_injection(self):
+        interactive._inject_var(self.runner, "list_classes", "FILTER", '"com.example"')
+        content = self.script_path.read_text(encoding="utf-8")
+        self.assertTrue(content.startswith('const FILTER = "com.example";\n'))
+
+    def test_rejects_invalid_var_name(self):
+        with self.assertRaises(ValueError):
+            interactive._inject_var(self.runner, "list_classes", "bad-name", '"value"')
+
+    def test_rejects_code_injection_attempt(self):
+        # Attempting to inject code via a crafted value — json.loads should reject it
+        with self.assertRaises(Exception):
+            interactive._inject_var(self.runner, "list_classes", "FILTER", '"; alert(1); //')
+
+    def test_array_injection(self):
+        interactive._inject_var(
+            self.runner, "hook_all_methods", "TARGET_CLASSES",
+            json.dumps(["com.example.A", "com.example.B"]),
+        )
+        content = self.script_path.read_text(encoding="utf-8")
+        self.assertIn('["com.example.A", "com.example.B"]', content)
+
+    def test_idempotent_overwrite(self):
+        interactive._inject_var(self.runner, "list_classes", "FILTER", '"first"')
+        interactive._inject_var(self.runner, "list_classes", "FILTER", '"second"')
+        content = self.script_path.read_text(encoding="utf-8")
+        self.assertEqual(content.count("const FILTER"), 1)
+        self.assertIn('"second"', content)
+
+
 if __name__ == "__main__":
     unittest.main()

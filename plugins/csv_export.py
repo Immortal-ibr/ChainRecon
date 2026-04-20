@@ -28,6 +28,18 @@ class CsvExportPlugin(ReportPlugin):
         for section, payload in analysis_data.items():
             if not payload:
                 continue
+            if not isinstance(payload, dict):
+                if isinstance(payload, list):
+                    for item in payload:
+                        row = {"section": section}
+                        if isinstance(item, dict):
+                            row.update(item)
+                        else:
+                            row["value"] = item
+                        yield row
+                else:
+                    yield {"section": section, "value": payload}
+                continue
             findings = payload.get("findings", {})
             for key, value in findings.items():
                 if isinstance(value, list):
