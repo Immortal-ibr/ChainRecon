@@ -45,7 +45,7 @@ class ExtendedScanner:
     def __init__(self, progress_cb: Optional[Callable[[str], None]] = None):
         self._progress = progress_cb or (lambda msg: None)
 
-    # ── TCP connect scan ─────────────────────────────────────────────
+    # -- TCP connect scan ---------------------------------------------
 
     def tcp_scan(
         self,
@@ -134,12 +134,12 @@ class ExtendedScanner:
     def _assess_risks(self, open_ports: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         risks: List[Dict[str, str]] = []
         risky = {
-            23: ("high", "Telnet is open — credentials sent in plaintext"),
-            21: ("medium", "FTP is open — often allows anonymous or weak auth"),
-            5555: ("critical", "ADB port open — full device shell access without auth"),
-            502: ("high", "Modbus is open — industrial protocol with no built-in auth"),
-            9100: ("medium", "Printer port open — may leak info or allow RCE"),
-            554: ("medium", "RTSP is open — video stream may be accessible"),
+            23: ("high", "Telnet is open -- credentials sent in plaintext"),
+            21: ("medium", "FTP is open -- often allows anonymous or weak auth"),
+            5555: ("critical", "ADB port open -- full device shell access without auth"),
+            502: ("high", "Modbus is open -- industrial protocol with no built-in auth"),
+            9100: ("medium", "Printer port open -- may leak info or allow RCE"),
+            554: ("medium", "RTSP is open -- video stream may be accessible"),
         }
         for p in open_ports:
             if p["port"] in risky:
@@ -153,7 +153,7 @@ class ExtendedScanner:
             })
         return risks
 
-    # ── ARP discovery ────────────────────────────────────────────────
+    # -- ARP discovery ------------------------------------------------
 
     def arp_scan(self, interface: str = "Ethernet", subnet: str = "192.168.1.0/24") -> Dict[str, Any]:
         """Discover devices on the local network via ARP requests.
@@ -165,6 +165,7 @@ class ExtendedScanner:
             return self._arp_scapy(subnet)
         except Exception:
             logger.debug("Scapy ARP failed, falling back to ARP table")
+            self._progress("  Live ARP probe failed; reading local ARP cache instead.")
             return self._arp_table()
 
     def _arp_scapy(self, subnet: str) -> Dict[str, Any]:
@@ -175,7 +176,7 @@ class ExtendedScanner:
             hosts.append({"ip": rcv.psrc, "mac": rcv.hwsrc})
             self._progress(f"  Found {rcv.psrc} ({rcv.hwsrc})")
         return {
-            "metadata": {"subnet": subnet, "scanner": "arp_scapy"},
+            "metadata": {"subnet": subnet, "scanner": "arp_scapy", "fresh": True, "live_reachability": True},
             "findings": {"hosts": hosts},
             "summary": {"host_count": len(hosts)},
             "risk_indicators": [],
@@ -200,15 +201,32 @@ class ExtendedScanner:
                         if mac and mac != "ff-ff-ff-ff-ff-ff":
                             hosts.append({"ip": ip, "mac": mac})
             return {
-                "metadata": {"scanner": "arp_table"},
+                "metadata": {
+                    "scanner": "arp_table",
+                    "fresh": False,
+                    "live_reachability": False,
+                    "source": "local_arp_cache",
+                    "warning": "ARP table entries may be stale and do not prove the host is currently reachable.",
+                },
                 "findings": {"hosts": hosts},
                 "summary": {"host_count": len(hosts)},
                 "risk_indicators": [],
             }
         except Exception as exc:
-            return {"metadata": {"scanner": "arp_table", "error": str(exc)}, "findings": {"hosts": []}, "summary": {"host_count": 0}, "risk_indicators": []}
+            return {
+                "metadata": {
+                    "scanner": "arp_table",
+                    "fresh": False,
+                    "live_reachability": False,
+                    "source": "local_arp_cache",
+                    "error": str(exc),
+                },
+                "findings": {"hosts": []},
+                "summary": {"host_count": 0},
+                "risk_indicators": [],
+            }
 
-    # ── Service fingerprinting ───────────────────────────────────────
+    # -- Service fingerprinting ---------------------------------------
 
     def fingerprint_services(
         self, target: str, ports: List[int], timeout: float = 3.0

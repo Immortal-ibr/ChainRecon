@@ -1,7 +1,7 @@
 """WebRTC traffic analysis module for ChainRecon.
 
 Detects STUN/TURN packets, DTLS handshakes, SRTP streams,
-and ICE candidates in a packet capture — useful for analysing
+and ICE candidates in a packet capture -- useful for analysing
 IoT cameras and video doorbells that use WebRTC for streaming.
 """
 
@@ -62,7 +62,7 @@ class WebRTCAnalyzer:
             "risk_indicators": indicators,
         }
 
-    # ── detection methods ────────────────────────────────────────────
+    # -- detection methods --------------------------------------------
 
     def _find_stun(self, packets) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
@@ -129,7 +129,7 @@ class WebRTCAnalyzer:
                     candidates.append({"candidate": candidate})
         return candidates
 
-    # ── helpers ──────────────────────────────────────────────────────
+    # -- helpers ------------------------------------------------------
 
     @staticmethod
     def _has_layer(pkt, name: str) -> bool:

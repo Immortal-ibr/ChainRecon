@@ -1,4 +1,4 @@
-"""Full-screen help overlay — replaces the small collapsible side panel.
+"""Full-screen help overlay -- replaces the small collapsible side panel.
 
 Press ? on any screen to open this.  Press Escape / Q / Enter to close.
 """
@@ -69,7 +69,7 @@ class HelpScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         from textual.containers import Vertical, Horizontal
         with Vertical(id="help-dialog"):
-            yield Static(f" ❓  {self._title} — Help ", id="help-title")
+            yield Static(f"{self._title} -- Help", id="help-title")
             with VerticalScroll(id="help-body"):
                 yield Static(self._help_text)
             with Horizontal(id="help-close-bar"):

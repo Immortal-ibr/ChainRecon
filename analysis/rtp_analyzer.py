@@ -16,15 +16,15 @@ from utils.logging_config import get_logger
 
 logger = get_logger("rtp_analyzer")
 
-# RTP payload type → codec name (common assignments)
+# RTP payload type -> codec name (common assignments)
 _PT_CODECS = {
     0: "PCMU", 3: "GSM", 4: "G.723", 8: "PCMA", 9: "G.722",
     10: "L16-stereo", 11: "L16-mono", 14: "MPA", 26: "JPEG",
     31: "H.261", 32: "MPV", 33: "MP2T", 34: "H.263",
-    # Dynamic (96-127): negotiated via SDP — could be H.264, H.265, Opus, etc.
+    # Dynamic (96-127): negotiated via SDP -- could be H.264, H.265, Opus, etc.
     # Common assignments for IoT cameras:
     #   96 = H.264 (most common for legacy cameras)
-    #   97 = H.265/HEVC (modern cameras — same header byte range as H.264 range)
+    #   97 = H.265/HEVC (modern cameras -- same header byte range as H.264 range)
     #   98 = H.265 alt / VP8 / AAC
     #   100 = H.264 + B-frames
     #   111 = Opus
@@ -113,7 +113,7 @@ class RTPAnalyzer:
             "risk_indicators": indicators,
         }
 
-    # ── protocol classification ──────────────────────────────────────
+    # -- protocol classification --------------------------------------
 
     def _classify_all(self, packets) -> List[Dict[str, Any]]:
         """Classify each UDP packet by first-byte heuristics."""
@@ -147,7 +147,7 @@ class RTPAnalyzer:
         # DTLS: content type 20-25 (ChangeCipherSpec, Alert, Handshake, AppData)
         if 20 <= first <= 25 and len(data) >= 13:
             return "DTLS"
-        # RTP/SRTP: version 2 → first byte has upper 2 bits = 10 (0x80-0xBF)
+        # RTP/SRTP: version 2 -> first byte has upper 2 bits = 10 (0x80-0xBF)
         if 0x80 <= first <= 0xBF:
             return "RTP/SRTP"
         # TURN ChannelData: 0x40-0x4F
@@ -161,7 +161,7 @@ class RTPAnalyzer:
             counts[c["protocol"]] += 1
         return dict(counts.most_common())
 
-    # ── RTP stream extraction ────────────────────────────────────────
+    # -- RTP stream extraction ----------------------------------------
 
     def _extract_rtp_streams(self, packets) -> List[Dict[str, Any]]:
         """Group RTP packets by SSRC and extract stream metadata."""
@@ -202,7 +202,7 @@ class RTPAnalyzer:
             seq = sorted(s["seq_numbers"])
             lost = self._estimate_loss(seq)
             # SRTP heuristic: payload entropy is high AND DTLS was seen on same flow
-            likely_srtp = s["packet_count"] > 10  # conservative — refine below
+            likely_srtp = s["packet_count"] > 10  # conservative -- refine below
             results.append({
                 "ssrc": hex(ssrc),
                 "src_ip": s["src_ip"],
@@ -243,7 +243,7 @@ class RTPAnalyzer:
             return 0.0
         return max(0.0, (1 - len(seq_numbers) / expected) * 100)
 
-    # ── H.264 / H.265 detection ──────────────────────────────────────
+    # -- H.264 / H.265 detection --------------------------------------
 
     # H.264 NAL types: 1=slice, 5=IDR, 6=SEI, 7=SPS, 8=PPS, 28=FU-A, 24=STAP-A
     _H264_NAL_TYPES = {1, 5, 6, 7, 8, 24, 28}
@@ -292,7 +292,7 @@ class RTPAnalyzer:
                     })
         return results
 
-    # ── helpers ──────────────────────────────────────────────────────
+    # -- helpers ------------------------------------------------------
 
     @staticmethod
     def _get_udp_payload(pkt) -> Optional[bytes]:

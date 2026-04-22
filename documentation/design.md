@@ -1,6 +1,6 @@
 ## What ChainRecon is
 
-ChainRecon is an IoT security analysis tool built for the Purdue ChainVisor senior design project. The core idea is that when you're researching an IoT device, you always end up running the same set of tools in the same order — nmap to find open ports, tshark to capture traffic, jadx to look at the APK, frida to hook interesting functions at runtime. Doing that manually for every new device is tedious, so ChainRecon ties it all together into a single TUI that keeps results organized and lets you jump between analysis steps without having to remember every command.
+ChainRecon is an IoT security analysis tool built for the Purdue ChainVisor senior design project. The core idea is that when you're researching an IoT device, you always end up running the same set of tools in the same order -- nmap to find open ports, tshark to capture traffic, jadx to look at the APK, frida to hook interesting functions at runtime. Doing that manually for every new device is tedious, so ChainRecon ties it all together into a single TUI that keeps results organized and lets you jump between analysis steps without having to remember every command.
 
 The tool is designed to be used with a physical man-in-the-middle setup: the IoT device connects through a router, the router connects to your computer over Ethernet, and your computer bridges to Wi-Fi. That puts you in a position to see everything the device sends and receives without modifying it.
 
@@ -10,7 +10,7 @@ The tool is designed to be used with a physical man-in-the-middle setup: the IoT
 - Accept a target device IP, router IP, and network interface names from the user (with sensible defaults where possible)
 - Support four main modes: network setup, device scanning, traffic capture/analysis, and SSL/TLS analysis
 - Operate without root for most analysis tasks; only the network setup requires elevated privileges
-- Gracefully handle missing tools — warn the user and skip that feature rather than crashing
+- Gracefully handle missing tools -- warn the user and skip that feature rather than crashing
 - Save all output to timestamped directories so nothing gets overwritten
 
 **Traffic analysis must produce:**
@@ -37,7 +37,8 @@ The tool is designed to be used with a physical man-in-the-middle setup: the IoT
 **Reports:**
 - At minimum, JSON output that can be piped elsewhere
 - HTML and CSV outputs through the plugin system
-- Plugins should be swappable — provide a base class and let users write their own
+- Plugins should be swappable -- provide a base class and let users write their own
+- The TUI report screen must let users choose current-session results or top-level ChainRecon JSON analysis files in the configured output directory; generated multi-section reports and decompiled APK asset JSON files must not be recursively imported
 
 ## Non-functional requirements
 
@@ -60,7 +61,7 @@ The report plugin system (`plugins/`) sits at the end of the pipeline. The `Repo
 
 ## Configuration
 
-Config is stored in YAML under `config/`. `default.yaml` has the full set of keys with conservative defaults. Users create `config/local.yaml` with just their overrides — tool paths, interface names, API keys, etc. Environment variables (e.g. `CHAINRECON_JADX_PATH`) override everything.
+Config is stored in YAML under `config/`. `default.yaml` has the full set of keys with conservative defaults. Users create `config/local.yaml` with just their overrides -- tool paths, interface names, API keys, etc. Environment variables (e.g. `CHAINRECON_JADX_PATH`) override everything.
 
 ## Decisions made along the way
 
@@ -71,3 +72,9 @@ Config is stored in YAML under `config/`. `default.yaml` has the full set of key
 **ASCII border fallback for conhost.exe:** Textual uses Unicode box-drawing characters for widget borders. These don't render in Windows admin PowerShell (conhost.exe) even with VT mode enabled. The app detects this by checking whether `WT_SESSION` is set (Windows Terminal sets it, conhost does not) and applies a CSS class that switches all borders to ASCII (`+`, `-`, `|`).
 
 **PasteableInput widget:** On conhost.exe, Ctrl+V may be consumed by the terminal and never reach the Textual app. The `PasteableInput` widget reads from the Win32 clipboard directly via ctypes so pasting always works in input fields.
+
+**Bounded output boxes:** Long jadx, nmap, and Frida output can make a terminal UI sluggish. The LogViewer keeps the visible/retained log bounded, tells the user when old lines are dropped, and relies on analyzer output files for full artifacts.
+
+**No stale live-tool results:** Scan and Frida features must distinguish live observations from cached or assumed state. ARP-table fallback is labeled as cached local data, nmap `-Pn` is labeled as "assume host up", and Frida validates an online adb device before listing processes or injecting scripts.
+
+**SSL reachability wording:** SSL analysis reports reachability per port. A refused or filtered TLS port is not the same as a dead host, and DNS `getaddrinfo` failures are reported as target-name problems rather than generic network failures.

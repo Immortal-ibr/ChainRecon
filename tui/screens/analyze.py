@@ -1,4 +1,4 @@
-"""Analyze screen — run analyzers on existing files."""
+"""Analyze screen -- run analyzers on existing files."""
 
 from __future__ import annotations
 
@@ -9,14 +9,14 @@ import threading
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Checkbox, Footer, Header, Label, Select
 
 from tui.widgets.pasteable_input import PasteableInput as Input
 
 from tui.screens.help_screen import HelpScreen
-from tui.widgets.log_viewer import LogViewer
+from tui.widgets.log_viewer import LogActionBar, LogViewer
 
 HELP_TEXT = """[bold underline]Traffic & Scan Analysis[/]
 
@@ -25,7 +25,7 @@ stuff. Point it at a .pcap from the Capture screen, or an nmap .txt output.
 
 [bold]Traffic (DNS/HTTP/TLS)[/]
 
-  Uses pyshark — a Python wrapper around tshark — to iterate every packet.
+  Uses pyshark -- a Python wrapper around tshark -- to iterate every packet.
   Equivalent to these tshark commands run manually:
     tshark -r file.pcap -Y dns -T fields -e dns.qry.name        (DNS queries)
     tshark -r file.pcap -Y http.request -T fields -e http.host  (HTTP hosts)
@@ -71,15 +71,15 @@ stuff. Point it at a .pcap from the Capture screen, or an nmap .txt output.
 
   Looks for STUN (port 3478) and TURN exchanges in the pcap. Extracts
   ICE candidates that tell you what relay infrastructure the device uses.
-  The Nooie live stream goes through Amazon TURN servers — even when both
+  The Nooie live stream goes through Amazon TURN servers -- even when both
   client and camera are on the same LAN, traffic still routes via AWS.
 
 [bold]MQTT[/]
 
   Decodes MQTT packets from the pcap:
-    CONNECT   → broker address, client ID, username/password fields
-    PUBLISH   → topic names and message payloads
-    SUBSCRIBE → what topics the device subscribes to
+    CONNECT   -> broker address, client ID, username/password fields
+    PUBLISH   -> topic names and message payloads
+    SUBSCRIBE -> what topics the device subscribes to
   1883 = unencrypted, 8883 = MQTT over TLS. If there's no password in the
   CONNECT packet, the broker has auth disabled.
 
@@ -92,16 +92,16 @@ stuff. Point it at a .pcap from the Capture screen, or an nmap .txt output.
 
 [bold]Entropy Analysis[/]
 
-  Computes Shannon entropy (bits per byte, 0–8) for every payload in the
+  Computes Shannon entropy (bits per byte, 0-8) for every payload in the
   pcap.  Classifies each packet and stream as plaintext (< 4.5), structured
-  (4.5–6.0), compressed (6.0–7.2), or encrypted (> 7.2).  Flags anomalies
+  (4.5-6.0), compressed (6.0-7.2), or encrypted (> 7.2).  Flags anomalies
   like low entropy on ports that should be encrypted (443, 8443, 8883).
   Also detects near-perfect entropy which may indicate XOR obfuscation.
 
 [bold]RTP / Protocol Classification[/]
 
   Identifies UDP protocols by first-byte heuristics: STUN (magic cookie),
-  DTLS (content types 20–25), RTP/SRTP (version 2), TURN channel data.
+  DTLS (content types 20-25), RTP/SRTP (version 2), TURN channel data.
   Groups RTP packets by SSRC to identify media streams, extracts payload
   types (H.264, Opus, PCMU, etc.), and estimates packet loss from sequence
   number gaps.  Detects H.264 NAL units (SPS, PPS, IDR, FU-A) in RTP
@@ -112,7 +112,7 @@ stuff. Point it at a .pcap from the Capture screen, or an nmap .txt output.
   Scans TLS and DTLS handshakes for DER-encoded X.509 certificates.
   Parses each certificate and checks: RSA key size, signature algorithm
   (SHA-1 / MD5 = weak), expiry date, self-signed status, and Fermat
-  factorisation vulnerability (p ≈ q).  Requires the 'cryptography'
+  factorisation vulnerability (p ~ q).  Requires the 'cryptography'
   package for full analysis.
 
 [dim]pyshark requires tshark installed (it shells out to tshark internally)
@@ -136,7 +136,7 @@ class AnalyzeScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Vertical(id="analyze-form"):
+        with VerticalScroll(id="analyze-form"):
             yield Label("[bold]Analysis[/]")
             yield Label("PCAP file / nmap output / target IP  [dim](SSL analyzer = enter IP, others = file path)[/]")
             yield Input(placeholder="path/to/file.pcap  or  192.168.1.99", id="filepath")
@@ -160,7 +160,7 @@ class AnalyzeScreen(Screen):
                 id="analyzer",
             )
             with Vertical(id="custom-section"):
-                yield Label("[dim]── Custom Script ──[/]")
+                yield Label("[dim]-- Custom Script --[/]")
                 yield Label("Script path:")
                 yield Input(placeholder="e.g. rsactftool.py  or  my_analysis.py", id="custom-path")
                 yield Label("Interpreter:")
@@ -173,6 +173,7 @@ class AnalyzeScreen(Screen):
             with Horizontal():
                 yield Button("Analyze", variant="primary", id="btn-analyze")
                 yield Button("Back", id="btn-back")
+            yield LogActionBar()
             yield LogViewer(id="analyze-log")
         yield Footer()
 
@@ -192,7 +193,7 @@ class AnalyzeScreen(Screen):
             self._run_analysis()
 
     def _run_analysis(self) -> None:
-        # Strip surrounding quotes — common when pasting Windows paths
+        # Strip surrounding quotes -- common when pasting Windows paths
         filepath = self.query_one("#filepath", Input).value.strip().strip('"\'')
         analyzer = self.query_one("#analyzer", Select).value
         log = self.query_one("#analyze-log", LogViewer)
@@ -215,7 +216,7 @@ class AnalyzeScreen(Screen):
             log.append(f"[red]Please provide a {label}.[/]")
             return
 
-        log.append(f"[bold]Running {analyzer} analysis on {filepath}…[/]")
+        log.append(f"[bold]Running {analyzer} analysis on {filepath}...[/]")
 
         def _worker() -> None:
             try:
@@ -300,7 +301,7 @@ class AnalyzeScreen(Screen):
 
     @staticmethod
     def _dispatch(analyzer: str, filepath: str) -> dict:
-        # Strip surrounding quotes — common when pasting Windows paths
+        # Strip surrounding quotes -- common when pasting Windows paths
         filepath = filepath.strip().strip('"\'')
 
         if analyzer == "traffic":
@@ -317,7 +318,7 @@ class AnalyzeScreen(Screen):
             return ScannerAnalyzer().parse_nmap_output(filepath)
 
         elif analyzer in ("pcap_stats", "webrtc", "mqtt", "endpoint", "credentials", "entropy", "rtp", "certs"):
-            # These analyzers consume a packet list — load via TrafficAnalyzer's helper
+            # These analyzers consume a packet list -- load via TrafficAnalyzer's helper
             from analysis.traffic import TrafficAnalyzer
             ta = TrafficAnalyzer()
             packets, capture = ta._load_packets(filepath)

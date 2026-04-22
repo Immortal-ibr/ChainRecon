@@ -9,7 +9,7 @@ import threading
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Checkbox, Footer, Header, Label, Select
 
@@ -17,7 +17,7 @@ from tui.widgets.pasteable_input import PasteableInput as Input
 
 from analysis.apk_analyzer import APKAnalyzer
 from tui.screens.help_screen import HelpScreen
-from tui.widgets.log_viewer import LogViewer
+from tui.widgets.log_viewer import LogActionBar, LogViewer
 
 HELP_TEXT = """[bold underline]APK Static Analysis[/]
 
@@ -40,7 +40,7 @@ Java source code, manifests, and resources for security issues.
   6. Checks certificate pinning implementation and method used.
 
 [bold]Tool[/]: JADX (download from github.com/skylot/jadx/releases)
-  Configure path in Settings or config/default.yaml → tools.jadx
+  Configure path in Settings or config/default.yaml -> tools.jadx
   Or set environment variable: CHAINRECON_JADX_PATH=C:\\path\\to\\jadx.bat
 
 [dim]Credential patterns: config/apk_patterns.yaml
@@ -64,7 +64,7 @@ class APKScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Vertical(id="apk-form"):
+        with VerticalScroll(id="apk-form"):
             yield Label("[bold]APK Static Analysis[/]")
             yield Label("APK file path:")
             yield Input(placeholder="path/to/app.apk", id="apk-path")
@@ -72,13 +72,13 @@ class APKScreen(Screen):
             yield Select(
                 [
                     ("Built-in analyzer only", "builtin"),
-                    ("Custom Script…", "custom"),
+                    ("Custom Script...", "custom"),
                 ],
                 value="builtin",
                 id="mode",
             )
             with Vertical(id="custom-section"):
-                yield Label("[dim]── Custom Script ──[/]")
+                yield Label("[dim]-- Custom Script --[/]")
                 yield Label("Script path:")
                 yield Input(placeholder="e.g. C:\\scripts\\apk_check.py", id="custom-path")
                 yield Label("Interpreter:")
@@ -91,6 +91,7 @@ class APKScreen(Screen):
             with Horizontal():
                 yield Button("Analyze", variant="primary", id="btn-analyze")
                 yield Button("Back", id="btn-back")
+            yield LogActionBar()
             yield LogViewer(id="apk-log")
         yield Footer()
 
@@ -110,7 +111,7 @@ class APKScreen(Screen):
             self._analyze()
 
     def _analyze(self) -> None:
-        # Strip surrounding quotes — common when pasting Windows paths
+        # Strip surrounding quotes -- common when pasting Windows paths
         path = self.query_one("#apk-path", Input).value.strip().strip('"\'')
         log = self.query_one("#apk-log", LogViewer)
         mode = self.query_one("#mode", Select).value
@@ -125,8 +126,8 @@ class APKScreen(Screen):
             log.append("[red]Set a script path in the Custom Script field.[/]")
             return
 
-        log.append(f"[bold]Analyzing {path}…[/]")
-        log.append("[dim]Decompiling with jadx — large APKs can take 3-5 minutes, please wait…[/]")
+        log.append(f"[bold]Analyzing {path}...[/]")
+        log.append("[dim]Decompiling with jadx -- large APKs can take 3-5 minutes, please wait...[/]")
 
         def _worker() -> None:
             def _on_progress(line: str) -> None:
@@ -142,6 +143,14 @@ class APKScreen(Screen):
                 decompiled_dir = outdir / f"apk_decompiled_{apk_name}_{ts}"
 
                 result = APKAnalyzer().analyze(path, output_dir=str(decompiled_dir), progress_cb=_on_progress)
+
+                jadx_error_count = int(result.get("summary", {}).get("jadx_error_count", 0) or 0)
+                if jadx_error_count > 0:
+                    self.app.call_from_thread(
+                        log.append,
+                        f"[yellow]jadx completed with {jadx_error_count} decompile warnings. "
+                        "Analysis still completed; some classes may be partially decoded.[/]"
+                    )
 
                 outfile = outdir / f"apk_analysis_{apk_name}_{ts}.json"
                 outfile.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")

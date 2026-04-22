@@ -17,8 +17,8 @@ from utils.logging_config import get_logger
 logger = get_logger("entropy")
 
 # Entropy thresholds (bits per byte, 0-8)
-ENCRYPTED_THRESHOLD = 7.2    # highly random — encrypted or compressed
-COMPRESSED_THRESHOLD = 6.0   # moderately random — likely compressed
+ENCRYPTED_THRESHOLD = 7.2    # highly random -- encrypted or compressed
+COMPRESSED_THRESHOLD = 6.0   # moderately random -- likely compressed
 PLAINTEXT_THRESHOLD = 4.5    # structured text (HTTP, JSON, XML)
 # Below 4.5 is very structured or repetitive data
 
@@ -92,7 +92,7 @@ class EntropyAnalyzer:
             "risk_indicators": indicators,
         }
 
-    # ── core methods ─────────────────────────────────────────────────
+    # -- core methods -------------------------------------------------
 
     @staticmethod
     def shannon_entropy(data: bytes) -> float:

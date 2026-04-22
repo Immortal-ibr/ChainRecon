@@ -34,7 +34,7 @@ def setup_logging(
     logger.setLevel(logging.DEBUG if verbose else logging.INFO)
     logger.propagate = False
 
-    # ── Console handler ──────────────────────────────────────────────
+    # -- Console handler ----------------------------------------------
     console = logging.StreamHandler(sys.stderr)
     console.setLevel(logging.DEBUG if verbose else logging.INFO)
 
@@ -55,7 +55,7 @@ def setup_logging(
 
     logger.addHandler(console)
 
-    # ── File handler (optional) ──────────────────────────────────────
+    # -- File handler (optional) --------------------------------------
     if log_file:
         log_path = Path(log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)

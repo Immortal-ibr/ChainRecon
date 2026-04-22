@@ -70,8 +70,8 @@ class APKAnalyzer:
         else:
             decompiled = Path(tempfile.mkdtemp(prefix="chainrecon_apk_"))
 
-        logger.info("Decompiling %s → %s", apk.name, decompiled)
-        self._decompile(str(apk), str(decompiled), progress_cb=progress_cb)
+        logger.info("Decompiling %s -> %s", apk.name, decompiled)
+        decompile_info = self._decompile(str(apk), str(decompiled), progress_cb=progress_cb)
 
         manifest = self._parse_manifest(decompiled)
         permissions = self._extract_permissions(manifest)
@@ -85,12 +85,25 @@ class APKAnalyzer:
         risk_indicators = self._build_risk_indicators(
             permissions, components, app_flags, net_security, credentials, pinning,
         )
+        jadx_error_count = int(decompile_info.get("jadx_error_count", 0))
+        jadx_error_classes = decompile_info.get("jadx_error_classes", [])
+        if jadx_error_count > 0:
+            risk_indicators.append({
+                "severity": "info",
+                "title": "JADX decompile warnings",
+                "details": (
+                    f"jadx reported {jadx_error_count} decompile issue(s). "
+                    "Analysis completed, but some classes/resources may be partially decoded."
+                ),
+            })
 
         return {
             "metadata": {
                 "apk": str(apk),
                 "decompiled_dir": str(decompiled),
                 "analyzer": self.__class__.__name__,
+                "jadx_error_count": jadx_error_count,
+                "jadx_error_classes": jadx_error_classes,
             },
             "findings": {
                 "permissions": permissions,
@@ -112,6 +125,7 @@ class APKAnalyzer:
                 "credential_count": len(credentials),
                 "sdk_count": len(sdks),
                 "pinning_detected": pinning.get("detected", False),
+                "jadx_error_count": jadx_error_count,
                 "risk_indicator_count": len(risk_indicators),
             },
             "risk_indicators": risk_indicators,
@@ -121,7 +135,7 @@ class APKAnalyzer:
     # Decompilation
     # ------------------------------------------------------------------
 
-    def _decompile(self, apk_path: str, output_dir: str, progress_cb=None) -> None:
+    def _decompile(self, apk_path: str, output_dir: str, progress_cb=None) -> Dict[str, Any]:
         # Verify jadx is available only when using the default executor (not mocked)
         if self._executor is run_subprocess:
             jadx_exe = Path(self._jadx)
@@ -152,18 +166,34 @@ class APKAnalyzer:
                 encoding="utf-8",
                 errors="replace",
             )
+            jadx_error_count = 0
+            jadx_error_classes: List[str] = []
+            error_count_re = re.compile(r"finished with errors,\s*count:\s*(\d+)", re.IGNORECASE)
+            # jadx prints per-class errors like: "ERROR: ... in method ..." or "code throw: ..."
+            error_class_re = re.compile(r"(?:ERROR in|error in|decode error in|failed to decompile)\s+([^\s:,]+)", re.IGNORECASE)
             for line in iter(proc.stdout.readline, ""):
                 line = line.rstrip()
                 if line:
                     logger.debug("jadx: %s", line)
+                    m = error_count_re.search(line)
+                    if m:
+                        try:
+                            jadx_error_count = int(m.group(1))
+                        except ValueError:
+                            jadx_error_count = 0
+                    cm = error_class_re.search(line)
+                    if cm:
+                        jadx_error_classes.append(cm.group(1))
                     if progress_cb is not None:
                         progress_cb(line)
             proc.stdout.close()
             ret = proc.wait(timeout=600)
             if ret not in (0, 1):
                 raise RuntimeError(f"jadx exited with code {ret}")
+            return {"jadx_error_count": jadx_error_count, "jadx_error_classes": jadx_error_classes}
         else:
             self._executor(cmd, timeout=600)
+            return {"jadx_error_count": 0, "jadx_error_classes": []}
 
     # ------------------------------------------------------------------
     # Manifest parsing
@@ -318,11 +348,15 @@ class APKAnalyzer:
                 continue
             for regex, name, severity in compiled:
                 for match in regex.finditer(content):
+                    line_start = content.rfind("\n", 0, match.start()) + 1
+                    line_end = content.find("\n", match.end())
+                    full_line = content[line_start: len(content) if line_end == -1 else line_end].strip()
                     findings.append({
                         "type": name,
                         "severity": severity,
                         "file": str(java_file.relative_to(decompiled)),
-                        "match": match.group(0)[:120],  # truncate for safety
+                        "match": match.group(0)[:120],
+                        "line": full_line[:300],
                     })
 
         # Also scan XML / properties files
@@ -334,11 +368,15 @@ class APKAnalyzer:
                     continue
                 for regex, name, severity in compiled:
                     for match in regex.finditer(content):
+                        line_start = content.rfind("\n", 0, match.start()) + 1
+                        line_end = content.find("\n", match.end())
+                        full_line = content[line_start: len(content) if line_end == -1 else line_end].strip()
                         findings.append({
                             "type": name,
                             "severity": severity,
                             "file": str(res_file.relative_to(decompiled)),
                             "match": match.group(0)[:120],
+                            "line": full_line[:300],
                         })
 
         return findings
@@ -466,7 +504,7 @@ class APKAnalyzer:
             indicators.append({
                 "severity": "high",
                 "title": "Application is debuggable",
-                "details": "android:debuggable is set to true — allows runtime attachment.",
+                "details": "android:debuggable is set to true -- allows runtime attachment.",
             })
 
         # Cleartext traffic

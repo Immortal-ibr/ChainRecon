@@ -1,4 +1,4 @@
-"""Capture screen — configure and run traffic captures."""
+"""Capture screen -- configure and run traffic captures."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import threading
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Checkbox, Footer, Header, Label, Select
 
@@ -17,7 +17,7 @@ from tui.widgets.pasteable_input import PasteableInput as Input
 
 from runners.capture_runner import CaptureRunner
 from tui.screens.help_screen import HelpScreen
-from tui.widgets.log_viewer import LogViewer
+from tui.widgets.log_viewer import LogActionBar, LogViewer
 from utils.config import get_config, get_network_config
 from utils.network import list_interfaces
 
@@ -32,16 +32,16 @@ you can drag into Wireshark or feed into the Analyze screen.
   Linux:   tshark -i <iface> -a duration:<secs> -w <file> [-f "<BPF>"]
 
   If tshark isn't found: install Wireshark from https://www.wireshark.org/
-  — tshark comes bundled with it. Make sure to install with Npcap driver
+  -- tshark comes bundled with it. Make sure to install with Npcap driver
   (the default installer option) so it can open network adapters.
 
 [bold]Capture modes and their BPF filters[/]
 
-  Full          → no filter — captures everything on the interface
-  DNS Only      → -f "port 53"
-  HTTP Only     → -f "port 80 or port 8080"
-  TLS / HTTPS   → -f "port 443 or port 8443"
-  IoT Ports     → -f "port 1883 or port 8883 or port 5353 or port 1900 or port 5683"
+  Full          -> no filter -- captures everything on the interface
+  DNS Only      -> -f "port 53"
+  HTTP Only     -> -f "port 80 or port 8080"
+  TLS / HTTPS   -> -f "port 443 or port 8443"
+  IoT Ports     -> -f "port 1883 or port 8883 or port 5353 or port 1900 or port 5683"
 
   If you have a target IP saved from Network Setup, it gets ANDed in:
     -f "host 192.168.123.99 and (port 1883 or port 8883)"
@@ -60,23 +60,23 @@ you can drag into Wireshark or feed into the Analyze screen.
 [bold]Duration[/]
 
   Seconds to capture. While it's running, use the IoT app normally
-  — open a live stream, trigger a motion alert, reboot the device —
-  to generate the traffic you want to see. 60–120 s is usually enough
+  -- open a live stream, trigger a motion alert, reboot the device --
+  to generate the traffic you want to see. 60-120 s is usually enough
   for a first look. For a full session, use 300+.
 
 [bold]After capture[/]
 
   Open the Analyze screen and point it at the saved pcap:
-    Traffic (DNS/HTTP/TLS) → extracts every hostname, URL, SNI field
-    WebRTC                 → finds STUN/TURN servers and ICE candidates
-    MQTT                   → decodes publish/subscribe messages and topics
-    PCAP Statistics        → protocol breakdown + cloud provider attribution
+    Traffic (DNS/HTTP/TLS) -> extracts every hostname, URL, SNI field
+    WebRTC                 -> finds STUN/TURN servers and ICE candidates
+    MQTT                   -> decodes publish/subscribe messages and topics
+    PCAP Statistics        -> protocol breakdown + cloud provider attribution
 
   Or open in Wireshark with these display filters:
-    dns                           — all DNS queries
-    http                          — HTTP traffic
-    tls.handshake.type == 1       — TLS ClientHellos (shows SNI fields)
-    mqtt                          — MQTT traffic
+    dns                           -- all DNS queries
+    http                          -- HTTP traffic
+    tls.handshake.type == 1       -- TLS ClientHellos (shows SNI fields)
+    mqtt                          -- MQTT traffic
 
 [bold]Custom Script[/]
 
@@ -104,7 +104,7 @@ class CaptureScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Vertical(id="capture-form"):
+        with VerticalScroll(id="capture-form"):
             yield Label("[bold]Traffic Capture[/]")
             yield Label("Interface:")
             ifaces_raw = list_interfaces() or []
@@ -120,12 +120,12 @@ class CaptureScreen(Screen):
             yield Label("Capture Mode:")
             yield Select(
                 [
-                    ("Full  —  all traffic", "full"),
-                    ("DNS Only  —  port 53", "dns"),
-                    ("HTTP Only  —  port 80/8080", "http"),
-                    ("TLS / HTTPS  —  port 443/8443", "tls"),
-                    ("IoT Ports  —  MQTT + mDNS + UPnP", "iot"),
-                    ("Custom Script…", "custom"),
+                    ("Full  --  all traffic", "full"),
+                    ("DNS Only  --  port 53", "dns"),
+                    ("HTTP Only  --  port 80/8080", "http"),
+                    ("TLS / HTTPS  --  port 443/8443", "tls"),
+                    ("IoT Ports  --  MQTT + mDNS + UPnP", "iot"),
+                    ("Custom Script...", "custom"),
                 ],
                 value="full",
                 id="mode",
@@ -133,7 +133,7 @@ class CaptureScreen(Screen):
             yield Label("Duration (seconds):")
             yield Input(placeholder="30", value="30", id="duration")
             with Vertical(id="custom-section"):
-                yield Label("[dim]── Custom Script ──[/]")
+                yield Label("[dim]-- Custom Script --[/]")
                 yield Label("Script path:")
                 yield Input(placeholder="e.g. C:\\scripts\\analyze.py", id="custom-path")
                 yield Label("Interpreter:")
@@ -146,6 +146,7 @@ class CaptureScreen(Screen):
             with Horizontal():
                 yield Button("Start Capture", variant="primary", id="btn-capture")
                 yield Button("Back", id="btn-back")
+            yield LogActionBar()
             yield LogViewer(id="capture-log")
         yield Footer()
 
@@ -190,7 +191,7 @@ class CaptureScreen(Screen):
             self._run_custom_inline(target_ip or "", custom_path, custom_interp, log)
             return
 
-        log.append(f"[bold]Capturing on {iface} ({mode}) for {duration}s…[/]")
+        log.append(f"[bold]Capturing on {iface} ({mode}) for {duration}s...[/]")
 
         def _worker() -> None:
             try:

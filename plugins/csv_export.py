@@ -40,6 +40,16 @@ class CsvExportPlugin(ReportPlugin):
                 else:
                     yield {"section": section, "value": payload}
                 continue
+            metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata", {}), dict) else {}
+            for item in payload.get("risk_indicators", []) or []:
+                row = {"section": section, "key": "risk_indicators"}
+                if isinstance(item, dict):
+                    row.update(item)
+                else:
+                    row["value"] = item
+                if metadata.get("source_file"):
+                    row["source_file"] = metadata["source_file"]
+                yield row
             findings = payload.get("findings", {})
             for key, value in findings.items():
                 if isinstance(value, list):

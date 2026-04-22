@@ -16,7 +16,7 @@ class ReportGenerator:
         self._data: Dict[str, Any] = {"traffic": None, "ssl": None, "scan": None}
         self._findings = FindingCollection()
 
-    # ── Legacy convenience setters (still work) ──────────────────────
+    # -- Legacy convenience setters (still work) ----------------------
 
     def add_traffic_results(self, results: Dict[str, Any]) -> None:
         self._data["traffic"] = results
@@ -27,7 +27,7 @@ class ReportGenerator:
     def add_scan_results(self, results: Dict[str, Any]) -> None:
         self._data["scan"] = results
 
-    # ── Generic setters for any analyzer ─────────────────────────────
+    # -- Generic setters for any analyzer -----------------------------
 
     def add_results(self, section: str, results: Dict[str, Any]) -> None:
         """Add results from any analyzer under *section* key."""
@@ -42,7 +42,7 @@ class ReportGenerator:
         for f in findings:
             self._findings.add(f)
 
-    # ── Accessors ────────────────────────────────────────────────────
+    # -- Accessors ----------------------------------------------------
 
     @property
     def findings(self) -> FindingCollection:
@@ -58,7 +58,7 @@ class ReportGenerator:
             data["findings"] = self._findings.to_list()
         return data
 
-    # ── Report generation ────────────────────────────────────────────
+    # -- Report generation --------------------------------------------
 
     def generate(self, format_name: str, output_path: str) -> str:
         return get_plugin(format_name).generate(self.get_data(), output_path)

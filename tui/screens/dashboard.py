@@ -1,4 +1,4 @@
-"""Dashboard screen — landing page with tool status and session overview."""
+"""Dashboard screen -- landing page with tool status and session overview."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from textual.widgets import Footer, Header, Label, Static
 from tui.screens.help_screen import HelpScreen
 from utils.platform_info import find_tool
 
-HELP_TEXT = """[bold underline]ChainRecon — How It Works[/]
+HELP_TEXT = """[bold underline]ChainRecon -- How It Works[/]
 
 ChainRecon is an IoT security assessment framework. It sits between an IoT
 device and the internet so you can capture and inspect every packet the
@@ -20,22 +20,22 @@ device sends or receives.
 Your IoT device connects to a dedicated router (not your main one). That
 router plugs into your computer via Ethernet. Your computer forwards the
 router's traffic out through your WiFi (or another connection) to the
-internet. This is standard NAT — the same thing your home router does,
+internet. This is standard NAT -- the same thing your home router does,
 except now you control the pipe and can see everything.
 
 [bold]What the Tools Do[/]
-  • nmap      — Scans the device for open ports and running services
-  • tshark    — Captures packets (Windows + Linux, comes with Wireshark)
-  • adb       — Connects to Android devices/emulators for Frida injection
-  • frida     — Injects JavaScript into running Android apps at runtime
-  • jadx      — Decompiles APK files to Java source code
+  - nmap      -- Scans the device for open ports and running services
+  - tshark    -- Captures packets (Windows + Linux, comes with Wireshark)
+  - adb       -- Connects to Android devices/emulators for Frida injection
+  - frida     -- Injects JavaScript into running Android apps at runtime
+  - jadx      -- Decompiles APK files to Java source code
 
 [bold]Navigation[/]
   n = Network Setup   s = Scan         c = Capture     a = Analyze
   k = APK             f = Frida        r = Reports     t = Settings
   x = Custom Script   q = Quit         ? = Toggle help
 
-[bold]Tip — Windows Terminal vs old PowerShell console[/]
+[bold]Tip -- Windows Terminal vs old PowerShell console[/]
 Run ChainRecon from Windows Terminal (wt.exe) or cmd.exe for correct
 Unicode box-drawing. Admin PowerShell ISE / old conhost.exe can show
 garbled characters. Paste paths with Ctrl+Shift+V in Windows Terminal.
@@ -54,20 +54,20 @@ class _ToolStatus(Static):
     def on_mount(self) -> None:
         path = find_tool(self.tool_name)
         if path:
-            self.update(f"[green]✓[/] {self.tool_name}: {path}")
+            self.update(f"[green]OK[/] {self.tool_name}: {path}")
         else:
-            self.update(f"[red]✗[/] {self.tool_name}: not found")
+            self.update(f"[red]X[/] {self.tool_name}: not found")
 
 
 _MENU_ITEMS = [
-    ("n", "network_setup", "Network Setup  — configure NAT / routing"),
-    ("s", "scan",          "Scan           — run nmap against target device"),
-    ("c", "capture",       "Capture        — record traffic with tshark"),
-    ("a", "analyze",       "Analyze        — parse pcap / nmap output files"),
-    ("k", "apk",           "APK Analysis   — static analysis of Android .apk"),
-    ("f", "frida",         "Frida          — instrument a running Android app"),
-    ("r", "reports",       "Reports        — generate HTML / JSON / CSV report"),
-    ("t", "settings",      "Settings       — tool paths, config, API keys"),
+    ("n", "network_setup", "Network Setup  -- configure NAT / routing"),
+    ("s", "scan",          "Scan           -- run nmap against target device"),
+    ("c", "capture",       "Capture        -- record traffic with tshark"),
+    ("a", "analyze",       "Analyze        -- parse pcap / nmap output files"),
+    ("k", "apk",           "APK Analysis   -- static analysis of Android .apk"),
+    ("f", "frida",         "Frida          -- instrument a running Android app"),
+    ("r", "reports",       "Reports        -- generate HTML / JSON / CSV report"),
+    ("t", "settings",      "Settings       -- tool paths, config, API keys"),
 ]
 
 
@@ -126,10 +126,10 @@ class DashboardScreen(Screen):
                         yield _ToolStatus(tool)
             yield Label("")
             yield Label(
-                "[dim]Press a key above to navigate  •  [b]?[/b] help  •  [b]q[/b] quit  •  "
+                "[dim]Press a key above to navigate  -  [b]?[/b] help  -  [b]q[/b] quit  -  "
                 "[b]x[/b] custom script[/]"
             )
         yield Footer()
 
     def action_toggle_help(self) -> None:
-        self.app.push_screen(HelpScreen(HELP_TEXT, title="ChainRecon — How It Works"))
+        self.app.push_screen(HelpScreen(HELP_TEXT, title="ChainRecon -- How It Works"))

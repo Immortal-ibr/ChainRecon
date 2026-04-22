@@ -39,13 +39,13 @@ if (-not (Test-Path $Script)) {
 # --- Spawn mode -----------------------------------------------------------
 if ($Spawn) {
     Write-Host "[*] Spawning $Target with $Script ..." -ForegroundColor Cyan
-    frida -U -f $Target -l $Script --no-pause
+    frida -U -f $Target -l $Script -q -t 120 --exit-on-error
     exit $LASTEXITCODE
 }
 
 # --- Strategy 1: attach by name ------------------------------------------
 Write-Host "[*] Trying to attach to '$Target' by name ..." -ForegroundColor Cyan
-frida -U -n $Target -l $Script --no-pause 2>$null
+frida -U -n $Target -l $Script -q -t 120 --exit-on-error 2>$null
 if ($LASTEXITCODE -eq 0) { exit 0 }
 
 # --- Strategy 2: find PID via frida-ps -----------------------------------
@@ -54,14 +54,14 @@ $line = frida-ps -U | Select-String -Pattern $Target | Select-Object -First 1
 if ($line) {
     $pid = ($line -split '\s+')[0]
     Write-Host "[*] Found PID $pid — attaching ..." -ForegroundColor Cyan
-    frida -U -p $pid -l $Script --no-pause
+    frida -U -p $pid -l $Script -q -t 120 --exit-on-error
     if ($LASTEXITCODE -eq 0) { exit 0 }
 }
 
 # --- Strategy 3: spawn as last resort ------------------------------------
 if ($Target -match '\.') {
     Write-Host "[*] Attempting spawn: frida -U -f $Target ..." -ForegroundColor Yellow
-    frida -U -f $Target -l $Script --no-pause
+    frida -U -f $Target -l $Script -q -t 120 --exit-on-error
     exit $LASTEXITCODE
 }
 

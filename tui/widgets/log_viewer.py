@@ -1,21 +1,59 @@
-"""Reusable log viewer widget — streams text output in a scrollable panel."""
+"""Reusable bounded log viewer with copy, clear, save, and open actions."""
 
 from __future__ import annotations
 
+import os
 import platform
 import re
 import subprocess
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
 
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, RichLog, TextArea
 
 
+LOG_CLEAR_ID = "log-clear"
+LOG_COPY_ID = "log-copy"
+LOG_SAVE_ID = "log-save"
+LOG_OPEN_LAST_ID = "log-open-last"
+LOG_OPEN_DIR_ID = "log-open-dir"
+
+
+def strip_rich_markup(text: str) -> str:
+    """Remove simple Rich markup tags from log text."""
+    return re.sub(r"\[/?[^\]]*\]", "", text)
+
+
+class LogActionBar(Horizontal):
+    """Small control row for the output box on each screen."""
+
+    DEFAULT_CSS = """
+    LogActionBar {
+        height: auto;
+        margin-top: 1;
+    }
+    LogActionBar Button {
+        min-width: 8;
+        width: auto;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Button("Clear", id=LOG_CLEAR_ID)
+        yield Button("Copy", id=LOG_COPY_ID)
+        yield Button("Save Log", id=LOG_SAVE_ID)
+        yield Button("Open File", id=LOG_OPEN_LAST_ID)
+        yield Button("Open Folder", id=LOG_OPEN_DIR_ID)
+
+
 class _LogModal(ModalScreen):
-    """Modal screen that displays log content in a selectable TextArea."""
+    """Modal screen that displays retained log content in a selectable TextArea."""
 
     DEFAULT_CSS = """
     _LogModal {
@@ -55,11 +93,14 @@ class _LogModal(ModalScreen):
 
 
 class LogViewer(RichLog):
-    """A scrollable rich-text log panel with clipboard copy and text-selection support."""
+    """Scrollable output panel with bounded retained lines."""
 
     BINDINGS = [
         Binding("y", "copy_log", "Copy log", show=True),
+        Binding("ctrl+c", "copy_log", "Copy log", show=False, priority=True),
+        Binding("ctrl+shift+c", "copy_log", "Copy log", show=False, priority=True),
         Binding("e", "view_raw", "Select/copy", show=True),
+        Binding("ctrl+l", "clear_log", "Clear", show=False),
     ]
 
     can_focus = True
@@ -72,21 +113,56 @@ class LogViewer(RichLog):
     }
     """
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, max_retained_lines: int = 1000, **kwargs) -> None:
+        kwargs.setdefault("max_lines", max_retained_lines + 5)
+        kwargs.setdefault("markup", True)
         super().__init__(*args, **kwargs)
+        self.max_retained_lines = max_retained_lines
         self._log_lines: list[str] = []
+        self._dropped_count = 0
+        self._notified_drop = False
+        self._last_output_path: Optional[Path] = None
 
     def append(self, text: str) -> None:
-        """Write a line with Rich markup rendered (bold, green, red, dim, etc.)."""
+        """Append text to the log, retaining only the newest configured lines."""
+        self._record_path_from_text(text)
+        lines = text.splitlines() or [text]
+        for line in lines:
+            self._append_one(line)
+
+    def set_last_output_path(self, path: str | Path) -> None:
+        self._last_output_path = Path(path).expanduser()
+
+    def _append_one(self, text: str) -> None:
         self._log_lines.append(text)
+        if len(self._log_lines) > self.max_retained_lines:
+            overflow = len(self._log_lines) - self.max_retained_lines
+            self._dropped_count += overflow
+            del self._log_lines[:overflow]
+            if not self._notified_drop:
+                self._notified_drop = True
+                notice = (
+                    f"[yellow]Output is bounded to the last {self.max_retained_lines} "
+                    "lines. Full tool artifacts are saved in the output directory.[/]"
+                )
+                self.write(Text.from_markup(notice))
         self.write(Text.from_markup(text))
 
     def _plain_text(self) -> str:
-        """Return log content with Rich markup stripped."""
-        return re.sub(r"\[/?[^\]]*\]", "", "\n".join(self._log_lines))
+        retained = "\n".join(strip_rich_markup(line) for line in self._log_lines)
+        if self._dropped_count:
+            return (
+                f"[{self._dropped_count} older line(s) dropped from the visible log]\n"
+                f"{retained}"
+            )
+        return retained
 
     def action_copy_log(self) -> None:
-        """Copy the plain-text log content to the system clipboard."""
+        if self.copy_log_to_clipboard():
+            self.write(Text.from_markup("[dim]Log copied to clipboard.[/]"))
+
+    def copy_log_to_clipboard(self) -> bool:
+        """Copy retained plain-text log content to the system clipboard."""
         plain = self._plain_text()
         try:
             if platform.system() == "Windows":
@@ -110,11 +186,85 @@ class LogViewer(RichLog):
                     capture_output=True,
                     check=False,
                 )
-            self.write(Text.from_markup("[dim]Log copied to clipboard.[/]"))
+            return True
         except Exception as exc:
             self.write(Text.from_markup(f"[red]Clipboard error: {exc}[/]"))
+            return False
 
     def action_view_raw(self) -> None:
-        """Open log content in a selectable TextArea modal (use Ctrl+A / Ctrl+C to copy)."""
-        plain = self._plain_text()
-        self.app.push_screen(_LogModal(plain))
+        self.app.push_screen(_LogModal(self._plain_text()))
+
+    def action_clear_log(self) -> None:
+        self.clear_log()
+
+    def clear_log(self) -> None:
+        self._log_lines.clear()
+        self._dropped_count = 0
+        self._notified_drop = False
+        super().clear()
+
+    def save_log(self) -> Optional[Path]:
+        """Save retained log content to the configured output directory."""
+        try:
+            from utils.config import get_output_dir
+
+            outdir = get_output_dir()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = outdir / f"tui_log_{timestamp}.txt"
+            path.write_text(self._plain_text(), encoding="utf-8")
+            self.set_last_output_path(path)
+            self.append(f"[green]Log saved: {path.resolve()}[/]")
+            return path
+        except Exception as exc:
+            self.append(f"[red]Could not save log: {exc}[/]")
+            return None
+
+    def open_last_output(self) -> None:
+        if self._last_output_path is None:
+            self.append("[yellow]No saved output file has been recorded yet.[/]")
+            return
+        self._open_path(self._last_output_path)
+
+    def open_output_folder(self) -> None:
+        try:
+            from utils.config import get_output_dir
+
+            self._open_path(get_output_dir())
+        except Exception as exc:
+            self.append(f"[red]Could not open output folder: {exc}[/]")
+
+    def _open_path(self, path: Path) -> None:
+        target = path.expanduser()
+        if not target.is_absolute():
+            target = target.resolve()
+        if not target.exists():
+            self.append(f"[yellow]Path does not exist: {target}[/]")
+            return
+        try:
+            if platform.system() == "Windows":
+                os.startfile(str(target))  # type: ignore[attr-defined]
+            elif platform.system() == "Darwin":
+                subprocess.Popen(["open", str(target)])
+            else:
+                subprocess.Popen(["xdg-open", str(target)])
+            self.append(f"[dim]Opened: {target}[/]")
+        except Exception as exc:
+            self.append(f"[red]Could not open {target}: {exc}[/]")
+
+    def _record_path_from_text(self, text: str) -> None:
+        plain = strip_rich_markup(text)
+        markers = (
+            "Saved:",
+            "Result saved:",
+            "Report saved:",
+            "Analysis:",
+            "Decompiled:",
+            "Log saved:",
+        )
+        for line in plain.splitlines():
+            for marker in markers:
+                if marker in line:
+                    candidate = line.split(marker, 1)[1].strip().strip('"\'')
+                    candidate = candidate.rstrip(".")
+                    if candidate:
+                        self._last_output_path = Path(candidate).expanduser()

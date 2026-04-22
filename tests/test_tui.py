@@ -13,6 +13,8 @@ from tui.screens.reports import ReportsScreen
 from tui.screens.settings import SettingsScreen
 from tui.widgets.findings_table import FindingsTable
 from tui.widgets.log_viewer import LogViewer
+from tui.widgets.pasteable_input import PasteableInput
+from tui.screens.reports import _has_report_data, _report_output_path
 
 
 class AppRegistrationTests(unittest.TestCase):
@@ -43,6 +45,35 @@ class WidgetImportTests(unittest.TestCase):
 
     def test_log_viewer_importable(self):
         self.assertTrue(hasattr(LogViewer, "append"))
+
+    def test_pasteable_input_normalizes_quotes_and_newlines(self):
+        text = PasteableInput.normalize_paste_text('"C:\\Users\\me\\capture.pcap"\r\n')
+        self.assertEqual(text, "C:\\Users\\me\\capture.pcap")
+
+    def test_pasteable_input_normalizes_file_url(self):
+        text = PasteableInput.normalize_paste_text("file:///C:/Users/me/capture.pcap")
+        self.assertTrue(text.endswith("C:\\Users\\me\\capture.pcap") or text.endswith("/C:/Users/me/capture.pcap"))
+
+    def test_log_viewer_bounds_retained_lines(self):
+        log = LogViewer(max_retained_lines=2)
+        log.append("one")
+        log.append("two")
+        log.append("three")
+        plain = log._plain_text()
+        self.assertIn("older line", plain)
+        self.assertNotIn("one\n", plain)
+        self.assertIn("two", plain)
+        self.assertIn("three", plain)
+
+
+class ReportsHelperTests(unittest.TestCase):
+    def test_report_output_path_replaces_suffix(self):
+        path = _report_output_path("report.txt", ".html")
+        self.assertTrue(path.endswith("report.html"))
+
+    def test_has_report_data_ignores_empty_defaults(self):
+        self.assertFalse(_has_report_data({"traffic": None, "ssl": None, "scan": None}))
+        self.assertTrue(_has_report_data({"traffic": {"summary": {}}}))
 
 
 class AnalyzeDispatchTests(unittest.TestCase):

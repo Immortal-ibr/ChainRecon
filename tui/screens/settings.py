@@ -1,4 +1,4 @@
-"""Settings screen — view config and verify tool availability."""
+"""Settings screen -- view config and verify tool availability."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ found automatically, you have three options:
   1. Download jadx from: github.com/skylot/jadx/releases
      Get the zip (e.g. jadx-1.5.5.zip), not the .deb package
   2. Unzip to somewhere permanent (e.g. D:\\tools\\jadx-1.5.5)
-  3. Add to config/local.yaml — use SINGLE quotes for Windows paths:
+  3. Add to config/local.yaml -- use SINGLE quotes for Windows paths:
 
        tools:
          jadx: 'D:\\tools\\jadx-1.5.5\\bin\\jadx.bat'
@@ -45,7 +45,7 @@ found automatically, you have three options:
   as escape sequences, so "C:\\foo" would be parsed incorrectly.[/dim]
 
 [bold]Setting Up apktool (APK Resource Decoder)[/]
-  apktool is a JAR file — it requires Java to be installed first.
+  apktool is a JAR file -- it requires Java to be installed first.
   ChainRecon handles the "java -jar" invocation automatically;
   you just point it at the .jar file.
 
@@ -60,11 +60,11 @@ found automatically, you have three options:
   [dim]Java must be on your PATH. Verify with: java -version[/dim]
 
 [bold]YAML Path Syntax Quick Reference[/]
-  Single quotes — backslash is literal, safest for Windows paths:
+  Single quotes -- backslash is literal, safest for Windows paths:
     jadx: 'C:\\path\\to\\jadx.bat'
-  Unquoted — also works if no special YAML chars (: { } [ ] , # & | etc):
+  Unquoted -- also works if no special YAML chars (: { } [ ] , # & | etc):
     jadx: C:\\path\\to\\jadx.bat
-  Forward slashes — always work on Windows too:
+  Forward slashes -- always work on Windows too:
     jadx: C:/path/to/jadx.bat
 
 [bold]Config File Cascade[/] (later overrides earlier)
@@ -133,8 +133,8 @@ class _ToolRow(Static):
             # Try raw config value even if file not found yet
             cfg_val = get_tool_path("jadx")
             if cfg_val:
-                path = cfg_val + "  [dim](from config — file not found)[/dim]"
-        mark = "[green]✓[/]" if path else "[red]✗[/]"
+                path = cfg_val + "  [dim](from config -- file not found)[/dim]"
+        mark = "[green]OK[/]" if path else "[red]X[/]"
         self.update(f"  {mark} {self._tool}: {path or 'not found'}")
 
 

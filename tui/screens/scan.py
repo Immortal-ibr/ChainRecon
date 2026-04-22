@@ -1,4 +1,4 @@
-"""Scan screen — configure and run Nmap scans."""
+"""Scan screen -- configure and run Nmap scans."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import threading
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Checkbox, Footer, Header, Label, Select
 
@@ -17,33 +17,33 @@ from tui.widgets.pasteable_input import PasteableInput as Input
 
 from runners.nmap_runner import NmapRunner
 from tui.screens.help_screen import HelpScreen
-from tui.widgets.log_viewer import LogViewer
+from tui.widgets.log_viewer import LogActionBar, LogViewer
 from utils.config import get_network_config, get_output_dir
 
 HELP_TEXT = """[bold underline]Network Scan[/]
 
 What actually runs here: nmap commands via subprocess. nmap is the standard
-tool for port scanning — every pentester has used it, it's been around since
+tool for port scanning -- every pentester has used it, it's been around since
 1997, and the IoT research community relies on it for device fingerprinting.
 
 [bold]Profiles and the commands behind them[/]
 
-  Quick  →  nmap -Pn -sV -T4 --top-ports 1000 <target>
+  Quick  ->  nmap -Pn -sV -T4 --top-ports 1000 <target>
     -Pn skips host discovery (assumes target is up). -sV grabs service banners.
-    Scans the 1000 most common ports — catches HTTP, RTSP streams, SSH, Telnet.
+    Scans the 1000 most common ports -- catches HTTP, RTSP streams, SSH, Telnet.
     Finishes in under 2 minutes on a local network. Good first pass.
 
-  Gentle  →  nmap -Pn -sT -sV -T2 --max-retries 1 <target>
+  Gentle  ->  nmap -Pn -sT -sV -T2 --max-retries 1 <target>
     Full TCP three-way handshake on every port, slow timing. Use this if the
     device crashes or stops responding under normal scanning. Cheap IP cameras
     and baby monitors often have terrible TCP stacks that die under SYN floods.
 
-  Full  →  nmap -Pn -A -p- -T4 --version-intensity 9 <target>
+  Full  ->  nmap -Pn -A -p- -T4 --version-intensity 9 <target>
     -A means OS detection + service versions + default scripts + traceroute.
-    -p- scans all 65535 ports. Takes 20–40 minutes but gives the complete
+    -p- scans all 65535 ports. Takes 20-40 minutes but gives the complete
     picture. Services sometimes hide on non-standard ports to avoid quick scans.
 
-  IoT  →  two passes:
+  IoT  ->  two passes:
     TCP: nmap -Pn -sV -T4 -p 80,443,8080,8443,8008,1883,8883,502,102,47808
     UDP: nmap -Pn -sU -T4 -p 53,67,123,1900,5353,5683
     These cover the IoT attack surface:
@@ -52,27 +52,27 @@ tool for port scanning — every pentester has used it, it's been around since
       5353 = mDNS (device announces its name here, great for fingerprinting)
       502 = Modbus (industrial control, not expected on consumer devices)
 
-  Vulnerability  →  nmap -Pn -sV --script vuln -T4 <target>
+  Vulnerability  ->  nmap -Pn -sV --script vuln -T4 <target>
     Runs ~60 NSE scripts checking for EternalBlue (MS17-010), Heartbleed,
     weak SSH keys, Shellshock, default creds on HTTP admin pages, and more.
-    Output is long — look for "VULNERABLE" lines.
+    Output is long -- look for "VULNERABLE" lines.
 
-  SSL / Cert  →  nmap -Pn --script ssl-cert,ssl-enum-ciphers -p 443,8443,8883,8080 <target>
+  SSL / Cert  ->  nmap -Pn --script ssl-cert,ssl-enum-ciphers -p 443,8443,8883,8080 <target>
     Downloads the TLS certificate from each port and lists what cipher suites
     the server will accept. Specifically look for:
       - RC4 or DES in the cipher list (both broken)
       - RSA key size < 2048 bits (weak, increasingly breakable)
       - Self-signed or private CA cert (e.g. "Apeman CA" on the Nooie device)
       - Certificate validity > 1 year on a private CA cert (red flag)
-    On the Nooie we found a 100-year cert from "Apeman CA" — if that private
+    On the Nooie we found a 100-year cert from "Apeman CA" -- if that private
     key is ever stolen it can never be revoked in practice.
 
 [bold]Target field[/]
 
   Anything nmap accepts works:
-    Single IP    →  192.168.123.99
-    Subnet       →  192.168.123.0/24
-    IP range     →  192.168.123.1-254
+    Single IP    ->  192.168.123.99
+    Subnet       ->  192.168.123.0/24
+    IP range     ->  192.168.123.1-254
 
   For a device behind a dedicated router: your PC talks to the router's
   Ethernet-side IP (e.g. .99), not to the IoT device directly. The device
@@ -88,7 +88,7 @@ tool for port scanning — every pentester has used it, it's been around since
 
 [dim]nmap path: auto-detected (checks C:\\Program Files (x86)\\Nmap on Windows)
 Output saved to: output/nmap_<profile>.txt
-To edit profiles: runners/nmap_runner.py → SCAN_PROFILES dict[/]
+To edit profiles: runners/nmap_runner.py -> SCAN_PROFILES dict[/]
 """
 
 
@@ -110,31 +110,31 @@ class ScanScreen(Screen):
         saved_target = net_cfg.get("target_ip") or net_cfg.get("router_ip") or ""
 
         yield Header()
-        with Vertical(id="scan-form"):
+        with VerticalScroll(id="scan-form"):
             yield Label("[bold]Network Scan[/]")
-            yield Label("Target (IP / CIDR)  [dim]— single IP, range, or subnet; press [b]?[/b] for help[/]")
+            yield Label("Target (IP / CIDR)  [dim]-- single IP, range, or subnet; press [b]?[/b] for help[/]")
             if saved_target:
-                yield Label("[dim]↑ Pre-loaded from saved config — change if needed[/]")
+                yield Label("[dim]^ Pre-loaded from saved config -- change if needed[/]")
             yield Input(placeholder="e.g. 192.168.1.0/24", id="target", value=saved_target)
             yield Label("Scan Profile:")
             yield Select(
                 [
-                    ("Quick  —  top 1000 ports, -sV -T4", "quick"),
-                    ("Gentle  —  full TCP connect, slow (-T2)", "gentle"),
-                    ("Full  —  all 65535 ports + OS detect (-A)", "full"),
-                    ("IoT  —  ports 80,443,1883,8883,5353,1900 + UDP", "iot"),
-                    ("Vuln  —  NSE --script vuln", "vuln"),
-                    ("SSL / Cert  —  ssl-cert + ssl-enum-ciphers scripts", "ssl"),
-                    ("TCP Connect  —  Python socket scan (no nmap)", "tcp_connect"),
-                    ("ARP Discovery  —  find devices on local network", "arp"),
-                    ("Service Fingerprint  —  deep banner/probe on IoT ports", "fingerprint"),
-                    ("Custom Script…", "custom"),
+                    ("Quick  --  top 1000 ports, -sV -T4", "quick"),
+                    ("Gentle  --  full TCP connect, slow (-T2)", "gentle"),
+                    ("Full  --  all 65535 ports + OS detect (-A)", "full"),
+                    ("IoT  --  ports 80,443,1883,8883,5353,1900 + UDP", "iot"),
+                    ("Vuln  --  NSE --script vuln", "vuln"),
+                    ("SSL / Cert  --  ssl-cert + ssl-enum-ciphers scripts", "ssl"),
+                    ("TCP Connect  --  Python socket scan (no nmap)", "tcp_connect"),
+                    ("ARP Discovery  --  find devices on local network", "arp"),
+                    ("Service Fingerprint  --  deep banner/probe on IoT ports", "fingerprint"),
+                    ("Custom Script...", "custom"),
                 ],
                 value="iot",
                 id="profile",
             )
             with Vertical(id="custom-section"):
-                yield Label("[dim]── Custom Script ──[/]")
+                yield Label("[dim]-- Custom Script --[/]")
                 yield Label("Script path:")
                 yield Input(placeholder="e.g. C:\\scripts\\my_scan.py", id="custom-path")
                 yield Label("Interpreter:")
@@ -147,6 +147,7 @@ class ScanScreen(Screen):
             with Horizontal():
                 yield Button("Run Scan", variant="primary", id="btn-scan")
                 yield Button("Back", id="btn-back")
+            yield LogActionBar()
             yield LogViewer(id="scan-log")
         yield Footer()
 
@@ -166,7 +167,7 @@ class ScanScreen(Screen):
             self._run_scan()
 
     def _run_scan(self) -> None:
-        # Strip surrounding quotes — common when pasting Windows paths
+        # Strip surrounding quotes -- common when pasting Windows paths
         target = self.query_one("#target", Input).value.strip().strip('"\'')
         profile = self.query_one("#profile", Select).value
         log = self.query_one("#scan-log", LogViewer)
@@ -190,10 +191,10 @@ class ScanScreen(Screen):
             return
 
         if profile == "full":
-            log.append("[yellow]Full scan scans all 65535 ports — this can take 20–40 minutes on a home network. "
+            log.append("[yellow]Full scan scans all 65535 ports -- this can take 20-40 minutes on a home network. "
                        "If it times out, run nmap directly from the command line.[/]")
 
-        log.append(f"[bold]Starting {profile} scan on {target}…[/]")
+        log.append(f"[bold]Starting {profile} scan on {target}...[/]")
         output_dir = str(get_output_dir())
 
         def _worker() -> None:
@@ -205,9 +206,16 @@ class ScanScreen(Screen):
                 if not hasattr(self.app, "_report_gen"):
                     from analysis.report_generator import ReportGenerator
                     self.app._report_gen = ReportGenerator()
-                self.app._report_gen.add_results("scan_raw", result)
+                structured = _build_scan_report_payload(result)
+                self.app._report_gen.add_results("scan", structured)
+
+                from datetime import datetime
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                structured_path = Path(output_dir) / f"scan_{profile}_{ts}.json"
+                structured_path.write_text(json.dumps(structured, indent=2, default=str), encoding="utf-8")
 
                 self.app.call_from_thread(log.append, "[green]Scan complete.[/]")
+                self.app.call_from_thread(log.append, f"[dim]Result saved: {structured_path.resolve()}[/]")
                 for fpath in result.get("output_files", []):
                     self.app.call_from_thread(log.append, f"[dim]Saved: {fpath}[/]")
                     try:
@@ -260,8 +268,8 @@ class ScanScreen(Screen):
                 else:
                     self.app.call_from_thread(log.append, "[green]Custom script complete.[/]")
 
-                outdir = Path("output")
-                outdir.mkdir(exist_ok=True)
+                from utils.config import get_output_dir
+                outdir = get_output_dir()
                 from datetime import datetime
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 safe = re.sub(r"[^a-z0-9_]", "_", Path(script_path).stem.lower())
@@ -284,7 +292,7 @@ class ScanScreen(Screen):
 
     def _run_extended_scan(self, target: str, profile: str, log: LogViewer, custom_path: str, custom_interp: str) -> None:
         """Run Python-native scans (no nmap dependency)."""
-        log.append(f"[bold]Starting {profile} scan on {target}…[/]")
+        log.append(f"[bold]Starting {profile} scan on {target}...[/]")
 
         def _progress(msg: str) -> None:
             self.app.call_from_thread(log.append, msg)
@@ -297,7 +305,7 @@ class ScanScreen(Screen):
                 if profile == "tcp_connect":
                     result = scanner.tcp_scan(target)
                 elif profile == "arp":
-                    # Use the target the user typed — already a CIDR or host IP
+                    # Use the target the user typed -- already a CIDR or host IP
                     if "/" in target:
                         subnet = target
                     else:
@@ -331,3 +339,55 @@ class ScanScreen(Screen):
 
     def action_toggle_help(self) -> None:
         self.app.push_screen(HelpScreen(HELP_TEXT, title="Network Scan"))
+
+
+def _build_scan_report_payload(run_result: dict) -> dict:
+    """Combine nmap runner metadata with parsed nmap outputs."""
+    from analysis.scanner import ScannerAnalyzer
+
+    analyzer = ScannerAnalyzer()
+    parsed_results = []
+    for fpath in run_result.get("output_files", []):
+        path = Path(fpath)
+        if path.exists() and path.stat().st_size > 0:
+            parsed_results.append(analyzer.parse_nmap_output(str(path)))
+
+    hosts = []
+    iot_services = []
+    cve_hints = []
+    risk_indicators = []
+    for parsed in parsed_results:
+        hosts.extend(parsed.get("findings", {}).get("hosts", []))
+        iot_services.extend(parsed.get("findings", {}).get("iot_services", []))
+        cve_hints.extend(parsed.get("findings", {}).get("cve_hints", []))
+        risk_indicators.extend(parsed.get("risk_indicators", []))
+
+    services = [service for host in hosts for service in host.get("services", [])]
+    ports = [port for host in hosts for port in host.get("ports", [])]
+    return {
+        "metadata": {
+            "target": run_result.get("target"),
+            "profile": run_result.get("profile"),
+            "nmap_path": run_result.get("nmap_path"),
+            "output_dir": run_result.get("output_dir"),
+            "output_files": run_result.get("output_files", []),
+            "preflight": run_result.get("preflight", {}),
+            "host_discovery": run_result.get("host_discovery", {}),
+            "commands": run_result.get("commands", []),
+        },
+        "findings": {
+            "hosts": hosts,
+            "iot_services": iot_services,
+            "cve_hints": cve_hints,
+        },
+        "summary": {
+            "host_count": len(hosts),
+            "open_port_count": len(services),
+            "closed_port_count": sum(1 for port in ports if port.get("state") == "closed"),
+            "filtered_port_count": sum(1 for port in ports if port.get("state") == "filtered"),
+            "scanned_port_count": len(ports),
+            "iot_service_count": len(iot_services),
+            "cve_hint_count": len(cve_hints),
+        },
+        "risk_indicators": risk_indicators,
+    }

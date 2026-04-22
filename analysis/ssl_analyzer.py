@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import socket
 import ssl
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Optional
+from urllib.parse import urlparse
 
 from utils.logging_config import get_logger
 
@@ -44,7 +46,12 @@ class SSLAnalyzer:
                     }
                 )
             else:
-                certificates.append({"port": port, "reachable": False, "error": result.get("error", "connection failed")})
+                certificates.append({
+                    "port": port,
+                    "reachable": False,
+                    "error_type": result.get("error_type"),
+                    "error": result.get("error", "connection failed"),
+                })
 
         return {
             "metadata": {"target": target, "ports": normalized_ports},
@@ -70,7 +77,12 @@ class SSLAnalyzer:
         for port in normalized_ports:
             result = self._safe_probe(target, port)
             if not result.get("reachable"):
-                results.append({"port": port, "reachable": False, "error": result.get("error", "connection failed")})
+                results.append({
+                    "port": port,
+                    "reachable": False,
+                    "error_type": result.get("error_type"),
+                    "error": result.get("error", "connection failed"),
+                })
                 continue
 
             cipher = result.get("cipher")
@@ -161,10 +173,15 @@ class SSLAnalyzer:
             return {"port": port, "reachable": False, "error": str(exc)}
 
     def _probe_port(self, target: str, port: int) -> Dict[str, Any]:
-        # Strip CIDR notation — user may have pasted a subnet like 10.0.0.1/24
-        clean_target = target.split("/")[0].strip()
-        if not clean_target:
-            return {"port": port, "reachable": False, "error": "Empty target"}
+        target_info = self._normalize_target(target)
+        if target_info.get("error"):
+            return {
+                "port": port,
+                "reachable": False,
+                "error_type": target_info.get("error_type", "invalid_target"),
+                "error": target_info["error"],
+            }
+        clean_target = target_info["host"]
 
         context = ssl.create_default_context()
         context.check_hostname = False
@@ -172,12 +189,11 @@ class SSLAnalyzer:
 
         # SNI server_hostname must be a hostname, not an IP address.
         # Passing an IP as server_hostname causes "label empty or too long" on some stacks.
-        import ipaddress
         try:
             ipaddress.ip_address(clean_target)
-            sni_host = None  # numeric IP — skip SNI
+            sni_host = None
         except ValueError:
-            sni_host = clean_target  # hostname — use for SNI
+            sni_host = clean_target
 
         try:
             with socket.create_connection((clean_target, port), timeout=self.timeout) as tcp_socket:
@@ -188,12 +204,29 @@ class SSLAnalyzer:
         except socket.gaierror as exc:
             return {
                 "port": port, "reachable": False,
-                "error": f"DNS/network error: {exc} — ensure target is a reachable IP or hostname",
+                "error_type": "dns_resolution_failed",
+                "error": (
+                    f"Name resolution failed for '{clean_target}': {exc}. "
+                    "Use a plain IP address or hostname, not a URL or file path."
+                ),
             }
         except ssl.SSLError as exc:
-            return {"port": port, "reachable": False, "error": f"TLS handshake failed: {exc}"}
+            return {
+                "port": port,
+                "reachable": False,
+                "error_type": "tls_handshake_failed",
+                "error": f"TCP connected, but TLS handshake failed on port {port}: {exc}",
+            }
         except (socket.timeout, ConnectionRefusedError, OSError) as exc:
-            return {"port": port, "reachable": False, "error": f"Connection failed: {exc}"}
+            return {
+                "port": port,
+                "reachable": False,
+                "error_type": "tcp_connection_failed",
+                "error": (
+                    f"Port {port} was not reachable for TLS probing: {exc}. "
+                    "The host may still be alive; this only means this TCP/TLS port refused, timed out, or was filtered."
+                ),
+            }
 
         subject, issuer, serial_number, not_before, not_after = (
             self._parse_der_certificate(der_cert) if der_cert else (None, None, None, None, None)
@@ -212,6 +245,35 @@ class SSLAnalyzer:
             "self_signed": bool(subject and issuer and subject == issuer),
             "expired": self._is_expired(not_after),
         }
+
+    @staticmethod
+    def _normalize_target(target: str) -> Dict[str, str]:
+        raw = (target or "").strip().strip('"\'')
+        if not raw:
+            return {"error_type": "invalid_target", "error": "Empty target"}
+        if raw.lower().startswith("file:") or "\\" in raw:
+            return {
+                "error_type": "invalid_target",
+                "error": f"'{raw}' looks like a file path. SSL analysis needs a target IP or hostname.",
+            }
+        if "://" in raw:
+            parsed = urlparse(raw)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                return {
+                    "error_type": "invalid_target",
+                    "error": f"'{raw}' is not a valid network target for SSL analysis.",
+                }
+            raw = parsed.hostname
+        if "/" in raw:
+            try:
+                network = ipaddress.ip_network(raw, strict=False)
+                raw = str(network.network_address)
+            except ValueError:
+                return {
+                    "error_type": "invalid_target",
+                    "error": f"'{target}' is not a plain IP address, hostname, or valid CIDR target.",
+                }
+        return {"host": raw}
 
     def _parse_der_certificate(self, der_bytes: bytes):
         """Extract fields from a DER-encoded certificate.
@@ -269,7 +331,7 @@ class SSLAnalyzer:
             pass
 
         # Fallback: SHA-256 digest of the pcap as an opaque fingerprint
-        # (not a true JA3 — flagged in output so callers know)
+        # (not a true JA3 -- flagged in output so callers know)
         try:
             with open(pcap_path, "rb") as handle:
                 payload = handle.read()

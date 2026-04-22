@@ -26,7 +26,7 @@ def is_mac() -> bool:
     return get_os() == "darwin"
 
 
-# ── Tool resolution ──────────────────────────────────────────────────────
+# -- Tool resolution ------------------------------------------------------
 
 # Common Windows installation paths for security tools
 _WINDOWS_SEARCH_PATHS: Dict[str, List[str]] = {

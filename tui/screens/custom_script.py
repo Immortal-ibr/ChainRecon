@@ -16,36 +16,36 @@ import threading
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Label, Select, TextArea
 
 from tui.widgets.pasteable_input import PasteableInput as Input
 
 from tui.screens.help_screen import HelpScreen
-from tui.widgets.log_viewer import LogViewer
-from utils.config import get_config
+from tui.widgets.log_viewer import LogActionBar, LogViewer
+from utils.config import get_output_dir
 
 HELP_TEXT = """[bold underline]Custom Script Runner[/]
 
 Run any script you wrote and include its results in the ChainRecon report.
 
 [bold]Fields[/]
-  • Script Path — Full path to your script file.
+  - Script Path -- Full path to your script file.
       Examples:
         C:\\Users\\you\\my_check.py
         /home/you/scripts/check_ports.sh
-  • Language / Interpreter — How to run the script:
-        Python       → python <script>
-        PowerShell   → powershell -File <script>
-        Bash         → bash <script>
-        Executable   → run the file directly (chmod +x required on Linux)
-        Custom cmd   → you type the full command in "Arguments / Command"
+  - Language / Interpreter -- How to run the script:
+        Python       -> python <script>
+        PowerShell   -> powershell -File <script>
+        Bash         -> bash <script>
+        Executable   -> run the file directly (chmod +x required on Linux)
+        Custom cmd   -> you type the full command in "Arguments / Command"
                        and the script path is appended at the end
-  • Arguments / Command — Extra flags passed after the script path.
+  - Arguments / Command -- Extra flags passed after the script path.
     If you chose "Custom cmd", type the FULL command here (the script
     path will be appended automatically at the end).
-  • Description — A short name for this check.  Appears in the report as
+  - Description -- A short name for this check.  Appears in the report as
     the finding title so you know what the script was for.
 
 [bold]Report Integration[/]
@@ -54,8 +54,8 @@ directory (same folder used by all other ChainRecon analyzers).  Open
 the Reports screen and click Generate to include it.
 
 [bold]Exit Codes[/]
-  0 → success (finding severity: Info)
-  Non-zero → something flagged (finding severity: High)
+  0 -> success (finding severity: Info)
+  Non-zero -> something flagged (finding severity: High)
 
 [bold]Security Note[/]
 Only run scripts you trust.  ChainRecon will execute the file with the
@@ -82,7 +82,7 @@ class CustomScriptScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Vertical(id="custom-script-form"):
+        with VerticalScroll(id="custom-script-form"):
             yield Label("[bold]Custom Script Runner[/]")
             yield Label(
                 "[dim]Run your own script and add its results to the report. "
@@ -99,7 +99,7 @@ class CustomScriptScreen(Screen):
             yield Label("Language / interpreter:")
             yield Select(_INTERPRETERS, value="python", id="interpreter")
 
-            yield Label("Arguments  [dim](optional — passed after the script path)[/]:")
+            yield Label("Arguments  [dim](optional -- passed after the script path)[/]:")
             yield Input(
                 placeholder="e.g. --target 192.168.1.1 --port 8883",
                 id="script-args",
@@ -115,9 +115,10 @@ class CustomScriptScreen(Screen):
             yield TextArea(id="notes", language=None)
 
             with Horizontal():
-                yield Button("▶  Run Script", variant="primary", id="btn-run")
+                yield Button("Run Script", variant="primary", id="btn-run")
                 yield Button("Back", id="btn-back")
 
+            yield LogActionBar()
             yield LogViewer(id="script-log")
         yield Footer()
 
@@ -157,7 +158,7 @@ class CustomScriptScreen(Screen):
             cmd = ["bash", script_path] + extra_args
         elif interpreter == "exec":
             cmd = [script_path] + extra_args
-        else:  # custom — args_raw is treated as the prefix command, script appended
+        else:  # custom -- args_raw is treated as the prefix command, script appended
             cmd = extra_args + [script_path]
 
         log.append(f"[bold]Running:[/] {' '.join(cmd)}")
@@ -231,8 +232,7 @@ class CustomScriptScreen(Screen):
         duration: float,
         log: LogViewer,
     ) -> None:
-        cfg = get_config()
-        out_dir = Path(cfg.get("output", {}).get("directory", "output"))
+        out_dir = get_output_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -273,7 +273,7 @@ class CustomScriptScreen(Screen):
         try:
             with open(out_file, "w", encoding="utf-8") as fh:
                 json.dump(payload, fh, indent=2, default=str)
-            log.append(f"[green]Results saved → {out_file}[/]")
+            log.append(f"[green]Results saved -> {out_file}[/]")
             log.append("[dim]Open the Reports screen to include this in your report.[/]")
         except Exception as exc:
             log.append(f"[yellow]Could not save results: {exc}[/]")

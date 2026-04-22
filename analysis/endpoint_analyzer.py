@@ -24,7 +24,7 @@ _CLOUD_PREFIXES: Dict[str, List[str]] = {
     "Fastly": ["151.101.", "199.27.", "23.235."],
 }
 
-# Common port → service name
+# Common port -> service name
 _PORT_SERVICES: Dict[int, str] = {
     21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
     80: "HTTP", 110: "POP3", 143: "IMAP", 443: "HTTPS", 445: "SMB",

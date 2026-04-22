@@ -48,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     report_parser.add_argument("--output", required=True)
     report_parser.set_defaults(handler=handle_report)
 
-    # ── Live collection subcommands ──────────────────────────────────
+    # -- Live collection subcommands ----------------------------------
     scan_live = subparsers.add_parser("scan", help="Run nmap scan, analyze, and report")
     scan_live.add_argument("target")
     scan_live.add_argument("--profile", default="quick",
@@ -67,17 +67,17 @@ def build_parser() -> argparse.ArgumentParser:
     capture_parser.add_argument("--output")
     capture_parser.set_defaults(handler=handle_capture)
 
-    # ── APK analysis ─────────────────────────────────────────────────
+    # -- APK analysis -------------------------------------------------
     apk_parser = subparsers.add_parser("apk", help="Run static analysis on an Android APK")
     apk_parser.add_argument("apk_path", help="Path to the APK file")
     apk_parser.add_argument("--format", choices=["json", "html", "csv"])
     apk_parser.add_argument("--output")
     apk_parser.set_defaults(handler=handle_apk)
 
-    # ── TUI ──────────────────────────────────────────────────────────
+    # -- TUI ----------------------------------------------------------
     subparsers.add_parser("tui", help="Launch the interactive TUI")
     subparsers.add_parser("interactive", help="Launch the legacy interactive menu")
-    # ── Network config ───────────────────────────────────────────────
+    # -- Network config -----------------------------------------------
     net_parser = subparsers.add_parser(
         "network-config",
         help="Show, save, or apply the network setup (NAT/routing) config",
@@ -164,7 +164,7 @@ def handle_network_config(args) -> int:
         if args.remove:
             ps_args.append("-Remove")
 
-        # Check elevation — New-NetNat/New-NetIPAddress require admin
+        # Check elevation -- New-NetNat/New-NetIPAddress require admin
         try:
             import ctypes
             _is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
@@ -274,12 +274,9 @@ def handle_analyze_scan(args) -> int:
 def handle_report(args) -> int:
     generator = ReportGenerator()
     merged = load_report_inputs(args.inputs)
-    if merged.get("traffic"):
-        generator.add_traffic_results(merged["traffic"])
-    if merged.get("ssl"):
-        generator.add_ssl_results(merged["ssl"])
-    if merged.get("scan"):
-        generator.add_scan_results(merged["scan"])
+    for section, payload in merged.items():
+        if payload:
+            generator.add_results(section, payload)
     output_path = generator.generate(args.format, args.output)
     print(json.dumps({"output": output_path, "format": args.format}, indent=2))
     return 0
@@ -297,13 +294,129 @@ def handle_scan(args) -> int:
         return 1
 
     analyzer = ScannerAnalyzer()
+    parsed_results = []
     for output_file in scan_result["output_files"]:
         if Path(output_file).exists() and Path(output_file).stat().st_size > 0:
-            result = analyzer.parse_nmap_output(output_file)
-            return emit_result(result, "scan", args.format, args.output)
+            parsed_results.append(analyzer.parse_nmap_output(output_file))
+
+    if parsed_results:
+        result = combine_scan_results(scan_result, parsed_results)
+        return emit_result(result, "scan", args.format, args.output)
 
     print("[!] No scan output produced.")
     return 1
+
+
+def combine_scan_results(scan_result: dict, parsed_results: list[dict]) -> dict:
+    hosts_by_key = {}
+    iot_services = []
+    cve_hints = []
+    risk_indicators = []
+    for parsed in parsed_results:
+        for host in parsed.get("findings", {}).get("hosts", []):
+            key = host.get("ip") or f"unknown-{len(hosts_by_key)}"
+            hosts_by_key[key] = _merge_scan_host(hosts_by_key.get(key), host)
+        iot_services.extend(_dedupe_dicts(parsed.get("findings", {}).get("iot_services", [])))
+        cve_hints.extend(_dedupe_dicts(parsed.get("findings", {}).get("cve_hints", [])))
+        risk_indicators.extend(_dedupe_dicts(parsed.get("risk_indicators", [])))
+    hosts = list(hosts_by_key.values())
+    iot_services = _dedupe_dicts(iot_services)
+    cve_hints = _dedupe_dicts(cve_hints)
+    risk_indicators = _dedupe_dicts(risk_indicators)
+    services = [service for host in hosts for service in host.get("services", [])]
+    ports = [port for host in hosts for port in host.get("ports", [])]
+    state_summary = {}
+    for host in hosts:
+        for state, count in host.get("state_summary", {}).items():
+            state_summary[state] = state_summary.get(state, 0) + int(count)
+    return {
+        "metadata": {
+            "target": scan_result.get("target"),
+            "profile": scan_result.get("profile"),
+            "nmap_path": scan_result.get("nmap_path"),
+            "output_dir": scan_result.get("output_dir"),
+            "output_files": scan_result.get("output_files", []),
+            "preflight": scan_result.get("preflight", {}),
+            "host_discovery": scan_result.get("host_discovery", {}),
+            "commands": scan_result.get("commands", []),
+        },
+        "findings": {"hosts": hosts, "iot_services": iot_services, "cve_hints": cve_hints},
+        "summary": {
+            "host_count": len(hosts),
+            "open_port_count": len(services),
+            "closed_port_count": _combined_state_count(ports, state_summary, "closed"),
+            "filtered_port_count": _combined_state_count(ports, state_summary, "filtered"),
+            "scanned_port_count": len(ports) + sum(state_summary.values()),
+            "iot_service_count": len(iot_services),
+            "cve_hint_count": len(cve_hints),
+        },
+        "risk_indicators": risk_indicators,
+    }
+
+
+def _merge_scan_host(existing: dict | None, incoming: dict) -> dict:
+    if existing is None:
+        merged = dict(incoming)
+        merged["ports"] = _dedupe_ports(incoming.get("ports", []))
+        merged["services"] = _dedupe_services(incoming.get("services", []))
+        merged["notes"] = _dedupe_scalars(incoming.get("notes", []))
+        merged["state_summary"] = dict(incoming.get("state_summary", {}))
+        return merged
+
+    merged = dict(existing)
+    if not merged.get("host_state") or incoming.get("host_state") == "up":
+        merged["host_state"] = incoming.get("host_state") or merged.get("host_state")
+    merged["ports"] = _dedupe_ports([*merged.get("ports", []), *incoming.get("ports", [])])
+    merged["services"] = _dedupe_services([*merged.get("services", []), *incoming.get("services", [])])
+    merged["notes"] = _dedupe_scalars([*merged.get("notes", []), *incoming.get("notes", [])])
+    state_summary = dict(merged.get("state_summary", {}))
+    for state, count in incoming.get("state_summary", {}).items():
+        state_summary[state] = max(int(state_summary.get(state, 0)), int(count))
+    merged["state_summary"] = state_summary
+    return merged
+
+
+def _dedupe_ports(ports: list[dict]) -> list[dict]:
+    merged: dict[tuple, dict] = {}
+    for port in ports:
+        key = (port.get("protocol"), port.get("port"), port.get("state"))
+        existing = merged.get(key, {})
+        merged[key] = {**port, **{k: v for k, v in existing.items() if v not in (None, "")}}
+    return list(merged.values())
+
+
+def _dedupe_services(services: list[dict]) -> list[dict]:
+    merged: dict[tuple, dict] = {}
+    for service in services:
+        key = (service.get("protocol"), service.get("port"), service.get("service"))
+        existing = merged.get(key, {})
+        merged[key] = {**service, **{k: v for k, v in existing.items() if v not in (None, "")}}
+    return list(merged.values())
+
+
+def _dedupe_dicts(items: list[dict]) -> list[dict]:
+    seen = set()
+    deduped = []
+    for item in items:
+        key = json.dumps(item, sort_keys=True, default=str)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(item)
+    return deduped
+
+
+def _dedupe_scalars(items: list) -> list:
+    deduped = []
+    for item in items:
+        if item not in deduped:
+            deduped.append(item)
+    return deduped
+
+
+def _combined_state_count(ports: list[dict], state_summary: dict, state: str) -> int:
+    explicit = sum(1 for port in ports if port.get("state") == state)
+    summarized = sum(int(count) for key, count in state_summary.items() if state in str(key).split("|"))
+    return explicit + summarized
 
 
 def handle_capture(args) -> int:
@@ -340,7 +453,7 @@ def handle_apk(args) -> int:
 
 
 def load_report_inputs(inputs: Iterable[str]):
-    merged = {"traffic": None, "ssl": None, "scan": None}
+    grouped: dict[str, list[dict]] = {}
     files = []
     for raw_input in inputs:
         path = Path(raw_input)
@@ -350,32 +463,101 @@ def load_report_inputs(inputs: Iterable[str]):
             files.append(path)
 
     for file_path in files:
-        payload = json.loads(file_path.read_text(encoding="utf-8", errors="replace"))
-        merged[infer_section(payload, file_path.name)] = payload
-    return merged
+        try:
+            raw_payload = json.loads(file_path.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        payload = _analysis_payload_from_json(raw_payload)
+        if payload is None:
+            continue
+        metadata = dict(payload.get("metadata") or {})
+        metadata.setdefault("source_file", str(file_path.resolve()))
+        metadata.setdefault("source_filename", file_path.name)
+        payload["metadata"] = metadata
+        section = infer_section(payload, file_path.name)
+        grouped.setdefault(section, []).append(payload)
+
+    return {section: _aggregate_report_section(section, payloads) for section, payloads in grouped.items()}
+
+
+def _analysis_payload_from_json(payload):
+    if not isinstance(payload, dict):
+        return None
+    if any(key in payload for key in ("metadata", "summary", "risk_indicators")) or isinstance(payload.get("findings"), dict):
+        return payload
+
+    known_sections = ("traffic", "ssl", "scan", "apk")
+    section_values = [
+        value
+        for key, value in payload.items()
+        if key in known_sections and value not in (None, {}, [])
+    ]
+    if len(section_values) == 1 and isinstance(section_values[0], dict):
+        return section_values[0]
+    if any(key in payload for key in known_sections):
+        return None
+    return payload
 
 
 def infer_section(payload, filename: str) -> str:
     metadata = payload.get("metadata", {})
     findings = payload.get("findings", {})
     source = metadata.get("source", "")
-    if "packet_count" in metadata or "pcap" in source or "traffic" in filename:
+    analyzer = metadata.get("analyzer", "")
+    filename_l = filename.lower()
+    if analyzer == "APKAnalyzer" or metadata.get("apk") or "apk" in filename_l:
+        return "apk"
+    if "app_flags" in findings or "permissions" in findings or "credentials" in findings:
+        return "apk"
+    if "packet_count" in metadata or "pcap" in source or "traffic" in filename_l or "capture" in filename_l:
         return "traffic"
-    if metadata.get("target") or "security_findings" in findings or "ssl" in filename:
+    if "certificates" in findings or "cipher_analysis" in findings or "security_findings" in findings or "ssl" in filename_l:
+        return "ssl"
+    if "hosts" in findings or "iot_services" in findings or "cve_hints" in findings or "scan" in filename_l or "nmap" in filename_l:
+        return "scan"
+    if metadata.get("target"):
         return "ssl"
     return "scan"
+
+
+def _aggregate_report_section(section: str, payloads: list[dict]):
+    if len(payloads) == 1:
+        return payloads[0]
+    risk_indicators = []
+    source_files = []
+    for payload in payloads:
+        metadata = payload.get("metadata") or {}
+        if metadata.get("source_file"):
+            source_files.append(metadata["source_file"])
+        for item in payload.get("risk_indicators", []) or []:
+            if isinstance(item, dict):
+                annotated = dict(item)
+                annotated.setdefault("source_file", metadata.get("source_file", ""))
+                annotated.setdefault("source_filename", metadata.get("source_filename", ""))
+                risk_indicators.append(annotated)
+    return {
+        "metadata": {
+            "section": section,
+            "source_mode": "multiple_files",
+            "source_count": len(payloads),
+            "source_files": source_files,
+        },
+        "summary": {
+            "source_count": len(payloads),
+            "risk_indicator_count": len(risk_indicators),
+        },
+        "findings": {
+            "items": payloads,
+        },
+        "risk_indicators": risk_indicators,
+    }
 
 
 def emit_result(result, section, format_name=None, output_path=None) -> int:
     print(json.dumps(result, indent=2))
     if format_name and output_path:
         generator = ReportGenerator()
-        if section == "traffic":
-            generator.add_traffic_results(result)
-        elif section == "ssl":
-            generator.add_ssl_results(result)
-        else:
-            generator.add_scan_results(result)
+        generator.add_results(section, result)
         generator.generate(format_name, output_path)
     return 0
 

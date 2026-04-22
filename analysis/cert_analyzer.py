@@ -80,7 +80,7 @@ class CertAnalyzer:
             "risk_indicators": indicators,
         }
 
-    # ── DER extraction from raw payloads ─────────────────────────────
+    # -- DER extraction from raw payloads -----------------------------
 
     def _extract_der_certs(self, packets) -> List[bytes]:
         """Find DER-encoded X.509 certificates in TLS/DTLS handshake payloads."""
@@ -117,7 +117,7 @@ class CertAnalyzer:
 
     def _parse_certs(self, der_list: List[bytes]) -> List[Dict[str, Any]]:
         if not _CRYPTO_AVAILABLE:
-            logger.warning("cryptography package not installed — skipping cert parsing")
+            logger.warning("cryptography package not installed -- skipping cert parsing")
             return [{"raw_sha256": hashlib.sha256(d).hexdigest(), "note": "Install 'cryptography' for full analysis"} for d in der_list]
 
         results: List[Dict[str, Any]] = []
@@ -167,7 +167,7 @@ class CertAnalyzer:
 
             # Fermat factorisation check (p and q too close)
             if self._fermat_vulnerable(numbers.n):
-                weaknesses.append("RSA modulus may be Fermat-factorable (p ≈ q)")
+                weaknesses.append("RSA modulus may be Fermat-factorable (p ~ q)")
 
         elif isinstance(pub, ec.EllipticCurvePublicKey):
             info["key_type"] = "EC"
@@ -193,7 +193,7 @@ class CertAnalyzer:
 
     @staticmethod
     def _fermat_vulnerable(n: int, iterations: int = 100) -> bool:
-        """Quick check if RSA modulus n = p*q where p ≈ q (Fermat attack)."""
+        """Quick check if RSA modulus n = p*q where p ~ q (Fermat attack)."""
         if n < 4:
             return False
         a = math.isqrt(n)
@@ -207,7 +207,7 @@ class CertAnalyzer:
                 return True
         return False
 
-    # ── helpers ──────────────────────────────────────────────────────
+    # -- helpers ------------------------------------------------------
 
     @staticmethod
     def _get_payload(pkt) -> Optional[bytes]:

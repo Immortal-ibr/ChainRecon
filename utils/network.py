@@ -26,7 +26,7 @@ def _list_interfaces_windows() -> List[Dict[str, str]]:
 
     Tshark -D is the primary source because it lists exactly the devices Npcap
     can open.  The description field in tshark -D output is the Windows adapter
-    friendly name ("Ethernet", "Wi-Fi") — the same name that PowerShell
+    friendly name ("Ethernet", "Wi-Fi") -- the same name that PowerShell
     New-NetIPAddress / Get-NetAdapter accept.
     """
     from utils.platform_info import find_tool

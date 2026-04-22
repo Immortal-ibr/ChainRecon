@@ -1,7 +1,9 @@
 """Comprehensive tests for the analysis modules (Traffic, SSL, Scanner)."""
 
 import tempfile
+import socket
 import unittest
+from unittest.mock import patch
 
 from analysis import ScannerAnalyzer, SSLAnalyzer, TrafficAnalyzer
 
@@ -352,6 +354,20 @@ class SSLProbeTests(unittest.TestCase):
         result = analyzer.probe_certificates("10.0.0.1", ["443"])
         self.assertEqual(result["metadata"]["ports"], [443])
 
+    def test_file_path_target_is_reported_as_invalid(self):
+        result = SSLAnalyzer()._probe_port(r"C:\captures\traffic.pcap", 443)
+        self.assertFalse(result["reachable"])
+        self.assertEqual(result["error_type"], "invalid_target")
+        self.assertIn("file path", result["error"])
+
+    def test_dns_resolution_failure_has_actionable_error(self):
+        analyzer = SSLAnalyzer()
+        with patch("analysis.ssl_analyzer.socket.create_connection", side_effect=socket.gaierror(11001, "getaddrinfo failed")):
+            result = analyzer._probe_port("does-not-resolve.example", 443)
+        self.assertFalse(result["reachable"])
+        self.assertEqual(result["error_type"], "dns_resolution_failed")
+        self.assertIn("plain IP address or hostname", result["error"])
+
     def test_multiple_ports(self):
         probe = self._make_probe({
             443: {"port": 443, "reachable": True, "subject": "CN=a", "issuer": "CN=b",
@@ -651,6 +667,27 @@ class ScannerXmlParsingTests(unittest.TestCase):
   </host>
 </nmaprun>""")
         self.assertEqual(result["summary"]["open_port_count"], 1)
+        self.assertEqual(result["summary"]["closed_port_count"], 1)
+        host = result["findings"]["hosts"][0]
+        self.assertEqual(len(host["ports"]), 2)
+        self.assertEqual(host["ports"][1]["state"], "closed")
+
+    def test_xml_extraports_are_counted(self):
+        result = self._parse_xml("""<?xml version="1.0"?>
+<nmaprun>
+  <host>
+    <status state="up" />
+    <address addr="192.168.123.99" />
+    <ports>
+      <extraports state="closed" count="1000" />
+    </ports>
+  </host>
+</nmaprun>""")
+        self.assertEqual(result["summary"]["open_port_count"], 0)
+        self.assertEqual(result["summary"]["closed_port_count"], 1000)
+        self.assertEqual(result["summary"]["scanned_port_count"], 1000)
+        host = result["findings"]["hosts"][0]
+        self.assertEqual(host["state_summary"], {"closed": 1000})
 
     def test_port_without_service_element(self):
         result = self._parse_xml("""<?xml version="1.0"?>
@@ -724,6 +761,31 @@ class ScannerTextParsingTests(unittest.TestCase):
         svc = result["findings"]["hosts"][0]["services"][0]
         self.assertEqual(svc["protocol"], "udp")
         self.assertEqual(svc["port"], 5353)
+
+    def test_closed_and_filtered_text_ports_are_counted(self):
+        result = self._parse_text(
+            "Nmap scan report for 192.168.123.99\n"
+            "Host is up (0.00s latency).\n"
+            "80/tcp   closed http\n"
+            "443/tcp  filtered https\n"
+        )
+        self.assertEqual(result["summary"]["open_port_count"], 0)
+        self.assertEqual(result["summary"]["closed_port_count"], 1)
+        self.assertEqual(result["summary"]["filtered_port_count"], 1)
+        self.assertEqual(result["findings"]["hosts"][0]["host_state"], "up")
+
+    def test_not_shown_closed_ports_are_counted(self):
+        result = self._parse_text(
+            "Nmap scan report for 192.168.123.99\n"
+            "Host is up (0.0013s latency).\n"
+            "All 1000 scanned ports on 192.168.123.99 are in ignored states.\n"
+            "Not shown: 1000 closed tcp ports (reset)\n"
+        )
+        self.assertEqual(result["summary"]["open_port_count"], 0)
+        self.assertEqual(result["summary"]["closed_port_count"], 1000)
+        self.assertEqual(result["summary"]["scanned_port_count"], 1000)
+        host = result["findings"]["hosts"][0]
+        self.assertIn("Not shown: 1000 closed tcp ports (reset)", host["notes"])
 
 
 class ScannerIotIdentificationTests(unittest.TestCase):

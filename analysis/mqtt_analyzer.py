@@ -82,7 +82,7 @@ class MQTTAnalyzer:
             "risk_indicators": indicators,
         }
 
-    # ── detection methods ────────────────────────────────────────────
+    # -- detection methods --------------------------------------------
 
     def _extract_topics(self, packets) -> List[Dict[str, Any]]:
         topic_counts: Dict[str, int] = collections.Counter()
@@ -158,7 +158,7 @@ class MQTTAnalyzer:
             return {"encrypted": False, "port": 1883}
         return {"encrypted": None}
 
-    # ── helpers ──────────────────────────────────────────────────────
+    # -- helpers ------------------------------------------------------
 
     @staticmethod
     def _get_mqtt_layer(pkt) -> Any:
@@ -180,7 +180,7 @@ class MQTTAnalyzer:
         except (json.JSONDecodeError, ValueError):
             return False
 
-    # ── deep byte-level MQTT parsing ─────────────────────────────────
+    # -- deep byte-level MQTT parsing ---------------------------------
 
     # MQTT control packet types (upper 4 bits of byte 0)
     _PKT_NAMES = {
@@ -335,7 +335,7 @@ class MQTTAnalyzer:
             pass
         return result
 
-    # ── XOR key detection ────────────────────────────────────────────
+    # -- XOR key detection --------------------------------------------
 
     _COMMON_XOR_KEYS = [0x00, 0xFF, 0xAA, 0x55, 0x5A, 0xA5, 0x01, 0x42]
 

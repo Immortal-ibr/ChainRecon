@@ -104,7 +104,7 @@ class FindingCollection:
         return counts
 
     def sorted_by_severity(self) -> List[Finding]:
-        """Return findings ordered from critical → info."""
+        """Return findings ordered from critical -> info."""
         return sorted(self.findings, key=lambda f: f.severity, reverse=True)
 
     def to_list(self) -> List[Dict[str, Any]]:

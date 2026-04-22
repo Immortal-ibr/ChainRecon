@@ -1,7 +1,7 @@
 """Configuration management for ChainRecon.
 
 Loads settings with cascading priority:
-  defaults → config/default.yaml → user YAML (--config) → env vars
+  defaults -> config/default.yaml -> user YAML (--config) -> env vars
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def load_config(user_config_path: Optional[str] = None, *, force_reload: bool = 
         with open(_DEFAULT_CONFIG, encoding="utf-8") as f:
             config = yaml.safe_load(f) or {}
 
-    # 1.5. Local overrides (config/local.yaml) — always applied automatically
+    # 1.5. Local overrides (config/local.yaml) -- always applied automatically
     _local_config = _CONFIG_DIR / "local.yaml"
     if _local_config.exists():
         try:
@@ -117,7 +117,7 @@ def get_api_key(service: str) -> Optional[str]:
 
 
 def get_iot_ports() -> Dict[int, str]:
-    """Return the IoT port→protocol mapping."""
+    """Return the IoT port->protocol mapping."""
     cfg = get_config()
     raw = cfg.get("iot_ports") or {}
     return {int(k): str(v) for k, v in raw.items()}

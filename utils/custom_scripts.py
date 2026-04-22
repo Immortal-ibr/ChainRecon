@@ -1,4 +1,4 @@
-"""Custom script library — save and load user-defined scripts across sessions."""
+"""Custom script library -- save and load user-defined scripts across sessions."""
 
 from __future__ import annotations
 

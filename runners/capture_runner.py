@@ -13,10 +13,10 @@ from utils.platform_info import is_windows
 logger = get_logger("capture")
 
 CAPTURE_MODES: Dict[str, Dict[str, str]] = {
-    "full": {"label": "Full Capture", "tool": "tshark", "description": "All traffic — save everything to pcap"},
-    "dns": {"label": "DNS Only", "tool": "tshark", "description": "BPF: port 53 — domain lookups"},
-    "http": {"label": "HTTP Only", "tool": "tshark", "description": "BPF: port 80/8080 — unencrypted API calls"},
-    "tls": {"label": "TLS/HTTPS Only", "tool": "tshark", "description": "BPF: port 443/8443 — encrypted sessions"},
+    "full": {"label": "Full Capture", "tool": "tshark", "description": "All traffic -- save everything to pcap"},
+    "dns": {"label": "DNS Only", "tool": "tshark", "description": "BPF: port 53 -- domain lookups"},
+    "http": {"label": "HTTP Only", "tool": "tshark", "description": "BPF: port 80/8080 -- unencrypted API calls"},
+    "tls": {"label": "TLS/HTTPS Only", "tool": "tshark", "description": "BPF: port 443/8443 -- encrypted sessions"},
     "iot": {"label": "IoT Ports", "tool": "tshark", "description": "BPF: MQTT 1883/8883, mDNS 5353, UPnP 1900, CoAP 5683"},
     # legacy aliases kept for backward compat
     "basic": {"label": "Basic Capture", "tool": "tshark", "description": "All traffic (alias for full)"},
@@ -56,7 +56,7 @@ class CaptureRunner:
         if mode not in CAPTURE_MODES:
             raise ValueError(f"Unknown capture mode: {mode}")
 
-        # Resolve tool to its full path — try tshark first (preferred on all platforms),
+        # Resolve tool to its full path -- try tshark first (preferred on all platforms),
         # fall back to tcpdump on Linux/Mac only.
         tool_path: Optional[str] = None
         tool_name: str = "tshark"
@@ -70,7 +70,7 @@ class CaptureRunner:
                 continue
         if tool_path is None:
             raise ToolNotFoundError(
-                "tshark not found. Install Wireshark from https://www.wireshark.org/ — "
+                "tshark not found. Install Wireshark from https://www.wireshark.org/ -- "
                 "tshark is included and required for packet capture."
             )
 

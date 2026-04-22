@@ -1,4 +1,4 @@
-"""Collapsible help panel — press '?' on any screen to toggle."""
+"""Collapsible help panel -- press '?' on any screen to toggle."""
 
 from __future__ import annotations
 

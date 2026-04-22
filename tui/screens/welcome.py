@@ -1,4 +1,4 @@
-"""Welcome / OS selection screen — shown on every startup.
+"""Welcome / OS selection screen -- shown on every startup.
 
 The user picks Windows or Linux.  The choice is stored in ``app.os_mode``
 and every screen / script that needs to know the platform reads it from
@@ -106,7 +106,7 @@ class WelcomeScreen(Screen):
         self._continue()
 
     def _continue(self) -> None:
-        """Handle continue action — store OS choice and pop screen."""
+        """Handle continue action -- store OS choice and pop screen."""
         sel = self.query_one("#os-select", Select)
         chosen = sel.value if sel.value != Select.BLANK else (
             "Windows" if _DETECTED == "Windows" else "Linux"

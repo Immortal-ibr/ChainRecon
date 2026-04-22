@@ -1,15 +1,18 @@
-"""ChainRecon TUI — main Textual application."""
+"""ChainRecon TUI main application."""
 
 from __future__ import annotations
 
 import platform
 
 from textual.app import App
+from textual.binding import Binding
+from textual.widgets import Button, TextArea
 
 from analysis.report_generator import ReportGenerator
 from tui.screens.analyze import AnalyzeScreen
 from tui.screens.apk import APKScreen
 from tui.screens.capture import CaptureScreen
+from tui.screens.custom_script import CustomScriptScreen
 from tui.screens.dashboard import DashboardScreen
 from tui.screens.frida import FridaScreen
 from tui.screens.network_setup import NetworkSetupScreen
@@ -17,14 +20,22 @@ from tui.screens.reports import ReportsScreen
 from tui.screens.scan import ScanScreen
 from tui.screens.settings import SettingsScreen
 from tui.screens.welcome import WelcomeScreen
-from tui.screens.custom_script import CustomScriptScreen
+from tui.widgets.log_viewer import (
+    LOG_CLEAR_ID,
+    LOG_COPY_ID,
+    LOG_OPEN_DIR_ID,
+    LOG_OPEN_LAST_ID,
+    LOG_SAVE_ID,
+    LogViewer,
+)
 
 CSS = """
 Screen {
     background: $surface;
 }
 #dashboard, #scan-form, #capture-form, #analyze-form, #frida-form,
-#apk-form, #reports-form, #settings, #network-setup-form {
+#apk-form, #reports-form, #settings, #network-setup-form,
+#custom-script-form {
     padding: 1 2;
 }
 #title {
@@ -40,7 +51,8 @@ Select {
 }
 Button {
     margin: 1 1 0 0;
-    min-width: 12;
+    min-width: 8;
+    width: auto;
 }
 Button.primary {
     color: $text;
@@ -56,14 +68,16 @@ RichLog {
     margin-top: 1;
     min-height: 10;
 }
+Horizontal {
+    height: auto;
+}
+VerticalScroll {
+    height: 1fr;
+}
 
-/* ---- Admin PowerShell / conhost.exe ASCII fallback ----
-   conhost.exe cannot render Unicode box-drawing characters even with VT
-   mode.  When WT_SESSION is missing we add .ascii-mode on the App root
-   and force every bordered widget to plain ASCII (+, -, |).
-
-   Textual specificity: App.CSS > Widget.DEFAULT_CSS so these win over
-   the widget-level border: solid rules.  */
+/* Admin PowerShell / conhost.exe ASCII fallback.
+   conhost.exe can render borders poorly. When WT_SESSION is missing we
+   add .ascii-mode on the App root and force bordered widgets to ASCII. */
 .ascii-mode * {
     scrollbar-size: 1 1;
 }
@@ -97,7 +111,7 @@ RichLog {
 .ascii-mode #modal-box {
     border: ascii $accent;
 }
-.ascii-mode #help-box {
+.ascii-mode #help-dialog {
     border: ascii $accent;
 }
 .ascii-mode Vertical {
@@ -115,6 +129,11 @@ class ChainReconApp(App):
     TITLE = "ChainRecon"
     SUB_TITLE = "IoT Security Assessment Framework"
     CSS = CSS
+    BINDINGS = [
+        Binding("ctrl+c", "copy_focused", "Copy", show=False, priority=True),
+        Binding("ctrl+shift+c", "copy_focused", "Copy", show=False, priority=True),
+        Binding("ctrl+q", "quit", "Quit", show=False, priority=True),
+    ]
 
     SCREENS = {
         "dashboard": DashboardScreen,
@@ -131,30 +150,79 @@ class ChainReconApp(App):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        # Shared report generator that screens can populate
         self._report_gen = ReportGenerator()
-        # OS mode — set by WelcomeScreen, defaults to current platform
         self.os_mode: str = platform.system() if platform.system() in ("Windows", "Linux") else "Linux"
 
     def on_mount(self) -> None:
         import os
         import sys
-        # In admin PowerShell (conhost.exe), WT_SESSION is not set.
-        # Unicode box-drawing characters don't render even with VT mode,
-        # so fall back to ASCII-only borders.
+
         if sys.platform == "win32" and not os.environ.get("WT_SESSION"):
             self.add_class("ascii-mode")
-        # Show OS selection first, then fall through to dashboard
         self.push_screen("dashboard")
         self.push_screen(WelcomeScreen())
 
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle shared log action buttons that bubble up from screens."""
+        if event.button.id not in {
+            LOG_CLEAR_ID,
+            LOG_COPY_ID,
+            LOG_SAVE_ID,
+            LOG_OPEN_LAST_ID,
+            LOG_OPEN_DIR_ID,
+        }:
+            return
+
+        log = self._active_log_viewer()
+        if log is None:
+            return
+        event.stop()
+        if event.button.id == LOG_CLEAR_ID:
+            log.clear_log()
+        elif event.button.id == LOG_COPY_ID:
+            log.action_copy_log()
+        elif event.button.id == LOG_SAVE_ID:
+            log.save_log()
+        elif event.button.id == LOG_OPEN_LAST_ID:
+            log.open_last_output()
+        elif event.button.id == LOG_OPEN_DIR_ID:
+            log.open_output_folder()
+
+    def action_copy_focused(self) -> None:
+        """Copy from the focused widget without letting Ctrl+C terminate."""
+        focused = self.focused
+        if isinstance(focused, LogViewer):
+            focused.action_copy_log()
+            return
+        if isinstance(focused, TextArea):
+            focused.action_copy()
+            return
+        if hasattr(focused, "action_copy"):
+            try:
+                focused.action_copy()  # type: ignore[attr-defined]
+                return
+            except Exception:
+                pass
+        log = self._active_log_viewer()
+        if log is not None:
+            log.action_copy_log()
+
+    def _active_log_viewer(self) -> LogViewer | None:
+        try:
+            focused = self.focused
+            if isinstance(focused, LogViewer):
+                return focused
+            logs = list(self.screen.query(LogViewer))
+            return logs[-1] if logs else None
+        except Exception:
+            return None
+
 
 def run_tui() -> None:
-    """Entry-point called from the CLI."""
-    import sys
+    """Entry point called from the CLI."""
     import os
-    # Ensure UTF-8 output — required for Unicode box-drawing in older
-    # Windows console hosts (conhost.exe / admin PowerShell).
+    import sys
+
     if sys.platform == "win32":
         os.environ.setdefault("PYTHONIOENCODING", "utf-8")
         try:
@@ -162,16 +230,14 @@ def run_tui() -> None:
             sys.stderr.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, IOError):
             pass
-        # Enable Virtual Terminal Processing + set UTF-8 codepage so that
-        # Unicode box-drawing characters render correctly in conhost.exe.
         try:
             import ctypes
+
             kernel32 = ctypes.windll.kernel32
-            kernel32.SetConsoleOutputCP(65001)  # UTF-8
+            kernel32.SetConsoleOutputCP(65001)
             kernel32.SetConsoleCP(65001)
-            # ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING
-            STDOUT_HANDLE = kernel32.GetStdHandle(-11)
-            kernel32.SetConsoleMode(STDOUT_HANDLE, 0x0007)
+            stdout_handle = kernel32.GetStdHandle(-11)
+            kernel32.SetConsoleMode(stdout_handle, 0x0007)
         except Exception:
             pass
     ChainReconApp().run()

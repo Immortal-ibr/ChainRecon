@@ -55,7 +55,7 @@ class PcapStatsAnalyzer:
             "risk_indicators": [],
         }
 
-    # ── helpers ──────────────────────────────────────────────────────
+    # -- helpers ------------------------------------------------------
 
     @staticmethod
     def _protocol_distribution(packets) -> Dict[str, int]:

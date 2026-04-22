@@ -1,4 +1,4 @@
-"""Network Setup screen — configure NAT/routing for IoT interception."""
+"""Network Setup screen -- configure NAT/routing for IoT interception."""
 
 from __future__ import annotations
 
@@ -8,14 +8,14 @@ import threading
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Label, Select
 
 from tui.widgets.pasteable_input import PasteableInput as Input
 
 from tui.screens.help_screen import HelpScreen
-from tui.widgets.log_viewer import LogViewer
+from tui.widgets.log_viewer import LogActionBar, LogViewer
 from utils.config import get_network_config, save_network_config
 from utils.network import list_interfaces
 
@@ -25,37 +25,37 @@ Configures your PC as a NAT router so you can intercept all traffic from
 an IoT device connected through a dedicated physical router.
 
 [bold]Physical Wiring[/]
-  IoT Device  ──wifi──▶  Dedicated Router  ──ethernet──▶  Your PC  ──wifi──▶  Internet
+  IoT Device  --wifi-->  Dedicated Router  --ethernet-->  Your PC  --wifi-->  Internet
 
 [bold]What This Screen Does[/]
   1. Assigns a static IP to your Ethernet adapter (the one going to the
      router). This makes your PC the gateway for the IoT subnet.
   2. Enables IP forwarding between your Ethernet and Wi-Fi adapters so
-     traffic flows from IoT → router → your PC → internet and back.
+     traffic flows from IoT -> router -> your PC -> internet and back.
   3. Creates a NAT rule so outgoing IoT traffic gets masqueraded behind
      your PC's internet IP (just like a home router does).
 
 [bold]Fields[/]
-  • Ethernet Interface — The adapter connected to the IoT router.
-  • Internet Interface — The adapter with active internet (usually Wi-Fi).
-  • Static IP — IP to assign to the Ethernet adapter. Must be in the same
+  - Ethernet Interface -- The adapter connected to the IoT router.
+  - Internet Interface -- The adapter with active internet (usually Wi-Fi).
+  - Static IP -- IP to assign to the Ethernet adapter. Must be in the same
     subnet as the router (e.g. 192.168.123.100 if router is .99).
-  • Subnet Prefix — Usually 24 for a /24 (255.255.255.0) network.
-  • Target IP — IP of the IoT device (for capture BPF filters).
-  • Router IP — IP of the dedicated router.
+  - Subnet Prefix -- Usually 24 for a /24 (255.255.255.0) network.
+  - Target IP -- IP of the IoT device (for capture BPF filters).
+  - Router IP -- IP of the dedicated router.
 
 [bold]Buttons[/]
-  • Apply — Runs the setup script (requires admin/root privileges).
-  • Save Config — Saves settings to config/local.yaml so they persist
+  - Apply -- Runs the setup script (requires admin/root privileges).
+  - Save Config -- Saves settings to config/local.yaml so they persist
     across sessions and pre-populate the Capture screen.
-  • Remove — Tears down the NAT and removes the static IP.
+  - Remove -- Tears down the NAT and removes the static IP.
 
 [bold]Platform[/]
   Windows: scripts/network_setup.ps1 (PowerShell, requires Run As Admin)
   Linux:   scripts/network_setup.sh (bash, requires sudo)
 
 [dim]Scripts: scripts/network_setup.ps1, scripts/network_setup.sh
-Config: config/local.yaml → network section
+Config: config/local.yaml -> network section
 To edit this screen: tui/screens/network_setup.py[/]
 """
 
@@ -79,8 +79,8 @@ class NetworkSetupScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Vertical(id="network-setup-form"):
-            yield Label("[bold]Network Setup — NAT / Routing[/]")
+        with VerticalScroll(id="network-setup-form"):
+            yield Label("[bold]Network Setup -- NAT / Routing[/]")
             yield Label(
                 "[dim]Interfaces are detected from your OS each time you open this screen.[/]"
             )
@@ -123,6 +123,7 @@ class NetworkSetupScreen(Screen):
                 yield Button("Save Config", id="btn-save", variant="default")
                 yield Button("Remove NAT", id="btn-remove", variant="warning")
                 yield Button("Back", id="btn-back")
+            yield LogActionBar()
             yield LogViewer(id="net-log")
         yield Footer()
 
@@ -179,7 +180,7 @@ class NetworkSetupScreen(Screen):
 
         is_win = getattr(self.app, "os_mode", "Windows") == "Windows"
         action = "Removing" if remove else "Applying"
-        log.append(f"[bold]{action} network configuration…[/]")
+        log.append(f"[bold]{action} network configuration...[/]")
 
         def _worker() -> None:
             try:
@@ -198,7 +199,7 @@ class NetworkSetupScreen(Screen):
                 else:
                     script = str(_SCRIPTS_DIR / "network_setup.sh")
                     cmd = ["sudo", "bash", script]
-                    # The Linux script is interactive — pass values via env
+                    # The Linux script is interactive -- pass values via env
                     # For automated use, we'd need to refactor network_setup.sh
                     # For now, just run it and let the user interact in terminal
 

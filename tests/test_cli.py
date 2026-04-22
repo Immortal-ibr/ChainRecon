@@ -249,6 +249,82 @@ class ReportCliTests(unittest.TestCase):
                 chainrecon.main(["report", td, "--format", "csv", "--output", str(output)])
             self.assertTrue(output.exists())
 
+    def test_report_directory_aggregates_multiple_files_per_section(self):
+        with tempfile.TemporaryDirectory() as td:
+            tp = Path(td)
+            for idx in range(2):
+                (tp / f"traffic_{idx}.json").write_text(
+                    json.dumps({
+                        "metadata": {"source": f"cap_{idx}.pcap", "packet_count": idx + 1},
+                        "findings": {},
+                        "summary": {},
+                        "risk_indicators": [{"severity": "info", "title": f"traffic {idx}", "details": "test"}],
+                    }),
+                    encoding="utf-8",
+                )
+            merged = chainrecon.load_report_inputs([td])
+        self.assertEqual(merged["traffic"]["metadata"]["source_mode"], "multiple_files")
+        self.assertEqual(merged["traffic"]["metadata"]["source_count"], 2)
+        self.assertEqual(len(merged["traffic"]["findings"]["items"]), 2)
+        self.assertEqual(len(merged["traffic"]["risk_indicators"]), 2)
+
+    def test_report_directory_ignores_nested_or_non_object_json(self):
+        with tempfile.TemporaryDirectory() as td:
+            tp = Path(td)
+            (tp / "traffic.json").write_text(
+                json.dumps({"metadata": {"packet_count": 1}, "findings": {}, "summary": {}, "risk_indicators": []}),
+                encoding="utf-8",
+            )
+            (tp / "asset.json").write_text(json.dumps(["not", "analysis"]), encoding="utf-8")
+            (tp / "partial.json").write_text('{"traffic": ', encoding="utf-8")
+            nested = tp / "apk_decompiled" / "resources"
+            nested.mkdir(parents=True)
+            (nested / "countryList.en.json").write_text(json.dumps([{"name": "US"}]), encoding="utf-8")
+            merged = chainrecon.load_report_inputs([td])
+        self.assertIn("traffic", merged)
+        self.assertEqual(set(merged), {"traffic"})
+
+    def test_report_loader_unwraps_single_section_report_json(self):
+        with tempfile.TemporaryDirectory() as td:
+            tp = Path(td)
+            (tp / "apk.json").write_text(
+                json.dumps({
+                    "traffic": None,
+                    "ssl": None,
+                    "scan": {
+                        "metadata": {"apk": "nooie.apk", "analyzer": "APKAnalyzer"},
+                        "findings": {"permissions": []},
+                        "summary": {},
+                        "risk_indicators": [{"severity": "high", "title": "apk", "details": "test"}],
+                    },
+                }),
+                encoding="utf-8",
+            )
+            merged = chainrecon.load_report_inputs([td])
+        self.assertEqual(set(merged), {"apk"})
+        self.assertEqual(len(merged["apk"]["risk_indicators"]), 1)
+
+    def test_report_loader_skips_multi_section_generated_report_json(self):
+        with tempfile.TemporaryDirectory() as td:
+            tp = Path(td)
+            (tp / "report.json").write_text(
+                json.dumps({
+                    "traffic": {"metadata": {"packet_count": 1}, "findings": {}, "summary": {}},
+                    "ssl": {"metadata": {"target": "10.0.0.1"}, "findings": {}, "summary": {}},
+                    "scan": None,
+                }),
+                encoding="utf-8",
+            )
+            merged = chainrecon.load_report_inputs([td])
+        self.assertEqual(merged, {})
+
+    def test_report_infers_apk_section(self):
+        payload = {
+            "metadata": {"apk": "nooie.apk", "analyzer": "APKAnalyzer"},
+            "findings": {"permissions": []},
+        }
+        self.assertEqual(chainrecon.infer_section(payload, "live_apk.json"), "apk")
+
 
 # ===========================================================================
 # Helper function tests
@@ -303,6 +379,18 @@ class EmitResultTests(unittest.TestCase):
                 code = chainrecon.emit_result(result, "traffic", format_name="json", output_path=output)
             self.assertEqual(code, 0)
             self.assertTrue(Path(output).exists())
+
+    def test_generates_generic_section_report_when_format_and_output(self):
+        result = {"metadata": {"apk": "app.apk"}, "findings": {}, "summary": {}, "risk_indicators": []}
+        with tempfile.TemporaryDirectory() as td:
+            output = str(Path(td) / "apk.json")
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = chainrecon.emit_result(result, "apk", format_name="json", output_path=output)
+            self.assertEqual(code, 0)
+            saved = json.loads(Path(output).read_text(encoding="utf-8"))
+        self.assertIn("apk", saved)
+        self.assertIsNone(saved["scan"])
 
 
 class BuildParserTests(unittest.TestCase):
@@ -386,6 +474,47 @@ class InteractiveModeTests(unittest.TestCase):
 
 
 class HandleScanCliTests(unittest.TestCase):
+    def test_combine_scan_results_merges_text_and_xml_for_same_host(self):
+        scan_result = {
+            "target": "192.168.123.99",
+            "profile": "quick",
+            "output_files": ["scan.txt", "scan.xml"],
+        }
+        text_result = {
+            "findings": {
+                "hosts": [{
+                    "ip": "192.168.123.99",
+                    "host_state": "up",
+                    "ports": [],
+                    "services": [],
+                    "notes": ["Not shown: 1000 closed tcp ports (reset)"],
+                    "state_summary": {"closed": 1000},
+                }],
+                "iot_services": [],
+                "cve_hints": [],
+            },
+            "risk_indicators": [],
+        }
+        xml_result = {
+            "findings": {
+                "hosts": [{
+                    "ip": "192.168.123.99",
+                    "host_state": "up",
+                    "ports": [],
+                    "services": [],
+                    "state_summary": {"closed": 1000},
+                }],
+                "iot_services": [],
+                "cve_hints": [],
+            },
+            "risk_indicators": [],
+        }
+        result = chainrecon.combine_scan_results(scan_result, [text_result, xml_result])
+        self.assertEqual(result["summary"]["host_count"], 1)
+        self.assertEqual(result["summary"]["closed_port_count"], 1000)
+        self.assertEqual(result["summary"]["scanned_port_count"], 1000)
+        self.assertEqual(result["findings"]["hosts"][0]["notes"], ["Not shown: 1000 closed tcp ports (reset)"])
+
     def test_scan_tool_not_found(self):
         args = MagicMock()
         args.target = "10.0.0.1"

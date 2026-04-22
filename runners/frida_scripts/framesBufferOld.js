@@ -27,7 +27,13 @@ Java.perform(function () {
     const classes = ["org.webrtc.AndroidVideoDecoder"]; 
     for (let c = 0; c < classes.length; c++) {
         const className = classes[c];
-        const clazz = Java.use(className);
+        let clazz;
+        try {
+            clazz = Java.use(className);
+        } catch (e) {
+            console.log("[!] Class not found: " + className);
+            continue;
+        }
         const methods = clazz.class.getDeclaredMethods();
         const seen = new Set();
         for (let i = 0; i < methods.length; i++) {

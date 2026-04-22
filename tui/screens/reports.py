@@ -1,44 +1,39 @@
-"""Reports screen — generate reports from collected results."""
+"""Reports screen for generating JSON, HTML, and CSV artifacts."""
 
 from __future__ import annotations
 
-import json
 import threading
-from datetime import datetime
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Label, Select
 
-from tui.widgets.pasteable_input import PasteableInput as Input
-
 from tui.screens.help_screen import HelpScreen
-from tui.widgets.log_viewer import LogViewer
+from tui.widgets.log_viewer import LogActionBar, LogViewer
+from tui.widgets.pasteable_input import PasteableInput as Input
 
 HELP_TEXT = """[bold underline]Report Generation[/]
 
 Combines results from scans, captures, and analysis into a single report.
-All JSON files saved in the output/ directory are automatically loaded —
-you don't need to run scans in the same session.
+By default it uses the current TUI session only. You can also include every
+JSON file from the configured output directory.
 
 [bold]Formats[/]
-  • HTML — Human-readable report: severity badges, findings table, section
-    cards for each analysis type. Opens in any web browser.
-  • JSON — Full machine-readable output. Good for scripting or other tools.
-  • CSV  — Flat tabular export. Import into Excel / Google Sheets.
+  - HTML: Human-readable report with risk summary and raw sections.
+  - JSON: Full machine-readable output. Good for scripting.
+  - CSV: Flat tabular export for Excel or Google Sheets.
 
 [bold]Source files[/]
-Every scan, capture, and analysis saves a JSON file to output/.
-The report screen loads all of them automatically. If you want to include
-only specific files, delete the ones you don't want from output/ first.
+Current session mode avoids stale result files. All output files mode loads
+every *.json file from the configured output directory and records each
+source filename in report metadata.
 
 [bold]Reading the report[/]
-  risk_indicators — each has severity (critical/high/medium/low/info),
-    a title, and details. Start here.
-  findings — raw per-analyzer output (ports, DNS queries, certs, etc.)
-  summary — high-level counts per section
+  risk_indicators: severity, title, and details. Start here.
+  findings: raw per-analyzer output such as ports, DNS queries, and certs.
+  summary: high-level counts per section.
 
 [dim]Report plugin code: plugins/
 Finding model: models/finding.py
@@ -46,24 +41,20 @@ To edit this screen: tui/screens/reports.py[/]
 """
 
 
-def _load_output_files(log_func=None) -> dict:
-    """Scan output/ for saved JSON analysis files and merge them into one dict."""
+def _load_output_files(log_func=None, output_dir: Path | None = None) -> dict:
+    """Scan configured output directory for saved JSON analysis files."""
     from utils.config import get_output_dir
-    outdir = get_output_dir()
-    sections: dict = {}
+    from chainrecon import load_report_inputs
+
+    outdir = output_dir or get_output_dir()
     if not outdir.exists():
-        return sections
-    for jfile in sorted(outdir.glob("*.json")):
-        try:
-            data = json.loads(jfile.read_text(encoding="utf-8"))
-            # Use the stem as the section key, deduplicate with a counter
-            key = jfile.stem
-            sections[key] = data
-            if log_func:
-                log_func(f"[dim]Loaded: {jfile.name}[/]")
-        except Exception as exc:
-            if log_func:
-                log_func(f"[yellow]Skipped {jfile.name}: {exc}[/]")
+        return {}
+    sections = load_report_inputs([str(outdir)])
+    if log_func:
+        for section, payload in sections.items():
+            metadata = payload.get("metadata") if isinstance(payload, dict) else {}
+            count = metadata.get("source_count", 1) if isinstance(metadata, dict) else 1
+            log_func(f"[dim]Loaded {count} file(s) into {section}.[/]")
     return sections
 
 
@@ -71,21 +62,34 @@ class ReportsScreen(Screen):
     BINDINGS = [("escape", "app.pop_screen", "Back"), ("question_mark", "toggle_help", "Help")]
 
     def compose(self) -> ComposeResult:
+        from utils.config import get_output_dir
+
+        default_output = str((get_output_dir() / "report").resolve())
         yield Header()
-        with Vertical(id="reports-form"):
+        with VerticalScroll(id="reports-form"):
             yield Label("[bold]Report Generation[/]")
-            yield Label("[dim]All JSON files in output/ are included automatically.[/]")
+            yield Label("[dim]Choose current session results or all saved JSON files from the configured output directory.[/]")
             yield Label("Output file path (without extension):")
-            yield Input(placeholder="output/report", value="output/report", id="output-path")
+            yield Input(placeholder=default_output, value=default_output, id="output-path")
             yield Label("Format:")
             yield Select(
                 [("HTML (browser-readable)", "html"), ("JSON (machine-readable)", "json"), ("CSV (spreadsheet)", "csv")],
                 value="html",
                 id="format",
             )
+            yield Label("Source:")
+            yield Select(
+                [
+                    ("Current session only", "session"),
+                    ("All JSON files in configured output directory", "all_output"),
+                ],
+                value="session",
+                id="source-mode",
+            )
             with Horizontal():
                 yield Button("Generate Report", variant="primary", id="btn-gen")
                 yield Button("Back", id="btn-back")
+            yield LogActionBar()
             yield LogViewer(id="reports-log")
         yield Footer()
 
@@ -99,13 +103,14 @@ class ReportsScreen(Screen):
     def _generate(self) -> None:
         out_path = self.query_one("#output-path", Input).value.strip().strip('"\'')
         fmt = self.query_one("#format", Select).value
+        source_mode = self.query_one("#source-mode", Select).value
         log = self.query_one("#reports-log", LogViewer)
 
         if not out_path:
             log.append("[red]Please provide an output path.[/]")
             return
 
-        log.append(f"[bold]Generating {fmt.upper()} report…[/]")
+        log.append(f"[bold]Generating {fmt.upper()} report from {source_mode}...[/]")
 
         def _worker() -> None:
             try:
@@ -113,30 +118,31 @@ class ReportsScreen(Screen):
                 from plugins import get_plugin
 
                 plugin = get_plugin(fmt)
-                full_path = f"{out_path}{plugin.file_extension()}"
-
-                # Start with any results already accumulated in the app session
+                full_path = _report_output_path(out_path, plugin.file_extension())
                 gen = getattr(self.app, "_report_gen", None) or ReportGenerator()
 
-                # Load all saved JSON files from output/ into the report
                 loaded_count = 0
-                for key, data in _load_output_files(
-                    log_func=lambda msg: self.app.call_from_thread(log.append, msg)
-                ).items():
-                    gen.add_results(key, data)
-                    loaded_count += 1
+                if source_mode == "all_output":
+                    for key, data in _load_output_files(
+                        log_func=lambda msg: self.app.call_from_thread(log.append, msg)
+                    ).items():
+                        gen.add_results(key, data)
+                        loaded_count += 1
 
-                if loaded_count == 0 and not gen.get_data().get("traffic"):
+                if not _has_report_data(gen.get_data()):
                     self.app.call_from_thread(
                         log.append,
-                        "[yellow]No results found. Run a scan or analysis first to populate output/.[/]"
+                        "[yellow]No results found for the selected source. Run a scan or choose all output files.[/]",
                     )
 
-                # Ensure output directory exists
                 Path(full_path).parent.mkdir(parents=True, exist_ok=True)
                 gen.generate(fmt, full_path)
-                self.app.call_from_thread(log.append, f"[green]Report saved: {full_path}[/]")
-                self.app.call_from_thread(log.append, f"[dim]{loaded_count} result file(s) included.[/]")
+                self.app.call_from_thread(log.set_last_output_path, full_path)
+                self.app.call_from_thread(log.append, f"[green]Report saved: {Path(full_path).resolve()}[/]")
+                if source_mode == "all_output":
+                    self.app.call_from_thread(log.append, f"[dim]{loaded_count} result file(s) included.[/]")
+                else:
+                    self.app.call_from_thread(log.append, "[dim]Current session results included.[/]")
             except Exception as exc:
                 self.app.call_from_thread(log.append, f"[red]Error: {exc}[/]")
 
@@ -145,3 +151,20 @@ class ReportsScreen(Screen):
     def action_toggle_help(self) -> None:
         self.app.push_screen(HelpScreen(HELP_TEXT, title="Report Generation"))
 
+
+def _report_output_path(raw_path: str, extension: str) -> str:
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = path.resolve()
+    if path.suffix.lower() == extension.lower():
+        return str(path)
+    return str(path.with_suffix(extension))
+
+
+def _has_report_data(data: dict) -> bool:
+    for key, value in data.items():
+        if key == "findings_summary":
+            continue
+        if value not in (None, {}, []):
+            return True
+    return False

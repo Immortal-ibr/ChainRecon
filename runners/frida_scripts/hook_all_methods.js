@@ -1,4 +1,4 @@
-const TARGET_CLASSES = ["com"];
+const TARGET_CLASSES = [];
 /**
  * Hook every method of one or more classes and log calls with arguments.
  *

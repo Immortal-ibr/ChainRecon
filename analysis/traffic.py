@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------
-# Scapy → pyshark-style adapter
+# Scapy -> pyshark-style adapter
 # ---------------------------------------------------------------------------
 
 def _parse_tls_sni(payload: bytes) -> Optional[str]:
@@ -337,7 +337,7 @@ class TrafficAnalyzer:
             capture = type("_NullCapture", (), {"close": lambda self=None: None, "closed": False})()
         return packets, capture
 
-    # ── Entropy & plaintext helpers ──────────────────────────────────
+    # -- Entropy & plaintext helpers ----------------------------------
 
     @staticmethod
     def shannon_entropy(data: bytes) -> float:
