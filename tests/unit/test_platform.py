@@ -50,9 +50,18 @@ class FindToolTests(unittest.TestCase):
     @patch("utils.platform_info.is_windows", return_value=True)
     @patch("utils.platform_info.shutil.which")
     def test_windows_exe_fallback(self, mock_which, _):
-        """On Windows, tries name.exe if name not found."""
+        """On Windows, tries executable suffixes if name not found."""
         mock_which.side_effect = lambda n: r"C:\nmap\nmap.exe" if n == "nmap.exe" else None
         self.assertEqual(platform_info.find_tool("nmap"), r"C:\nmap\nmap.exe")
+
+    @patch("utils.platform_info.is_windows", return_value=True)
+    @patch("utils.platform_info.shutil.which")
+    def test_windows_bat_fallback(self, mock_which, _):
+        mock_which.side_effect = lambda n: r"C:\Android\cmdline-tools\latest\bin\sdkmanager.bat" if n == "sdkmanager.bat" else None
+        self.assertEqual(
+            platform_info.find_tool("sdkmanager"),
+            r"C:\Android\cmdline-tools\latest\bin\sdkmanager.bat",
+        )
 
     @patch("utils.platform_info.is_windows", return_value=True)
     @patch("utils.platform_info.shutil.which", return_value=None)

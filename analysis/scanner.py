@@ -71,6 +71,7 @@ class ScannerAnalyzer:
         cve_hints = self.correlate_cves(services)
         ports = [port for host in hosts for port in host.get("ports", [])]
         state_summary = _combine_state_summaries(hosts)
+        ambiguous_udp = _ambiguous_udp_ports(ports, state_summary)
         return {
             "metadata": {"source": str(path), "host_count": len(hosts)},
             "findings": {"hosts": hosts, "iot_services": iot_services, "cve_hints": cve_hints},
@@ -78,6 +79,7 @@ class ScannerAnalyzer:
                 "open_port_count": len(services),
                 "closed_port_count": _state_count(ports, state_summary, "closed"),
                 "filtered_port_count": _state_count(ports, state_summary, "filtered"),
+                "ambiguous_udp_count": len(ambiguous_udp),
                 "scanned_port_count": len(ports) + sum(state_summary.values()),
                 "host_up_count": sum(1 for host in hosts if host.get("host_state") == "up"),
                 "host_down_count": sum(1 for host in hosts if host.get("host_state") == "down"),
@@ -91,6 +93,16 @@ class ScannerAnalyzer:
                     "details": hint["details"],
                 }
                 for hint in cve_hints
+            ] + [
+                {
+                    "severity": "info",
+                    "title": "Ambiguous UDP scan result",
+                    "details": (
+                        "UDP open|filtered means nmap did not receive a response. "
+                        "Treat this as inconclusive, not proof that the service is open."
+                    ),
+                }
+                for _ in ([1] if ambiguous_udp else [])
             ],
         }
 
@@ -234,8 +246,6 @@ class ScannerAnalyzer:
                 if parsed["state"] == "open":
                     current_host["services"].append({k: v for k, v in parsed.items() if k != "state"})
 
-        if not hosts:
-            hosts.append({"ip": None, "host_state": None, "ports": [], "services": [], "notes": []})
         return hosts
 
 
@@ -265,9 +275,20 @@ def _combine_state_summaries(hosts: Iterable[Dict[str, Any]]) -> Dict[str, int]:
 
 
 def _state_count(ports: Iterable[Dict[str, Any]], state_summary: Dict[str, int], state: str) -> int:
-    explicit = sum(1 for port in ports if port.get("state") == state)
+    explicit = sum(1 for port in ports if state in str(port.get("state", "")).split("|"))
     summarized = sum(count for key, count in state_summary.items() if state in key.split("|"))
     return explicit + summarized
+
+
+def _ambiguous_udp_ports(ports: Iterable[Dict[str, Any]], state_summary: Dict[str, int]) -> List[Dict[str, Any]]:
+    explicit = [
+        port for port in ports
+        if port.get("protocol") == "udp" and str(port.get("state", "")).lower() == "open|filtered"
+    ]
+    summarized = sum(count for key, count in state_summary.items() if str(key).lower() == "open|filtered")
+    if summarized and not explicit:
+        return [{"protocol": "udp", "state": "open|filtered", "count": summarized}]
+    return explicit
 
 
 def _normalize_file_path(file_path: str) -> Path:

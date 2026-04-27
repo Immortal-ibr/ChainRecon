@@ -18,6 +18,7 @@ dependencies = [
     "cryptography>=41.0",
     "pyyaml>=6.0",
     "rich>=13.0",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +31,7 @@ full = [
     "shodan>=1.28",
     "textual>=0.40",
     "frida-tools>=12.0",
+    "openpyxl>=3.1",
     "weasyprint>=60.0",
 ]
 dev = [
@@ -43,6 +45,12 @@ chainrecon = "chainrecon:main"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+markers = [
+    "unit: fast isolated tests for pure functions and single classes",
+    "integration: tests that combine multiple ChainRecon modules without a live device",
+    "e2e: tests that exercise CLI/TUI workflows or live external tools",
+    "requirement: tests that protect user-facing requirements and regressions",
+]
 
 [tool.setuptools.packages.find]
 include = ["analysis*", "plugins*", "runners*", "utils*", "models*", "tui*"]

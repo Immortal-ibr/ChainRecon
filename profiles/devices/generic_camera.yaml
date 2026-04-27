@@ -1,0 +1,9 @@
+name: Generic Camera
+target: 192.168.1.50
+scan:
+  profile: quick
+firmware:
+  image: firmware.bin
+report:
+  formats:
+    - json

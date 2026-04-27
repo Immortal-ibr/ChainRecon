@@ -40,15 +40,34 @@ class ReportGeneratorDataTests(unittest.TestCase):
     def test_initial_state_all_none(self):
         gen = ReportGenerator()
         data = gen.get_data()
-        self.assertIsNone(data["traffic"])
-        self.assertIsNone(data["ssl"])
-        self.assertIsNone(data["scan"])
+        self.assertEqual(data, {})
 
     def test_overwrite_section(self):
         gen = ReportGenerator()
         gen.add_traffic_results({"first": True})
         gen.add_traffic_results({"second": True})
         self.assertTrue(gen.get_data()["traffic"]["second"])
+
+    def test_dynamic_section_is_retained(self):
+        gen = ReportGenerator()
+        gen.add_results("mqtt", {"findings": {"topics": ["iot/status"]}})
+        self.assertIn("mqtt", gen.get_data())
+
+    def test_append_mode_preserves_multiple_frida_sessions(self):
+        gen = ReportGenerator()
+        gen.add_results("frida", {
+            "metadata": {"target": "app.one", "script": "list_classes", "source_file": "one.json"},
+            "summary": {"status": "completed"},
+            "findings": {"events_by_tag": {"HOOK": 1}, "hook_events": ["[HOOK] one"]},
+        }, mode="append")
+        gen.add_results("frida", {
+            "metadata": {"target": "app.two", "script": "hook_all_methods", "source_file": "two.json"},
+            "summary": {"status": "stopped_by_user"},
+            "findings": {"events_by_tag": {"HOOK": 2}, "hook_events": ["[HOOK] two"]},
+        }, mode="append")
+        data = gen.get_data()["frida"]
+        self.assertEqual(len(data["sessions"]), 2)
+        self.assertEqual({session["target"] for session in data["sessions"]}, {"app.one", "app.two"})
 
 
 class ReportGeneratorOutputTests(unittest.TestCase):
@@ -96,7 +115,7 @@ class ReportGeneratorOutputTests(unittest.TestCase):
             gen.generate("xml", "output.xml")
 
     def test_partial_data_generates_correctly(self):
-        """Only traffic added, ssl and scan are None."""
+        """Only traffic added, and untouched sections are omitted."""
         gen = ReportGenerator()
         gen.add_traffic_results({"findings": {"dns_queries": []}})
         with tempfile.NamedTemporaryFile("r+", suffix=".json", delete=False, encoding="utf-8") as f:
@@ -104,8 +123,18 @@ class ReportGeneratorOutputTests(unittest.TestCase):
             f.seek(0)
             payload = json.load(f)
         self.assertIsNotNone(payload["traffic"])
-        self.assertIsNone(payload["ssl"])
-        self.assertIsNone(payload["scan"])
+        self.assertNotIn("ssl", payload)
+        self.assertNotIn("scan", payload)
+
+    def test_normalize_frida_section_adds_sessions_shape(self):
+        gen = ReportGenerator()
+        gen.add_results("frida", {
+            "metadata": {"target": "com.nooie.home", "script": "network_traffic_monitor", "source_file": "session.json"},
+            "summary": {"status": "stopped_by_user"},
+            "findings": {"events_by_tag": {"HOOK": 3}, "hook_events": ["[HOOK] socket.connect"]},
+        }, mode="append")
+        data = gen.generate("json", tempfile.NamedTemporaryFile(suffix=".json", delete=False).name)
+        self.assertTrue(data.endswith(".json"))
 
 
 # ===========================================================================

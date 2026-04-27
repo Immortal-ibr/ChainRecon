@@ -3,6 +3,7 @@
 from analysis.apk_analyzer import APKAnalyzer
 from analysis.cert_analyzer import CertAnalyzer
 from analysis.entropy_analyzer import EntropyAnalyzer
+from analysis.firmware_analyzer import FirmwareAnalyzer
 from analysis.mqtt_analyzer import MQTTAnalyzer
 from analysis.pcap_stats import PcapStatsAnalyzer
 from analysis.report_generator import ReportGenerator
@@ -16,6 +17,7 @@ __all__ = [
     "APKAnalyzer",
     "CertAnalyzer",
     "EntropyAnalyzer",
+    "FirmwareAnalyzer",
     "MQTTAnalyzer",
     "PcapStatsAnalyzer",
     "ReportGenerator",

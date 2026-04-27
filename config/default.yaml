@@ -1,8 +1,8 @@
 # ChainRecon Default Configuration
-# Override any value by creating a config/local.yaml or passing --config <path>
+# Override any value by creating config/local.yaml or passing --config <path>
 
-# ── Tool Paths ───────────────────────────────────────────────────────────────
-# Leave null to auto-detect from PATH / well-known install directories.
+# Tool paths
+# Leave null to auto-detect from PATH or common install directories.
 tools:
   nmap: null
   tshark: null
@@ -13,12 +13,12 @@ tools:
   jadx: null
   apktool: null
 
-# ── API Keys ─────────────────────────────────────────────────────────────────
-# Prefer environment variables: CHAINRECON_SHODAN_KEY, etc.
+# API keys
+# Prefer environment variables such as CHAINRECON_SHODAN_KEY.
 api_keys:
   shodan: null
 
-# ── Scan Profiles ────────────────────────────────────────────────────────────
+# Scan profiles
 scan_profiles:
   quick:
     label: "Quick Scan"
@@ -42,7 +42,7 @@ scan_profiles:
     description: "NSE vuln scripts + version detection"
     args: ["-Pn", "-sV", "--script", "vuln", "-T4"]
 
-# ── IoT Port → Protocol Mapping ─────────────────────────────────────────────
+# IoT port to protocol mapping
 iot_ports:
   1883: "MQTT"
   8883: "MQTT over TLS"
@@ -60,28 +60,37 @@ iot_ports:
   6668: "Zigbee"
   11095: "Thread"
 
-# ── SSL/TLS Ports To Probe ──────────────────────────────────────────────────
+# SSL/TLS ports to probe
 ssl_ports: [443, 8443, 8008, 8080, 8883, 1883]
 
-# ── Traffic Capture Defaults ─────────────────────────────────────────────────
+# Traffic capture defaults
 capture:
   default_duration: 60
   max_file_size_mb: 500
   interface: null
 
-# ── Frida Settings ───────────────────────────────────────────────────────────
+# Scan defaults
+scan:
+  # Network interface for nmap -e <interface> (null = let nmap choose)
+  interface: Wi-Fi
+
+# Frida settings
 frida:
   server_path: null
   device_serial: null
   default_package: null
   spawn_mode: false
+  apk_directory: null
+  frida_server_path: null
+  frida_server_directory: null
+  preferred_avd: null
 
-# ── Output Settings ──────────────────────────────────────────────────────────
+# Output settings
 output:
   directory: "./nooie_analysis"
   default_format: "json"
 
-# ── Network Setup ────────────────────────────────────────────────────────────
+# Network setup
 # Saved from the Network Setup screen. Values persist across sessions.
 network:
   eth_interface: null

@@ -17,11 +17,12 @@ from tui.widgets.pasteable_input import PasteableInput as Input
 
 from tui.screens.help_screen import HelpScreen
 from tui.widgets.log_viewer import LogActionBar, LogViewer
+from utils.artifacts import artifact_path
 
-HELP_TEXT = """[bold underline]Traffic & Scan Analysis[/]
+HELP_TEXT = """[bold underline]PCAP Analysis[/]
 
-This parses files you've already captured and pulls out the security-relevant
-stuff. Point it at a .pcap from the Capture screen, or an nmap .txt output.
+This parses packet captures you've already collected and pulls out the security-relevant
+stuff. Point it at a .pcap from the Capture screen.
 
 [bold]Traffic (DNS/HTTP/TLS)[/]
 
@@ -37,26 +38,6 @@ stuff. Point it at a .pcap from the Capture screen, or an nmap .txt output.
 
   On the Nooie baby monitor we found CRITICAL: the device POSTs its MAC address
   and device ID to a Chinese CDN endpoint over plain HTTP before TLS starts.
-
-[bold]SSL / TLS Certificates[/]
-
-  Connects to each open port and downloads certs using Python's ssl module.
-  Equivalent to:
-    openssl s_client -connect <host>:443 </dev/null | openssl x509 -noout -text
-
-  Checks: expiry date, self-signed flag, RSA key size (< 2048 = weak),
-  issuer common name, and subject alternative names.
-
-  On the Nooie we found a cert issued by "Apeman CA" valid for 100 years.
-  Private CA cert = the vendor controls the CA key, it can't be publicly
-  revoked. Combine that with 100-year validity and it's a permanent backdoor
-  if that key is ever leaked.
-
-[bold]Nmap Scan Results[/]
-
-  Parses the .txt output from an nmap run. Extracts port/service/version
-  mappings, checks versions against a CVE database (if configured), and
-  maps ports to the IoT protocol database (MQTT, Modbus, UPnP, etc.).
 
 [bold]PCAP Statistics[/]
 
@@ -117,7 +98,7 @@ stuff. Point it at a .pcap from the Capture screen, or an nmap .txt output.
 
 [dim]pyshark requires tshark installed (it shells out to tshark internally)
 Analyzer code: analysis/ directory
-openssl must be on PATH for SSL cert checks[/]
+openssl must be on PATH for optional certificate parsing helpers[/]
 """
 
 
@@ -138,14 +119,12 @@ class AnalyzeScreen(Screen):
         yield Header()
         with VerticalScroll(id="analyze-form"):
             yield Label("[bold]Analysis[/]")
-            yield Label("PCAP file / nmap output / target IP  [dim](SSL analyzer = enter IP, others = file path)[/]")
-            yield Input(placeholder="path/to/file.pcap  or  192.168.1.99", id="filepath")
+            yield Label("PCAP file  [dim](Analysis is PCAP-only; scan and TLS probing live under Scan)[/]")
+            yield Input(placeholder="path/to/file.pcap", id="filepath")
             yield Label("Analyzer:")
             yield Select(
                 [
                     ("Traffic (DNS / HTTP / TLS)", "traffic"),
-                    ("SSL / TLS Certificates", "ssl"),
-                    ("Nmap Scan Results", "scan"),
                     ("PCAP Statistics", "pcap_stats"),
                     ("WebRTC", "webrtc"),
                     ("MQTT", "mqtt"),
@@ -207,13 +186,8 @@ class AnalyzeScreen(Screen):
             self._run_custom_inline(filepath, custom_path, custom_interp, log)
             return
 
-        if analyzer == "ssl":
-            label = "target"
-        else:
-            label = "file path"
-
         if not filepath:
-            log.append(f"[red]Please provide a {label}.[/]")
+            log.append("[red]Please provide a PCAP file path.[/]")
             return
 
         log.append(f"[bold]Running {analyzer} analysis on {filepath}...[/]")
@@ -226,8 +200,8 @@ class AnalyzeScreen(Screen):
                 from datetime import datetime
                 from utils.config import get_output_dir
                 outdir = get_output_dir()
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                outfile = outdir / f"analysis_{analyzer}_{ts}.json"
+                result.setdefault("metadata", {}).setdefault("section", analyzer)
+                outfile = artifact_path(outdir, f"analysis_{analyzer}", ".json")
                 outfile.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
 
                 # Store in app-level report generator for report screen
@@ -279,10 +253,8 @@ class AnalyzeScreen(Screen):
 
                 from utils.config import get_output_dir
                 outdir = get_output_dir()
-                from datetime import datetime
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 safe = re.sub(r"[^a-z0-9_]", "_", Path(script_path).stem.lower())
-                outfile = outdir / f"custom_analyze_{safe}_{ts}.json"
+                outfile = artifact_path(outdir, f"custom_analyze_{safe}", ".json")
                 outfile.write_text(json.dumps({
                     "tool": "custom_script", "script": script_path, "input_file": filepath,
                     "exit_code": result.returncode,

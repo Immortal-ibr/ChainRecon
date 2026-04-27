@@ -11,3 +11,5 @@ build/
 *.apk
 output/
 nooie_analysis/
+legacy/
+third_party/frida/frida-server-*

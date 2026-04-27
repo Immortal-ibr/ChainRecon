@@ -29,11 +29,15 @@ class SSLAnalyzer:
         logger.info("Probing certificates on %s ports %s", target, normalized_ports)
         for port in normalized_ports:
             result = self._safe_probe(target, port)
-            if result.get("reachable"):
+            if result.get("tls_reachable", result.get("reachable")):
                 certificates.append(
                     {
                         "port": result["port"],
                         "reachable": True,
+                        "target_resolved": result.get("target_resolved"),
+                        "tcp_reachable": result.get("tcp_reachable"),
+                        "tls_reachable": result.get("tls_reachable", result.get("reachable")),
+                        "certificate_observed": result.get("certificate_observed", bool(result.get("subject"))),
                         "subject": result.get("subject"),
                         "issuer": result.get("issuer"),
                         "serial_number": result.get("serial_number"),
@@ -49,6 +53,10 @@ class SSLAnalyzer:
                 certificates.append({
                     "port": port,
                     "reachable": False,
+                    "target_resolved": result.get("target_resolved", False),
+                    "tcp_reachable": result.get("tcp_reachable", False),
+                    "tls_reachable": result.get("tls_reachable", False),
+                    "certificate_observed": result.get("certificate_observed", False),
                     "error_type": result.get("error_type"),
                     "error": result.get("error", "connection failed"),
                 })
@@ -76,10 +84,14 @@ class SSLAnalyzer:
         normalized_ports = [int(port) for port in ports]
         for port in normalized_ports:
             result = self._safe_probe(target, port)
-            if not result.get("reachable"):
+            if not result.get("tls_reachable", result.get("reachable")):
                 results.append({
                     "port": port,
                     "reachable": False,
+                    "target_resolved": result.get("target_resolved", False),
+                    "tcp_reachable": result.get("tcp_reachable", False),
+                    "tls_reachable": result.get("tls_reachable", False),
+                    "certificate_observed": result.get("certificate_observed", False),
                     "error_type": result.get("error_type"),
                     "error": result.get("error", "connection failed"),
                 })
@@ -91,6 +103,10 @@ class SSLAnalyzer:
                 {
                     "port": port,
                     "reachable": True,
+                    "target_resolved": result.get("target_resolved", True),
+                    "tcp_reachable": result.get("tcp_reachable", True),
+                    "tls_reachable": result.get("tls_reachable", True),
+                    "certificate_observed": result.get("certificate_observed", False),
                     "cipher": cipher,
                     "protocol": version,
                     "weak_cipher": self._is_weak_cipher(cipher),
@@ -170,7 +186,15 @@ class SSLAnalyzer:
         try:
             return self.probe_func(target, port)
         except Exception as exc:  # pragma: no cover
-            return {"port": port, "reachable": False, "error": str(exc)}
+            return {
+                "port": port,
+                "reachable": False,
+                "target_resolved": False,
+                "tcp_reachable": False,
+                "tls_reachable": False,
+                "certificate_observed": False,
+                "error": str(exc),
+            }
 
     def _probe_port(self, target: str, port: int) -> Dict[str, Any]:
         target_info = self._normalize_target(target)
@@ -178,6 +202,10 @@ class SSLAnalyzer:
             return {
                 "port": port,
                 "reachable": False,
+                "target_resolved": False,
+                "tcp_reachable": False,
+                "tls_reachable": False,
+                "certificate_observed": False,
                 "error_type": target_info.get("error_type", "invalid_target"),
                 "error": target_info["error"],
             }
@@ -203,10 +231,16 @@ class SSLAnalyzer:
                     version = tls_socket.version()
         except socket.gaierror as exc:
             return {
-                "port": port, "reachable": False,
+                "port": port,
+                "reachable": False,
+                "target_resolved": False,
+                "tcp_reachable": False,
+                "tls_reachable": False,
+                "certificate_observed": False,
                 "error_type": "dns_resolution_failed",
                 "error": (
                     f"Name resolution failed for '{clean_target}': {exc}. "
+                    "On Windows, [Errno 11001] getaddrinfo failed means DNS/name resolution could not resolve the target. "
                     "Use a plain IP address or hostname, not a URL or file path."
                 ),
             }
@@ -214,6 +248,10 @@ class SSLAnalyzer:
             return {
                 "port": port,
                 "reachable": False,
+                "target_resolved": True,
+                "tcp_reachable": True,
+                "tls_reachable": False,
+                "certificate_observed": False,
                 "error_type": "tls_handshake_failed",
                 "error": f"TCP connected, but TLS handshake failed on port {port}: {exc}",
             }
@@ -221,6 +259,10 @@ class SSLAnalyzer:
             return {
                 "port": port,
                 "reachable": False,
+                "target_resolved": True,
+                "tcp_reachable": False,
+                "tls_reachable": False,
+                "certificate_observed": False,
                 "error_type": "tcp_connection_failed",
                 "error": (
                     f"Port {port} was not reachable for TLS probing: {exc}. "
@@ -235,6 +277,10 @@ class SSLAnalyzer:
         return {
             "port": port,
             "reachable": True,
+            "target_resolved": True,
+            "tcp_reachable": True,
+            "tls_reachable": True,
+            "certificate_observed": bool(der_cert),
             "subject": subject,
             "issuer": issuer,
             "serial_number": serial_number,

@@ -32,11 +32,12 @@ from tui.widgets.log_viewer import (
 CSS = """
 Screen {
     background: $surface;
+    overflow-x: hidden;
 }
 #dashboard, #scan-form, #capture-form, #analyze-form, #frida-form,
 #apk-form, #reports-form, #settings, #network-setup-form,
 #custom-script-form {
-    padding: 1 2;
+    padding: 1 6 1 2;
 }
 #title {
     text-style: bold;
@@ -45,9 +46,36 @@ Screen {
 }
 Input {
     margin-bottom: 1;
+    width: 1fr;
+    padding-right: 1;
+    min-width: 0;
+    overflow-x: hidden;
+    scrollbar-size: 0 0;
+    scrollbar-background: transparent;
+    scrollbar-background-hover: transparent;
+    scrollbar-background-active: transparent;
+    scrollbar-color: transparent;
+    scrollbar-color-hover: transparent;
+    scrollbar-color-active: transparent;
+    scrollbar-corner-color: transparent;
+}
+.path-value {
+    margin-right: 0;
+    scrollbar-size: 0 0;
 }
 Select {
     margin-bottom: 1;
+    width: 1fr;
+    min-width: 0;
+}
+SelectCurrent, SelectOverlay {
+    scrollbar-background: transparent;
+    scrollbar-background-hover: transparent;
+    scrollbar-background-active: transparent;
+    scrollbar-color: transparent;
+    scrollbar-color-hover: transparent;
+    scrollbar-color-active: transparent;
+    scrollbar-corner-color: transparent;
 }
 Button {
     margin: 1 1 0 0;
@@ -70,9 +98,37 @@ RichLog {
 }
 Horizontal {
     height: auto;
+    width: 1fr;
+    dock: none;
+    overflow-x: hidden;
 }
 VerticalScroll {
     height: 1fr;
+    width: 1fr;
+    padding-right: 7;
+    scrollbar-gutter: stable;
+    overflow-x: hidden;
+}
+Vertical {
+    width: 1fr;
+    min-width: 0;
+    overflow-x: hidden;
+}
+Static {
+    width: 1fr;
+    min-width: 0;
+    overflow-x: hidden;
+}
+Label {
+    width: 1fr;
+    overflow-x: hidden;
+}
+#dashboard Label,
+#dashboard Static {
+    overflow-x: hidden;
+}
+Footer {
+    overflow-x: hidden;
 }
 
 /* Admin PowerShell / conhost.exe ASCII fallback.
@@ -80,6 +136,15 @@ VerticalScroll {
    add .ascii-mode on the App root and force bordered widgets to ASCII. */
 .ascii-mode * {
     scrollbar-size: 1 1;
+}
+.ascii-mode VerticalScroll {
+    scrollbar-background: transparent;
+    scrollbar-background-hover: transparent;
+    scrollbar-background-active: transparent;
+    scrollbar-color: transparent;
+    scrollbar-color-hover: transparent;
+    scrollbar-color-active: transparent;
+    scrollbar-corner-color: transparent;
 }
 .ascii-mode SelectCurrent {
     border: ascii $accent;
@@ -89,6 +154,14 @@ VerticalScroll {
 }
 .ascii-mode Input {
     border: ascii $accent;
+    scrollbar-size: 0 0;
+    scrollbar-background: transparent;
+    scrollbar-background-hover: transparent;
+    scrollbar-background-active: transparent;
+    scrollbar-color: transparent;
+    scrollbar-color-hover: transparent;
+    scrollbar-color-active: transparent;
+    scrollbar-corner-color: transparent;
 }
 .ascii-mode Button {
     border: ascii $accent;
@@ -221,8 +294,10 @@ class ChainReconApp(App):
 def run_tui() -> None:
     """Entry point called from the CLI."""
     import os
+    import signal
     import sys
 
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     if sys.platform == "win32":
         os.environ.setdefault("PYTHONIOENCODING", "utf-8")
         try:
@@ -236,7 +311,12 @@ def run_tui() -> None:
             kernel32 = ctypes.windll.kernel32
             kernel32.SetConsoleOutputCP(65001)
             kernel32.SetConsoleCP(65001)
+            stdin_handle = kernel32.GetStdHandle(-10)
             stdout_handle = kernel32.GetStdHandle(-11)
+            mode = ctypes.c_uint()
+            if kernel32.GetConsoleMode(stdin_handle, ctypes.byref(mode)):
+                # Disable processed input so Ctrl+C reaches the TUI as a key event.
+                kernel32.SetConsoleMode(stdin_handle, mode.value & ~0x0001)
             kernel32.SetConsoleMode(stdout_handle, 0x0007)
         except Exception:
             pass

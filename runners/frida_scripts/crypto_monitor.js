@@ -28,11 +28,16 @@ Java.perform(function () {
   // 1. Cipher.init — log algorithm and mode
   try {
     const Cipher = Java.use("javax.crypto.Cipher");
-    Cipher.init.overload("int", "java.security.Key").implementation = function (mode, key) {
+    const cipherInit = Cipher.init.overload("int", "java.security.Key");
+    cipherInit.implementation = function (mode, key) {
       const modeStr = mode === 1 ? "ENCRYPT" : mode === 2 ? "DECRYPT" : "mode=" + mode;
       console.log("[CRYPTO] Cipher.init " + modeStr + " alg=" + this.getAlgorithm());
-      console.log("         Key: " + bytesToHex(key.getEncoded()));
-      return this.init(mode, key);
+      try {
+        console.log("         Key: " + bytesToHex(key.getEncoded()));
+      } catch (e) {
+        console.log("         Key: <not exportable>");
+      }
+      return cipherInit.call(this, mode, key);
     };
     console.log("[+] Hooked Cipher.init");
   } catch (e) {
@@ -42,9 +47,10 @@ Java.perform(function () {
   // 2. Cipher.doFinal — log plaintext/ciphertext
   try {
     const Cipher = Java.use("javax.crypto.Cipher");
-    Cipher.doFinal.overload("[B").implementation = function (input) {
+    const doFinalBytes = Cipher.doFinal.overload("[B");
+    doFinalBytes.implementation = function (input) {
       console.log("[CRYPTO] Cipher.doFinal input:  " + bytesToHex(input));
-      const result = this.doFinal(input);
+      const result = doFinalBytes.call(this, input);
       console.log("[CRYPTO] Cipher.doFinal output: " + bytesToHex(result));
       return result;
     };
@@ -56,9 +62,10 @@ Java.perform(function () {
   // 3. MessageDigest.digest — log hash input
   try {
     const MD = Java.use("java.security.MessageDigest");
-    MD.digest.overload("[B").implementation = function (input) {
+    const digestBytes = MD.digest.overload("[B");
+    digestBytes.implementation = function (input) {
       console.log("[HASH]   " + this.getAlgorithm() + " input: " + bytesToHex(input));
-      const result = this.digest(input);
+      const result = digestBytes.call(this, input);
       console.log("[HASH]   " + this.getAlgorithm() + " output: " + bytesToHex(result));
       return result;
     };
@@ -70,9 +77,10 @@ Java.perform(function () {
   // 4. Mac.doFinal — log HMAC
   try {
     const Mac = Java.use("javax.crypto.Mac");
-    Mac.doFinal.overload("[B").implementation = function (input) {
+    const macDoFinalBytes = Mac.doFinal.overload("[B");
+    macDoFinalBytes.implementation = function (input) {
       console.log("[HMAC]   " + this.getAlgorithm() + " input: " + bytesToHex(input));
-      const result = this.doFinal(input);
+      const result = macDoFinalBytes.call(this, input);
       console.log("[HMAC]   " + this.getAlgorithm() + " output: " + bytesToHex(result));
       return result;
     };

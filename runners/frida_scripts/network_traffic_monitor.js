@@ -1,56 +1,57 @@
-/**
- * Monitor network-related API calls from the app.
- *
- * Hooks:
- *  - java.net.URL.openConnection
- *  - okhttp3.OkHttpClient.newCall (if available)
- *  - java.net.Socket.connect
- *
- * Usage:  frida -U -n <app> -l network_traffic_monitor.js
- */
 Java.perform(function () {
-  console.log("[*] Network Traffic Monitor loaded");
+  const config = typeof CHAINRECON_CONFIG !== "undefined" ? CHAINRECON_CONFIG : {};
+  const hostFilter = (config.host_filter || "").toLowerCase();
 
-  // 1. java.net.URL.openConnection
+  const shouldLog = function (text) {
+    const normalized = String(text || "").toLowerCase();
+    return !hostFilter || normalized.indexOf(hostFilter) !== -1;
+  };
+
+  const emit = function (tag, details) {
+    if (shouldLog(details)) {
+      console.log("[" + tag + "] " + details);
+    }
+  };
+
   try {
     const URL = Java.use("java.net.URL");
-    URL.openConnection.overload().implementation = function () {
-      console.log("[HTTP] URL.openConnection -> " + this.toString());
-      return this.openConnection();
+    const openConnection = URL.openConnection.overload();
+    openConnection.implementation = function () {
+      const url = this.toString();
+      emit("URL", url);
+      return openConnection.call(this);
     };
-    console.log("[+] Hooked URL.openConnection");
+    console.log("[HOOK] java.net.URL.openConnection");
   } catch (e) {
-    console.log("[-] URL.openConnection hook failed: " + e);
+    console.log("[WARN] URL hook unavailable: " + e);
   }
 
-  // 2. OkHttp3 newCall
   try {
     const OkClient = Java.use("okhttp3.OkHttpClient");
-    OkClient.newCall.implementation = function (request) {
-      console.log("[HTTP] OkHttp3.newCall -> " + request.url().toString());
-      console.log("       Method: " + request.method());
-      const headers = request.headers();
-      for (let i = 0; i < headers.size(); i++) {
-        console.log("       " + headers.name(i) + ": " + headers.value(i));
+    const newCall = OkClient.newCall.overload("okhttp3.Request");
+    newCall.implementation = function (request) {
+      const url = request.url().toString();
+      if (shouldLog(url)) {
+        console.log("[HTTP] " + request.method() + " " + url);
       }
-      return this.newCall(request);
+      return newCall.call(this, request);
     };
-    console.log("[+] Hooked OkHttp3.newCall");
+    console.log("[HOOK] okhttp3.OkHttpClient.newCall");
   } catch (e) {
-    console.log("[-] OkHttp3 not found (OK if app doesn't use it)");
+    console.log("[WARN] OkHttp hook unavailable");
   }
 
-  // 3. Socket.connect
   try {
     const Socket = Java.use("java.net.Socket");
-    Socket.connect.overload("java.net.SocketAddress", "int").implementation = function (addr, timeout) {
-      console.log("[TCP] Socket.connect -> " + addr.toString() + " (timeout=" + timeout + "ms)");
-      return this.connect(addr, timeout);
+    const connect = Socket.connect.overload("java.net.SocketAddress", "int");
+    connect.implementation = function (addr, timeout) {
+      emit("TCP", addr + " timeout=" + timeout);
+      return connect.call(this, addr, timeout);
     };
-    console.log("[+] Hooked Socket.connect");
+    console.log("[HOOK] java.net.Socket.connect");
   } catch (e) {
-    console.log("[-] Socket.connect hook failed: " + e);
+    console.log("[WARN] Socket hook unavailable: " + e);
   }
 
-  console.log("[*] Network Traffic Monitor ready");
+  console.log("[STATUS] network monitor ready");
 });

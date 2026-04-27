@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import platform
-import shutil
 import subprocess
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from utils.logging_config import get_logger
 from utils.platform_info import find_tool as _find_tool
+from utils.artifacts import timestamped_dir
 
 logger = get_logger("runners")
 
@@ -50,8 +49,7 @@ def make_output_dir(base: Optional[str] = None) -> Path:
         base_path = Path(base)
         base_path.mkdir(parents=True, exist_ok=True)
 
-    dirname = f"iot_recon_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    path = base_path / dirname
+    path = timestamped_dir(base_path, "iot_recon")
     path.mkdir(parents=True, exist_ok=True)
     return path
 

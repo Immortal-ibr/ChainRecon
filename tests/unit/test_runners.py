@@ -14,7 +14,7 @@ from runners.base import (
     run_subprocess,
 )
 from runners.capture_runner import CAPTURE_MODES, CaptureRunner
-from runners.nmap_runner import SCAN_PROFILES, NmapRunner
+from runners.nmap_runner import SCAN_PROFILES, NmapInterfaceMismatchError, NmapRunner, powershell_command
 
 
 # ===========================================================================
@@ -44,7 +44,7 @@ class MakeOutputDirTests(unittest.TestCase):
             result = make_output_dir(td)
             self.assertTrue(result.exists())
             self.assertTrue(result.is_dir())
-            self.assertTrue(result.name.startswith("iot_recon_"))
+            self.assertRegex(result.name, r"^\d{8}_iot_recon_\d{6}$")
 
     def test_returns_path_object(self):
         import tempfile
@@ -116,6 +116,18 @@ class NmapRunnerScanTests(unittest.TestCase):
         self.executor = MagicMock()
 
     @patch("runners.nmap_runner.check_tool", return_value="/usr/bin/nmap")
+    def test_arp_scan_builds_host_discovery_command(self, _):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            runner = NmapRunner(executor=self.executor)
+            result = runner.run_scan("192.168.1.0/24", "arp", td)
+            cmd = self.executor.call_args[0][0]
+            self.assertIn("-sn", cmd)
+            self.assertIn("-PR", cmd)
+            self.assertEqual(result["profile"], "arp")
+
+    @patch("runners.nmap_runner.check_tool", return_value="/usr/bin/nmap")
     def test_quick_scan_builds_correct_command(self, _):
         import tempfile
 
@@ -141,12 +153,14 @@ class NmapRunnerScanTests(unittest.TestCase):
             runner = NmapRunner(executor=self.executor)
             result = runner.run_scan("10.0.0.1", "iot", td)
             self.assertEqual(self.executor.call_count, 2)
-            self.assertEqual(len(result["output_files"]), 2)
+            self.assertEqual(len(result["output_files"]), 4)
             # TCP first, UDP second
             tcp_cmd = self.executor.call_args_list[0][0][0]
             udp_cmd = self.executor.call_args_list[1][0][0]
             self.assertIn("-sV", tcp_cmd)
             self.assertIn("-sU", udp_cmd)
+            self.assertIn("-oX", tcp_cmd)
+            self.assertIn("-oX", udp_cmd)
 
     @patch("runners.nmap_runner.check_tool", return_value="/usr/bin/nmap")
     def test_vuln_scan_includes_script_flag(self, _):
@@ -204,6 +218,73 @@ class NmapRunnerScanTests(unittest.TestCase):
             cmd = self.executor.call_args[0][0]
             self.assertIn("-T2", cmd)
             self.assertIn("-sT", cmd)
+
+    @patch("runners.nmap_runner.check_tool", return_value="/usr/bin/nmap")
+    def test_explicit_interface_adds_e_flag(self, _):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            runner = NmapRunner(executor=self.executor)
+            runner.run_scan("10.0.0.1", "quick", td, interface="eth4")
+            cmd = self.executor.call_args[0][0]
+            self.assertEqual(cmd[:3], ["/usr/bin/nmap", "-e", "eth4"])
+
+    @patch("runners.nmap_runner.check_tool", return_value="/usr/bin/nmap")
+    @patch("utils.config.get_scan_config", return_value={"interface_name": "Wi-Fi"})
+    @patch("utils.network.resolve_scan_interface", return_value={"runtime_id": "eth4"})
+    def test_configured_interface_is_resolved_before_scan(self, *_):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            runner = NmapRunner(executor=self.executor)
+            runner.run_scan("10.0.0.1", "quick", td)
+            cmd = self.executor.call_args[0][0]
+            self.assertEqual(cmd[:3], ["/usr/bin/nmap", "-e", "eth4"])
+
+    @patch("runners.nmap_runner.check_tool", return_value="/usr/bin/nmap")
+    @patch("utils.config.get_scan_config", return_value={"interface_name": "Wi-Fi"})
+    @patch("utils.network.resolve_scan_interface", return_value=None)
+    def test_unresolved_configured_interface_falls_back_without_e_flag(self, *_):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            runner = NmapRunner(executor=self.executor)
+            runner.run_scan("10.0.0.1", "quick", td)
+            cmd = self.executor.call_args[0][0]
+            self.assertNotIn("-e", cmd)
+
+    @patch("runners.nmap_runner.check_tool", return_value="/usr/bin/nmap")
+    def test_real_executor_blocks_interface_mismatch(self, _):
+        def mismatch_preflight(target, selected_interface=None):
+            return {
+                "target": target,
+                "interface_mismatch": True,
+                "selected_interface": {"label": selected_interface or "eth4"},
+                "route_interface": {"label": "eth0"},
+            }
+
+        runner = NmapRunner(preflight_func=mismatch_preflight)
+        with self.assertRaises(NmapInterfaceMismatchError):
+            runner.run_scan("192.168.123.99", "quick", interface="eth4")
+
+    @patch("runners.nmap_runner.check_tool", return_value="/usr/bin/nmap")
+    def test_allow_interface_mismatch_runs_anyway(self, _):
+        import tempfile
+
+        def mismatch_preflight(target, selected_interface=None):
+            return {"target": target, "interface_mismatch": True}
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch("runners.nmap_runner.run_subprocess", self.executor):
+                runner = NmapRunner(preflight_func=mismatch_preflight)
+                result = runner.run_scan("192.168.123.99", "quick", td, interface="eth4", allow_interface_mismatch=True)
+        self.assertEqual(result["preflight"]["interface_mismatch"], True)
+        self.executor.assert_called_once()
+
+    def test_powershell_command_quotes_executable_path(self):
+        cmd = powershell_command([r"C:\Program Files (x86)\Nmap\nmap.EXE", "-e", "eth0", "192.168.1.1"])
+        self.assertTrue(cmd.startswith("& 'C:\\Program Files (x86)\\Nmap\\nmap.EXE'"))
+        self.assertIn("-e eth0", cmd)
 
 
 # ===========================================================================

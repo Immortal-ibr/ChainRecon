@@ -1,78 +1,93 @@
-/*
- * http_intercept.js — Intercept HTTP/HTTPS requests and responses
- *
- * Hooks OkHttp, HttpURLConnection, and WebView to log URLs, headers,
- * methods, and bodies.  Reveals plaintext traffic and API patterns.
- */
-
 Java.perform(function () {
+  const config = typeof CHAINRECON_CONFIG !== "undefined" ? CHAINRECON_CONFIG : {};
+  const hostFilter = (config.host_filter || "").toLowerCase();
 
-    // --- OkHttp3 Interceptor (most IoT apps) ------------------------------
-    try {
-        var Interceptor = Java.use("okhttp3.Interceptor");
-        var OkHttpClient$Builder = Java.use("okhttp3.OkHttpClient$Builder");
+  const shouldLog = function (text) {
+    const normalized = String(text || "").toLowerCase();
+    return !hostFilter || normalized.indexOf(hostFilter) !== -1;
+  };
 
-        var MyInterceptor = Java.registerClass({
-            name: "com.chainrecon.HttpInterceptor",
-            implements: [Interceptor],
-            methods: {
-                intercept: function (chain) {
-                    var request = chain.request();
-                    console.log("[OkHttp] " + request.method() + " " + request.url());
+  try {
+    const OkHttpClient = Java.use("okhttp3.OkHttpClient");
+    const newCall = OkHttpClient.newCall.overload("okhttp3.Request");
+    newCall.implementation = function (request) {
+      const url = request.url().toString();
+      if (shouldLog(url)) {
+        console.log("[HTTP-REQ] " + request.method() + " " + url);
+      }
+      return newCall.call(this, request);
+    };
+    console.log("[HOOK] okhttp3.OkHttpClient.newCall");
+  } catch (e) {
+    console.log("[WARN] OkHttp request hook unavailable: " + e);
+  }
 
-                    // Log request headers
-                    var headers = request.headers();
-                    for (var i = 0; i < headers.size(); i++) {
-                        console.log("  > " + headers.name(i) + ": " + headers.value(i));
-                    }
+  try {
+    const Response = Java.use("okhttp3.Response");
+    const code = Response.code.overload();
+    code.implementation = function () {
+      const responseCode = code.call(this);
+      try {
+        const url = this.request().url().toString();
+        if (shouldLog(url)) {
+          console.log("[HTTP-RESP] " + responseCode + " " + url);
+        }
+      } catch (e) {
+      }
+      return responseCode;
+    };
+    console.log("[HOOK] okhttp3.Response.code");
+  } catch (e) {
+    console.log("[WARN] OkHttp response hook unavailable: " + e);
+  }
 
-                    var response = chain.proceed(request);
-                    console.log("[OkHttp] Response: " + response.code() + " " + response.message());
-                    return response;
-                }
-            }
-        });
+  try {
+    const URL = Java.use("java.net.URL");
+    const openConnection = URL.openConnection.overload();
+    openConnection.implementation = function () {
+      const url = this.toString();
+      if (shouldLog(url)) {
+        console.log("[HTTP-REQ] URL.openConnection " + url);
+      }
+      return openConnection.call(this);
+    };
+    console.log("[HOOK] java.net.URL.openConnection");
+  } catch (e) {
+    console.log("[WARN] URLConnection hook unavailable: " + e);
+  }
 
-        OkHttpClient$Builder.build.implementation = function () {
-            this.addInterceptor(MyInterceptor.$new());
-            console.log("[*] OkHttp interceptor injected");
-            return this.build();
-        };
-    } catch (e) {
-        console.log("[!] OkHttp3 not found, skipping");
-    }
+  try {
+    const HttpURLConnection = Java.use("java.net.HttpURLConnection");
+    const getResponseCode = HttpURLConnection.getResponseCode.overload();
+    getResponseCode.implementation = function () {
+      const responseCode = getResponseCode.call(this);
+      try {
+        const url = this.getURL().toString();
+        if (shouldLog(url)) {
+          console.log("[HTTP-RESP] " + responseCode + " " + url);
+        }
+      } catch (e) {
+      }
+      return responseCode;
+    };
+    console.log("[HOOK] java.net.HttpURLConnection.getResponseCode");
+  } catch (e) {
+    console.log("[WARN] HttpURLConnection response hook unavailable: " + e);
+  }
 
-    // --- HttpURLConnection ------------------------------------------------
-    try {
-        var URL = Java.use("java.net.URL");
-        URL.openConnection.overload().implementation = function () {
-            var conn = this.openConnection();
-            console.log("[URLConnection] " + this.toString());
-            return conn;
-        };
-    } catch (e) {}
+  try {
+    const WebView = Java.use("android.webkit.WebView");
+    const loadUrl = WebView.loadUrl.overload("java.lang.String");
+    loadUrl.implementation = function (url) {
+      if (shouldLog(url)) {
+        console.log("[WEBVIEW] " + url);
+      }
+      return loadUrl.call(this, url);
+    };
+    console.log("[HOOK] android.webkit.WebView.loadUrl");
+  } catch (e) {
+    console.log("[WARN] WebView hook unavailable");
+  }
 
-    // --- WebView.loadUrl --------------------------------------------------
-    try {
-        var WebView = Java.use("android.webkit.WebView");
-        WebView.loadUrl.overload("java.lang.String").implementation = function (url) {
-            console.log("[WebView] loadUrl: " + url);
-            return this.loadUrl(url);
-        };
-        WebView.loadUrl.overload("java.lang.String", "java.util.Map").implementation = function (url, headers) {
-            console.log("[WebView] loadUrl: " + url + " headers=" + headers);
-            return this.loadUrl(url, headers);
-        };
-    } catch (e) {}
-
-    // --- Retrofit (log service interface calls) ---------------------------
-    try {
-        var Retrofit$Builder = Java.use("retrofit2.Retrofit$Builder");
-        Retrofit$Builder.baseUrl.overload("java.lang.String").implementation = function (url) {
-            console.log("[Retrofit] baseUrl: " + url);
-            return this.baseUrl(url);
-        };
-    } catch (e) {}
-
-    console.log("[*] HTTP intercept hooks installed");
+  console.log("[STATUS] http intercept ready");
 });

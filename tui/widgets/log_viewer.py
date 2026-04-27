@@ -6,7 +6,6 @@ import os
 import platform
 import re
 import subprocess
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +15,8 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, RichLog, TextArea
+
+from utils.artifacts import artifact_path
 
 
 LOG_CLEAR_ID = "log-clear"
@@ -37,6 +38,7 @@ class LogActionBar(Horizontal):
     LogActionBar {
         height: auto;
         margin-top: 1;
+        width: 1fr;
     }
     LogActionBar Button {
         min-width: 8;
@@ -145,8 +147,8 @@ class LogViewer(RichLog):
                     f"[yellow]Output is bounded to the last {self.max_retained_lines} "
                     "lines. Full tool artifacts are saved in the output directory.[/]"
                 )
-                self.write(Text.from_markup(notice))
-        self.write(Text.from_markup(text))
+                self.write(Text.from_markup(_wrap_display_text(notice)))
+        self.write(Text.from_markup(_wrap_display_text(text)))
 
     def _plain_text(self) -> str:
         retained = "\n".join(strip_rich_markup(line) for line in self._log_lines)
@@ -209,8 +211,7 @@ class LogViewer(RichLog):
             from utils.config import get_output_dir
 
             outdir = get_output_dir()
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            path = outdir / f"tui_log_{timestamp}.txt"
+            path = artifact_path(outdir, "tui_log", ".txt")
             path.write_text(self._plain_text(), encoding="utf-8")
             self.set_last_output_path(path)
             self.append(f"[green]Log saved: {path.resolve()}[/]")
@@ -268,3 +269,39 @@ class LogViewer(RichLog):
                     candidate = candidate.rstrip(".")
                     if candidate:
                         self._last_output_path = Path(candidate).expanduser()
+
+
+def _wrap_display_text(text: str, width: int = 110) -> str:
+    """Wrap very long path- or URL-like lines so scrollbars do not hide them."""
+    wrapped: list[str] = []
+    for line in text.splitlines() or [text]:
+        plain = strip_rich_markup(line)
+        if len(plain) <= width:
+            wrapped.append(line)
+            continue
+        if not any(token in plain for token in ("\\", "/", "://")):
+            wrapped.append(line)
+            continue
+        chunks: list[str] = []
+        current = ""
+        for piece in re.split(r"([\\/])", line):
+            if not piece:
+                continue
+            if len(strip_rich_markup(current + piece)) > width and current:
+                chunks.append(current)
+                current = piece
+            else:
+                current += piece
+        if current:
+            chunks.append(current)
+        normalized_chunks: list[str] = []
+        for chunk in chunks:
+            if len(strip_rich_markup(chunk)) <= width:
+                normalized_chunks.append(chunk)
+                continue
+            start = 0
+            while start < len(chunk):
+                normalized_chunks.append(chunk[start:start + width])
+                start += width
+        wrapped.append("\n".join(normalized_chunks))
+    return "\n".join(wrapped)

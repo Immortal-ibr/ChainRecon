@@ -1,65 +1,52 @@
-/*
- * shared_preferences_dump.js — Dump SharedPreferences on Android
- *
- * Hooks android.content.SharedPreferences to log all getXxx / putXxx calls
- * and optionally dump the full contents of each preferences file.
- */
-
 Java.perform(function () {
-    var SP = Java.use("android.app.SharedPreferencesImpl");
+  const config = typeof CHAINRECON_CONFIG !== "undefined" ? CHAINRECON_CONFIG : {};
+  const keyFilter = (config.key_filter || "").toLowerCase();
 
-    // --- Log reads --------------------------------------------------------
-    var getters = ["getString", "getInt", "getLong", "getFloat", "getBoolean"];
-    getters.forEach(function (name) {
-        try {
-            SP[name].overloads.forEach(function (overload) {
-                overload.implementation = function () {
-                    var key = arguments[0];
-                    var result = this[name].apply(this, arguments);
-                    console.log("[SharedPrefs GET] " + name + "(" + key + ") => " + result);
-                    return result;
-                };
-            });
-        } catch (e) {
-            // Method may not exist on all API levels
-        }
-    });
+  const shouldLog = function (key) {
+    const normalized = String(key || "").toLowerCase();
+    return !keyFilter || normalized.indexOf(keyFilter) !== -1;
+  };
 
-    // --- Log writes -------------------------------------------------------
-    var Editor = Java.use("android.app.SharedPreferencesImpl$EditorImpl");
-    var putters = ["putString", "putInt", "putLong", "putFloat", "putBoolean"];
-    putters.forEach(function (name) {
-        try {
-            Editor[name].overloads.forEach(function (overload) {
-                overload.implementation = function () {
-                    var key = arguments[0];
-                    var val = arguments[1];
-                    console.log("[SharedPrefs PUT] " + name + "(" + key + ", " + val + ")");
-                    return this[name].apply(this, arguments);
-                };
-            });
-        } catch (e) {}
-    });
-
-    // --- Dump all prefs on load -------------------------------------------
+  const describeValue = function (value) {
     try {
-        var Context = Java.use("android.app.ContextImpl");
-        Context.getSharedPreferences.overload("java.lang.String", "int").implementation = function (name, mode) {
-            var sp = this.getSharedPreferences(name, mode);
-            console.log("\n[SharedPrefs OPEN] " + name);
-            try {
-                var all = sp.getAll();
-                var it = all.entrySet().iterator();
-                while (it.hasNext()) {
-                    var entry = it.next();
-                    console.log("  " + entry.getKey() + " = " + entry.getValue());
-                }
-            } catch (e) {
-                console.log("  (could not dump entries)");
-            }
-            return sp;
-        };
-    } catch (e) {}
+      if (value === null || value === undefined) return "null";
+      return value.toString();
+    } catch (e) {
+      return "<?>";
+    }
+  };
 
-    console.log("[*] SharedPreferences hooks installed");
+  const SP = Java.use("android.app.SharedPreferencesImpl");
+  ["getString", "getInt", "getLong", "getFloat", "getBoolean"].forEach(function (name) {
+    try {
+      SP[name].overloads.forEach(function (overload) {
+        overload.implementation = function () {
+          const key = arguments[0];
+          const result = overload.apply(this, arguments);
+          if (shouldLog(key)) {
+            console.log("[PREF-GET] " + key + " => " + describeValue(result));
+          }
+          return result;
+        };
+      });
+    } catch (e) {}
+  });
+
+  const Editor = Java.use("android.app.SharedPreferencesImpl$EditorImpl");
+  ["putString", "putInt", "putLong", "putFloat", "putBoolean"].forEach(function (name) {
+    try {
+      Editor[name].overloads.forEach(function (overload) {
+        overload.implementation = function () {
+          const key = arguments[0];
+          const value = arguments[1];
+          if (shouldLog(key)) {
+            console.log("[PREF-PUT] " + key + " => " + describeValue(value));
+          }
+          return overload.apply(this, arguments);
+        };
+      });
+    } catch (e) {}
+  });
+
+  console.log("[STATUS] shared preferences monitor ready");
 });

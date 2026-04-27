@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 from textual.app import ComposeResult
@@ -18,6 +19,7 @@ from tui.widgets.pasteable_input import PasteableInput as Input
 from analysis.apk_analyzer import APKAnalyzer
 from tui.screens.help_screen import HelpScreen
 from tui.widgets.log_viewer import LogActionBar, LogViewer
+from utils.artifacts import artifact_path, safe_token, update_artifact_index, write_json_artifact
 
 HELP_TEXT = """[bold underline]APK Static Analysis[/]
 
@@ -127,6 +129,14 @@ class APKScreen(Screen):
             return
 
         log.append(f"[bold]Analyzing {path}...[/]")
+        from utils.config import get_output_dir
+
+        outdir = get_output_dir()
+        apk_name = safe_token(Path(path).stem, "apk")
+        decompiled_dir = artifact_path(outdir, f"apk_decompiled_{apk_name}", "")
+        outfile = artifact_path(outdir, f"apk_analysis_{apk_name}", ".json")
+        log.append(f"[dim]Analysis will be saved to: {outfile.resolve()}[/]")
+        log.append(f"[dim]Decompiled output: {decompiled_dir.resolve()}[/]")
         log.append("[dim]Decompiling with jadx -- large APKs can take 3-5 minutes, please wait...[/]")
 
         def _worker() -> None:
@@ -135,13 +145,6 @@ class APKScreen(Screen):
                 self.app.call_from_thread(log.append, f"[dim]{line}[/]")
 
             try:
-                from datetime import datetime
-                from utils.config import get_output_dir
-                outdir = get_output_dir()
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                apk_name = Path(path).stem
-                decompiled_dir = outdir / f"apk_decompiled_{apk_name}_{ts}"
-
                 result = APKAnalyzer().analyze(path, output_dir=str(decompiled_dir), progress_cb=_on_progress)
 
                 jadx_error_count = int(result.get("summary", {}).get("jadx_error_count", 0) or 0)
@@ -152,13 +155,35 @@ class APKScreen(Screen):
                         "Analysis still completed; some classes may be partially decoded.[/]"
                     )
 
-                outfile = outdir / f"apk_analysis_{apk_name}_{ts}.json"
-                outfile.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
+                result.setdefault("metadata", {}).setdefault("section", "apk")
+                result.setdefault("metadata", {})["artifacts"] = [
+                    {"type": "apk_analysis", "path": str(outfile.resolve())},
+                    {"type": "apk_decompiled_dir", "path": str(decompiled_dir.resolve())},
+                ]
+                write_json_artifact(outfile, result)
+                verified_outfile = self._verify_artifact_exists(outfile)
+                verified_decompiled_dir = self._verify_artifact_exists(decompiled_dir)
+                update_artifact_index(outdir, {
+                    "section": "apk",
+                    "type": "apk_analysis",
+                    "path": str(verified_outfile.resolve()),
+                    "decompiled_dir": str(verified_decompiled_dir.resolve()),
+                    "apk": str(Path(path).resolve()),
+                })
+
+                if not hasattr(self.app, "_report_gen"):
+                    from analysis.report_generator import ReportGenerator
+
+                    self.app._report_gen = ReportGenerator()
+                result["metadata"]["source_file"] = str(verified_outfile.resolve())
+                result["metadata"]["source_filename"] = verified_outfile.name
+                self.app._report_gen.add_results("apk", result)
 
                 text = json.dumps(result, indent=2, default=str)[:4000]
+                self.app.call_from_thread(log.set_last_output_path, verified_outfile)
                 self.app.call_from_thread(
                     log.append,
-                    f"[green]Done.[/]\n[dim]Analysis: {outfile}[/]\n[dim]Decompiled: {decompiled_dir}[/]\n{text}"
+                    f"[green]Done.[/]\n[dim]Analysis: {verified_outfile}[/]\n[dim]Decompiled: {verified_decompiled_dir}[/]\n{text}"
                 )
                 if custom_path:
                     self.app.call_from_thread(self._run_custom_inline, path, custom_path, custom_interp, log)
@@ -201,15 +226,24 @@ class APKScreen(Screen):
 
                 from utils.config import get_output_dir
                 outdir = get_output_dir()
-                from datetime import datetime
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 safe = re.sub(r"[^a-z0-9_]", "_", Path(script_path).stem.lower())
-                outfile = outdir / f"custom_apk_{safe}_{ts}.json"
-                outfile.write_text(json.dumps({
+                outfile = artifact_path(outdir, f"custom_apk_{safe}", ".json")
+                write_json_artifact(outfile, {
+                    "metadata": {
+                        "section": "apk_custom",
+                        "source_file": str(outfile.resolve()),
+                        "artifacts": [{"type": "custom_apk_result", "path": str(outfile.resolve())}],
+                    },
                     "tool": "custom_script", "script": script_path, "apk": apk_path,
                     "exit_code": result.returncode,
                     "stdout": result.stdout[:5000], "stderr": result.stderr[:2000],
-                }, indent=2))
+                })
+                update_artifact_index(outdir, {
+                    "section": "apk_custom",
+                    "type": "custom_apk_result",
+                    "path": str(outfile.resolve()),
+                    "apk": apk_path,
+                })
                 self.app.call_from_thread(log.append, f"[dim]Result saved: {outfile}[/]")
 
                 if save_to_lib:
@@ -223,3 +257,12 @@ class APKScreen(Screen):
 
     def action_toggle_help(self) -> None:
         self.app.push_screen(HelpScreen(HELP_TEXT, title="APK Analysis"))
+
+    @staticmethod
+    def _verify_artifact_exists(path: Path, retries: int = 10, delay: float = 0.2) -> Path:
+        target = path.expanduser().resolve()
+        for _ in range(retries):
+            if target.exists():
+                return target
+            time.sleep(delay)
+        raise FileNotFoundError(f"Expected APK artifact was not created: {target}")

@@ -1,0 +1,11 @@
+name: Nooie Lab Device
+target: 192.168.123.99
+scan:
+  profile: iot
+  interface: Ethernet
+frida:
+  target: com.nooie.home
+report:
+  formats:
+    - json
+    - html

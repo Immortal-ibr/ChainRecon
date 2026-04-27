@@ -76,7 +76,7 @@ Report output plugins. The `ReportGenerator` takes structured analyzer output an
 
 ## tests/
 
-479 tests covering the analysis layer, runners, CLI, TUI screens, and plugins. All offline -- no real network or tools needed.
+484 tests covering the analysis layer, runners, CLI, TUI screens, and plugins. All offline -- no real network or tools needed.
 
 - `test_analysis.py` -- Analyzer unit tests
 - `test_apk.py` -- APK analyzer tests

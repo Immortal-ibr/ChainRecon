@@ -1,60 +1,75 @@
-const TARGET_CLASSES = [];
-/**
- * Hook every method of one or more classes and log calls with arguments.
- *
- * Set TARGET_CLASSES before loading, e.g.:
- *   const TARGET_CLASSES = ["com.example.MyClass"];
- *
- * Usage:  frida -U -n <app> -l hook_all_methods.js
- */
 Java.perform(function () {
-  const targets = typeof TARGET_CLASSES !== "undefined"
-    ? TARGET_CLASSES
-    : [];
+  const config = typeof CHAINRECON_CONFIG !== "undefined" ? CHAINRECON_CONFIG : {};
+  const targets = Array.isArray(config.class_names) ? config.class_names : [];
+  const maxEventsPerSecond = parseInt(config.max_events_per_second || "50", 10);
+  let windowStart = Date.now();
+  let emittedInWindow = 0;
+  let droppedInWindow = 0;
 
-  if (targets.length === 0) {
-    console.log("[!] No TARGET_CLASSES defined. Set them at the top of the script.");
+  const emit = function (line) {
+    const now = Date.now();
+    if (now - windowStart >= 1000) {
+      if (droppedInWindow > 0) {
+        console.log("[DROPPED] hook_all_methods dropped_event_count=" + droppedInWindow);
+      }
+      windowStart = now;
+      emittedInWindow = 0;
+      droppedInWindow = 0;
+    }
+    if (emittedInWindow >= maxEventsPerSecond) {
+      droppedInWindow += 1;
+      return;
+    }
+    emittedInWindow += 1;
+    console.log(line);
+  };
+
+  if (!targets.length) {
+    emit("[ERROR] No class_names were provided.");
     return;
   }
 
-  for (let c = 0; c < targets.length; c++) {
-    const className = targets[c];
+  const describeValue = function (value) {
+    try {
+      if (value === null || value === undefined) return "null";
+      return value.toString();
+    } catch (e) {
+      return "<?>";
+    }
+  };
+
+  targets.forEach(function (className) {
     let clazz;
     try {
       clazz = Java.use(className);
     } catch (e) {
-      console.log("[!] Class not found: " + className);
-      continue;
+      emit("[ERROR] class_not_found " + className);
+      return;
     }
 
     const methods = clazz.class.getDeclaredMethods();
-    const seen = new Set();
+    const seen = {};
 
     for (let i = 0; i < methods.length; i++) {
-      const name = methods[i].getName();
-      if (seen.has(name) || !clazz[name]) continue;
-      seen.add(name);
+      const methodName = methods[i].getName();
+      if (seen[methodName] || !clazz[methodName]) continue;
+      seen[methodName] = true;
 
-      const overloads = clazz[name].overloads;
-      for (let j = 0; j < overloads.length; j++) {
-        const ov = overloads[j];
-        const methodName = name;
-        console.log("[*] Hooking " + className + "." + methodName);
-
+      clazz[methodName].overloads.forEach(function (ov, index) {
+        emit("[HOOK] " + className + "." + methodName + " overload=" + index);
         ov.implementation = function () {
           const args = [];
-          for (let a = 0; a < arguments.length; a++) {
-            try {
-              args.push(arguments[a] !== null ? arguments[a].toString() : "null");
-            } catch (e) {
-              args.push("<?>");
-            }
+          for (let argIndex = 0; argIndex < arguments.length; argIndex++) {
+            args.push(describeValue(arguments[argIndex]));
           }
-          console.log("[+] " + className + "." + methodName + "(" + args.join(", ") + ")");
-          return ov.apply(this, arguments);
+          emit("[CALL] " + className + "." + methodName + "(" + args.join(", ") + ")");
+          const result = ov.apply(this, arguments);
+          emit("[RET] " + className + "." + methodName + " => " + describeValue(result));
+          return result;
         };
-      }
+      });
     }
-    console.log("[*] Hooked all methods of " + className);
-  }
+  });
+
+  emit("[STATUS] hook_all_methods ready");
 });

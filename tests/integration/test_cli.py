@@ -249,6 +249,19 @@ class ReportCliTests(unittest.TestCase):
                 chainrecon.main(["report", td, "--format", "csv", "--output", str(output)])
             self.assertTrue(output.exists())
 
+    def test_report_xlsx_format(self):
+        with tempfile.TemporaryDirectory() as td:
+            tp = Path(td)
+            (tp / "scan.json").write_text(
+                json.dumps({"metadata": {}, "findings": {"hosts": [{"ip": "10.0.0.1"}]}, "summary": {}, "risk_indicators": []}),
+                encoding="utf-8",
+            )
+            output = tp / "report.xlsx"
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                chainrecon.main(["report", td, "--format", "xlsx", "--output", str(output)])
+            self.assertTrue(output.exists())
+
     def test_report_directory_aggregates_multiple_files_per_section(self):
         with tempfile.TemporaryDirectory() as td:
             tp = Path(td)
@@ -267,6 +280,31 @@ class ReportCliTests(unittest.TestCase):
         self.assertEqual(merged["traffic"]["metadata"]["source_count"], 2)
         self.assertEqual(len(merged["traffic"]["findings"]["items"]), 2)
         self.assertEqual(len(merged["traffic"]["risk_indicators"]), 2)
+
+    def test_report_directory_aggregates_multiple_frida_runs_newest_first(self):
+        with tempfile.TemporaryDirectory() as td:
+            tp = Path(td)
+            (tp / "20260426_frida_a.json").write_text(
+                json.dumps({
+                    "metadata": {"target": "app.old", "script": "list_classes"},
+                    "summary": {"status": "completed"},
+                    "findings": {"session": {"started_at": 10}, "events_by_tag": {"HOOK": 1}},
+                    "risk_indicators": [],
+                }),
+                encoding="utf-8",
+            )
+            (tp / "20260426_frida_b.json").write_text(
+                json.dumps({
+                    "metadata": {"target": "app.new", "script": "hook_all_methods"},
+                    "summary": {"status": "stopped_by_user"},
+                    "findings": {"session": {"started_at": 20}, "events_by_tag": {"HOOK": 2}},
+                    "risk_indicators": [],
+                }),
+                encoding="utf-8",
+            )
+            merged = chainrecon.load_report_inputs([td])
+        self.assertEqual(len(merged["frida"]["sessions"]), 2)
+        self.assertEqual(merged["frida"]["sessions"][0]["target"], "app.new")
 
     def test_report_directory_ignores_nested_or_non_object_json(self):
         with tempfile.TemporaryDirectory() as td:
@@ -332,6 +370,14 @@ class ReportCliTests(unittest.TestCase):
 
 
 class InferSectionTests(unittest.TestCase):
+    def test_declared_section_wins(self):
+        payload = {"metadata": {"section": "mqtt"}, "findings": {}}
+        self.assertEqual(chainrecon.infer_section(payload, "data.json"), "mqtt")
+
+    def test_analyzer_name_maps_to_dynamic_section(self):
+        payload = {"metadata": {"analyzer": "EntropyAnalyzer"}, "findings": {}}
+        self.assertEqual(chainrecon.infer_section(payload, "data.json"), "entropy")
+
     def test_traffic_by_packet_count(self):
         payload = {"metadata": {"packet_count": 5}, "findings": {}}
         self.assertEqual(chainrecon.infer_section(payload, "data.json"), "traffic")
@@ -358,7 +404,36 @@ class InferSectionTests(unittest.TestCase):
 
     def test_scan_default_fallback(self):
         payload = {"metadata": {}, "findings": {}}
-        self.assertEqual(chainrecon.infer_section(payload, "data.json"), "scan")
+        self.assertEqual(chainrecon.infer_section(payload, "data.json"), "analysis")
+
+    def test_firmware_by_analyzer_name(self):
+        payload = {"metadata": {"analyzer": "FirmwareAnalyzer"}, "findings": {}}
+        self.assertEqual(chainrecon.infer_section(payload, "firmware.json"), "firmware")
+
+
+class FirmwareAndWorkflowCliTests(unittest.TestCase):
+    def test_firmware_subcommand_parses(self):
+        parser = chainrecon.build_parser()
+        args = parser.parse_args(["firmware", "firmware.bin", "--extract-dir", "out"])
+        self.assertEqual(args.command, "firmware")
+        self.assertEqual(args.firmware_path, "firmware.bin")
+        self.assertEqual(args.extract_dir, "out")
+
+    def test_workflow_run_subcommand_parses(self):
+        parser = chainrecon.build_parser()
+        args = parser.parse_args(["workflow", "run", "pipeline.yaml", "--target", "10.0.0.1", "--dry-run"])
+        self.assertEqual(args.command, "workflow")
+        self.assertEqual(args.workflow_command, "run")
+        self.assertEqual(args.pipeline, "pipeline.yaml")
+        self.assertTrue(args.dry_run)
+
+    def test_workflow_handler_dispatches_runner(self):
+        stdout = io.StringIO()
+        with patch("runners.workflow_runner.WorkflowRunner.run", return_value={"summary": {"status": "completed"}}):
+            with contextlib.redirect_stdout(stdout):
+                code = chainrecon.main(["workflow", "run", "pipeline.yaml", "--dry-run"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout.getvalue())["summary"]["status"], "completed")
 
 
 class EmitResultTests(unittest.TestCase):
@@ -390,7 +465,7 @@ class EmitResultTests(unittest.TestCase):
             self.assertEqual(code, 0)
             saved = json.loads(Path(output).read_text(encoding="utf-8"))
         self.assertIn("apk", saved)
-        self.assertIsNone(saved["scan"])
+        self.assertNotIn("scan", saved)
 
 
 class BuildParserTests(unittest.TestCase):
@@ -415,6 +490,16 @@ class BuildParserTests(unittest.TestCase):
         self.assertEqual(args.command, "scan")
         self.assertEqual(args.target, "10.0.0.1")
         self.assertEqual(args.profile, "iot")
+
+    def test_scan_subcommand_accepts_arp_profile(self):
+        parser = chainrecon.build_parser()
+        args = parser.parse_args(["scan", "192.168.1.0/24", "--profile", "arp"])
+        self.assertEqual(args.profile, "arp")
+
+    def test_scan_subcommand_accepts_ssl_profile(self):
+        parser = chainrecon.build_parser()
+        args = parser.parse_args(["scan", "10.0.0.1", "--profile", "ssl"])
+        self.assertEqual(args.profile, "ssl")
 
     def test_scan_subcommand_defaults(self):
         parser = chainrecon.build_parser()

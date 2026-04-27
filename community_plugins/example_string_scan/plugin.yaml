@@ -1,0 +1,5 @@
+name: example_string_scan
+class_name: ExampleStringAnalyzer
+python_file: plugin.py
+section: example_strings
+description: Scan plaintext files for credential-like keywords.

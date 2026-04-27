@@ -1,56 +1,48 @@
-/**
- * Hook a single method and log every call with arguments + return value.
- *
- * Set TARGET_CLASS and TARGET_METHOD before loading:
- *   const TARGET_CLASS  = "com.example.MyClass";
- *   const TARGET_METHOD = "myMethod";
- *
- * Usage:  frida -U -n <app> -l hook_method.js
- */
 Java.perform(function () {
-  const cls  = typeof TARGET_CLASS  !== "undefined" ? TARGET_CLASS  : "";
-  const meth = typeof TARGET_METHOD !== "undefined" ? TARGET_METHOD : "";
+  const config = typeof CHAINRECON_CONFIG !== "undefined" ? CHAINRECON_CONFIG : {};
+  const className = config.class_name || "";
+  const methodName = config.method_name || "";
 
-  if (!cls || !meth) {
-    console.log("[!] Set TARGET_CLASS and TARGET_METHOD at the top of the script.");
+  if (!className || !methodName) {
+    console.log("[ERROR] class_name and method_name are required.");
     return;
   }
 
   let clazz;
   try {
-    clazz = Java.use(cls);
+    clazz = Java.use(className);
   } catch (e) {
-    console.log("[!] Class not found: " + cls);
+    console.log("[ERROR] class_not_found " + className);
     return;
   }
 
-  if (!clazz[meth]) {
-    console.log("[!] Method not found: " + cls + "." + meth);
+  if (!clazz[methodName]) {
+    console.log("[ERROR] method_not_found " + className + "." + methodName);
     return;
   }
 
-  const overloads = clazz[meth].overloads;
-  console.log("[*] Hooking " + cls + "." + meth + " (" + overloads.length + " overload(s))");
+  const describeValue = function (value) {
+    try {
+      if (value === null || value === undefined) return "null";
+      return value.toString();
+    } catch (e) {
+      return "<?>";
+    }
+  };
 
-  for (let i = 0; i < overloads.length; i++) {
-    const ov = overloads[i];
+  clazz[methodName].overloads.forEach(function (ov, index) {
+    console.log("[HOOK] " + className + "." + methodName + " overload=" + index);
     ov.implementation = function () {
       const args = [];
-      for (let a = 0; a < arguments.length; a++) {
-        try {
-          args.push(arguments[a] !== null ? arguments[a].toString() : "null");
-        } catch (e) {
-          args.push("<?>");
-        }
+      for (let argIndex = 0; argIndex < arguments.length; argIndex++) {
+        args.push(describeValue(arguments[argIndex]));
       }
-      console.log("[CALL]   " + cls + "." + meth + "(" + args.join(", ") + ")");
-      const ret = ov.apply(this, arguments);
-      try {
-        console.log("[RETURN] " + (ret !== null ? ret.toString() : "null"));
-      } catch (e) {
-        console.log("[RETURN] <?>");
-      }
-      return ret;
+      console.log("[CALL] " + className + "." + methodName + "(" + args.join(", ") + ")");
+      const result = ov.apply(this, arguments);
+      console.log("[RET] " + className + "." + methodName + " => " + describeValue(result));
+      return result;
     };
-  }
+  });
+
+  console.log("[STATUS] hook_method ready");
 });

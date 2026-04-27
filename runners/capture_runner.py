@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from runners.base import ToolNotFoundError, check_tool, make_output_dir, run_subprocess
+from utils.artifacts import artifact_path
 from utils.logging_config import get_logger
 from utils.platform_info import is_windows
 
@@ -76,7 +76,6 @@ class CaptureRunner:
 
         out_dir = Path(output_dir) if output_dir else make_output_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # Build BPF filter: combine mode-specific filter with optional target IP
         mode_bpf = _MODE_BPF.get(mode)
@@ -90,19 +89,19 @@ class CaptureRunner:
         logger.info("Starting %s capture (mode=%s, iface=%s, duration=%ds)", tool_name, mode, interface, duration)
 
         if tool_name == "tshark":
-            return self._capture_tshark(tool_path, interface, duration, bpf_filter, out_dir, timestamp, mode)
-        return self._capture_tcpdump(tool_path, interface, duration, bpf_filter, out_dir, timestamp, mode)
+            return self._capture_tshark(tool_path, interface, duration, bpf_filter, out_dir, mode)
+        return self._capture_tcpdump(tool_path, interface, duration, bpf_filter, out_dir, mode)
 
-    def _capture_tcpdump(self, tool_path: str, interface, duration, bpf_filter, out_dir, ts, mode):
-        pcap = str(out_dir / f"traffic_{mode}_{ts}.pcap")
+    def _capture_tcpdump(self, tool_path: str, interface, duration, bpf_filter, out_dir, mode):
+        pcap = str(artifact_path(out_dir, f"capture_{mode}", ".pcap"))
         cmd = [tool_path, "-i", interface, "-s", "0", "-G", str(duration), "-W", "1", "-w", pcap]
         if bpf_filter:
             cmd.append(bpf_filter)  # BPF filter is trailing positional arg for tcpdump
         self._executor(cmd, timeout=duration + 30)
         return {"pcap_files": [pcap], "output_dir": str(out_dir), "mode": mode, "stdout": ""}
 
-    def _capture_tshark(self, tool_path: str, interface, duration, bpf_filter, out_dir, ts, mode):
-        pcap = str(out_dir / f"traffic_{mode}_{ts}.pcap")
+    def _capture_tshark(self, tool_path: str, interface, duration, bpf_filter, out_dir, mode):
+        pcap = str(artifact_path(out_dir, f"capture_{mode}", ".pcap"))
         cmd = [tool_path, "-i", interface, "-a", f"duration:{duration}", "-w", pcap]
         if bpf_filter:
             cmd.extend(["-f", bpf_filter])

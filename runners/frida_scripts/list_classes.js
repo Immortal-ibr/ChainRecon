@@ -1,46 +1,42 @@
-/**
- * Enumerate all loaded Java classes matching a user-supplied filter.
- * If no filter is set, lists everything (can be huge).
- *
- * Usage:  frida -U -n <app> -l list_classes.js
- *  Then:  send({ filter: "com.example" })   // optional, via RPC
- *
- * The script also looks for live heap instances of each match.
- */
-Java.perform(() => {
-  const filter = typeof FILTER !== "undefined" ? FILTER : "";
+Java.perform(function () {
+  const config = typeof CHAINRECON_CONFIG !== "undefined" ? CHAINRECON_CONFIG : {};
+  const filters = (Array.isArray(config.class_filter) ? config.class_filter : [config.class_filter || ""])
+    .map(function (value) { return String(value || "").trim().toLowerCase(); })
+    .filter(function (value) { return value.length > 0; });
   const classes = [];
   const seen = {};
 
+  const canonicalizeName = function (name) {
+    let normalized = String(name || "");
+    while (normalized.startsWith("[")) {
+      normalized = normalized.substring(1);
+    }
+    if (normalized.startsWith("L") && normalized.endsWith(";")) {
+      normalized = normalized.substring(1, normalized.length - 1);
+    }
+    return normalized;
+  };
+
   Java.enumerateLoadedClasses({
     onMatch(name) {
-      if (filter === "" || name.indexOf(filter) !== -1) {
-        classes.push(name);
+      const canonical = canonicalizeName(name);
+      if (!canonical || seen[canonical]) {
+        return;
+      }
+      const lower = canonical.toLowerCase();
+      if (!filters.length || filters.some(function (filter) { return lower.indexOf(filter) !== -1; })) {
+        seen[canonical] = true;
+        classes.push(canonical);
       }
     },
     onComplete() {
-      console.log("[*] Matching loaded classes: " + classes.length);
       classes.sort();
-
-      classes.forEach(name => {
-        console.log("  " + name);
-        try {
-          Java.choose(name, {
-            onMatch(instance) {
-              const key = name + " @ " + instance.$h;
-              if (!seen[key]) {
-                seen[key] = true;
-                console.log("    [INSTANCE] " + instance);
-              }
-            },
-            onComplete() {}
-          });
-        } catch (e) {
-          // Some classes can't be scanned
-        }
+      console.log("[STATUS] App-process class listing only; use List Processes for device-wide discovery.");
+      console.log("[CLASS] total=" + classes.length + " filters=" + (filters.length ? filters.join(",") : "*"));
+      classes.forEach(function (name) {
+        console.log("[CLASS] " + name);
       });
-
-      console.log("[*] Class enumeration complete");
+      console.log("[STATUS] class enumeration complete");
     }
   });
 });

@@ -19,6 +19,7 @@ from utils.config import (
     get_tool_path,
     load_config,
     reset_config,
+    save_scan_config,
 )
 
 
@@ -133,12 +134,30 @@ class HelperFunctionTests(unittest.TestCase):
     def test_get_frida_config(self):
         load_config(force_reload=True)
         frida = get_frida_config()
-        self.assertIsNone(frida.get("device_serial"))
+        self.assertIn("device_serial", frida)
 
     def test_get_output_config(self):
         load_config(force_reload=True)
         out = get_output_config()
         self.assertEqual(out.get("default_format"), "json")
+
+
+class SaveScanConfigTests(unittest.TestCase):
+    def setUp(self):
+        reset_config()
+
+    def tearDown(self):
+        reset_config()
+
+    def test_save_scan_config_persists_interface_metadata(self):
+        save_scan_config({
+            "interface": "eth4",
+            "interface_name": "Wi-Fi",
+            "interface_device": r"\Device\NPF_{DEF}",
+        })
+        cfg = get_config()
+        self.assertEqual(cfg["scan"]["interface"], "eth4")
+        self.assertEqual(cfg["scan"]["interface_name"], "Wi-Fi")
 
 
 if __name__ == "__main__":

@@ -223,9 +223,9 @@ class NetworkSetupScreenTests(unittest.TestCase):
         self.assertTrue(ps1.exists(), "network_setup.ps1 not found")
 
     def test_sh_script_exists(self):
-        from tui.screens.network_setup import _SCRIPTS_DIR
-        sh = _SCRIPTS_DIR / "network_setup.sh"
-        self.assertTrue(sh.exists(), "network_setup.sh not found")
+        from pathlib import Path
+        sh = Path("legacy") / "manual_shell_scripts" / "network_setup.sh"
+        self.assertTrue(sh.exists(), "legacy network_setup.sh not found")
 
 
 # ===========================================================================

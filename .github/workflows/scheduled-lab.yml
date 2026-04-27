@@ -1,0 +1,62 @@
+name: Scheduled Lab Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Live target IP or hostname
+        required: false
+        default: "192.168.123.99"
+      interface:
+        description: Capture/scan interface for the live lab runner
+        required: false
+        default: "Ethernet"
+      output_dir:
+        description: Directory for generated live artifacts
+        required: false
+        default: "nooie_analysis"
+  schedule:
+    - cron: "0 13 * * 1"
+
+jobs:
+  live-nooie-lab:
+    name: Live Nooie Lab Validation
+    runs-on:
+      - self-hosted
+      - windows
+      - chainrecon-lab
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run live Nooie validation script
+        shell: pwsh
+        env:
+          CHAINRECON_LIVE_NMAP: "1"
+          CHAINRECON_LIVE_FRIDA: "1"
+          CHAINRECON_LIVE_NOOIE: "1"
+        run: |
+          ./scripts/run_live_nooie_tests.ps1 -Target "${{ inputs.target || '192.168.123.99' }}" -Interface "${{ inputs.interface || 'Ethernet' }}" -OutputDir "${{ inputs.output_dir || 'nooie_analysis' }}"
+
+      - name: Upload live artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-nooie-artifacts
+          path: |
+            nooie_analysis
+            output
+          if-no-files-found: ignore

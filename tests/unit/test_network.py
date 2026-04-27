@@ -48,6 +48,36 @@ class ListInterfacesWindowsTests(unittest.TestCase):
         ifaces = network._list_interfaces_windows()
         self.assertEqual(ifaces, [])
 
+    @patch("utils.platform_info.find_tool", return_value=r"C:\Program Files (x86)\Nmap\nmap.exe")
+    @patch("utils.network.subprocess.run")
+    def test_list_nmap_interfaces_windows(self, mock_run, _):
+        mock_run.return_value = subprocess.CompletedProcess(
+            [],
+            0,
+            "DEV    WINDEVICE\n"
+            "eth4   \\Device\\NPF_{DEF}\n"
+            "eth0   \\Device\\NPF_{ABC}\n"
+            "ROUTES\n",
+            "",
+        )
+        mappings = network.list_nmap_interfaces_windows()
+        self.assertEqual(mappings[0]["runtime_id"], "eth4")
+        self.assertEqual(mappings[0]["device"], r"\Device\NPF_{DEF}")
+
+    @patch("utils.network.is_windows", return_value=True)
+    @patch("utils.network.list_interfaces")
+    @patch("utils.network.list_nmap_interfaces_windows")
+    def test_resolve_scan_interface_uses_nmap_runtime_id(self, mock_nmap, mock_ifaces, _):
+        mock_ifaces.return_value = [
+            {"name": "Wi-Fi", "device": r"\Device\NPF_{DEF}", "description": "Wi-Fi"},
+        ]
+        mock_nmap.return_value = [
+            {"runtime_id": "eth4", "device": r"\Device\NPF_{DEF}"},
+        ]
+        resolved = network.resolve_scan_interface("Wi-Fi")
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved["runtime_id"], "eth4")
+
 
 class ListInterfacesLinuxTests(unittest.TestCase):
     @patch("utils.network.subprocess.run")

@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import json
-
 from plugins.base import ReportPlugin
+from utils.artifacts import write_json_artifact
 
 
 class JsonReportPlugin(ReportPlugin):
@@ -12,8 +11,7 @@ class JsonReportPlugin(ReportPlugin):
     description = "Serialize analysis output as JSON."
 
     def generate(self, analysis_data, output_path):
-        with open(output_path, "w", encoding="utf-8") as handle:
-            json.dump(analysis_data, handle, indent=2, sort_keys=True)
+        write_json_artifact(output_path, analysis_data, sort_keys=True)
         return output_path
 
     def file_extension(self):

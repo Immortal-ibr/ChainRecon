@@ -8,6 +8,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, Label, Static
 
 from tui.screens.help_screen import HelpScreen
+from tui.widgets.log_viewer import _wrap_display_text
 from utils.platform_info import find_tool
 
 HELP_TEXT = """[bold underline]ChainRecon -- How It Works[/]
@@ -54,7 +55,7 @@ class _ToolStatus(Static):
     def on_mount(self) -> None:
         path = find_tool(self.tool_name)
         if path:
-            self.update(f"[green]OK[/] {self.tool_name}: {path}")
+            self.update(_format_tool_status(self.tool_name, path))
         else:
             self.update(f"[red]X[/] {self.tool_name}: not found")
 
@@ -133,3 +134,12 @@ class DashboardScreen(Screen):
 
     def action_toggle_help(self) -> None:
         self.app.push_screen(HelpScreen(HELP_TEXT, title="ChainRecon -- How It Works"))
+
+
+def _format_tool_status(tool_name: str, path: str, width: int = 78) -> str:
+    prefix = f"[green]OK[/] {tool_name}:"
+    if len(path) <= width:
+        return f"{prefix} {path}"
+    wrapped = _wrap_display_text(path, width=max(24, width - 4))
+    wrapped = wrapped.replace("\n", "\n  ")
+    return f"{prefix}\n  {wrapped}"

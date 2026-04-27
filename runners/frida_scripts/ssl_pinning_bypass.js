@@ -26,9 +26,12 @@ Java.perform(function () {
     });
 
     const SSLContext = Java.use("javax.net.ssl.SSLContext");
-    const ctx = SSLContext.getInstance("TLS");
-    ctx.init(null, [TrustAll.$new()], null);
-    console.log("[+] X509TrustManager bypassed");
+    const init = SSLContext.init.overload("[Ljavax.net.ssl.KeyManager;", "[Ljavax.net.ssl.TrustManager;", "java.security.SecureRandom");
+    init.implementation = function (keyManagers, trustManagers, secureRandom) {
+      console.log("[SSL-BYPASS] Replacing SSLContext TrustManagers");
+      return init.call(this, keyManagers, [TrustAll.$new()], secureRandom);
+    };
+    console.log("[+] SSLContext TrustManager replacement installed");
   } catch (e) {
     console.log("[-] X509TrustManager bypass failed: " + e);
   }
@@ -36,9 +39,12 @@ Java.perform(function () {
   // 2. OkHttp3 CertificatePinner
   try {
     const Pinner = Java.use("okhttp3.CertificatePinner");
-    Pinner.check.overload("java.lang.String", "java.util.List").implementation = function () {
-      console.log("[+] OkHttp3 CertificatePinner.check bypassed for " + arguments[0]);
-    };
+    Pinner.check.overloads.forEach(function (overload) {
+      overload.implementation = function () {
+        console.log("[SSL-BYPASS] OkHttp3 CertificatePinner.check bypassed for " + arguments[0]);
+        return;
+      };
+    });
     console.log("[+] OkHttp3 CertificatePinner bypassed");
   } catch (e) {
     console.log("[-] OkHttp3 CertificatePinner not found (OK if app doesn't use OkHttp)");
@@ -46,9 +52,22 @@ Java.perform(function () {
 
   // 3. Hostname Verifier
   try {
-    const HV = Java.use("javax.net.ssl.HttpsURLConnection");
-    HV.setDefaultHostnameVerifier.implementation = function (verifier) {
-      console.log("[+] HostnameVerifier.setDefault bypassed");
+    const HostnameVerifier = Java.use("javax.net.ssl.HostnameVerifier");
+    const TrustAllHostnameVerifier = Java.registerClass({
+      name: "com.chainrecon.TrustAllHostnameVerifier",
+      implements: [HostnameVerifier],
+      methods: {
+        verify: function (hostname, session) {
+          console.log("[SSL-BYPASS] HostnameVerifier accepted " + hostname);
+          return true;
+        }
+      }
+    });
+    const HttpsURLConnection = Java.use("javax.net.ssl.HttpsURLConnection");
+    const setDefaultHostnameVerifier = HttpsURLConnection.setDefaultHostnameVerifier.overload("javax.net.ssl.HostnameVerifier");
+    setDefaultHostnameVerifier.implementation = function (verifier) {
+      console.log("[SSL-BYPASS] Replacing default HostnameVerifier");
+      return setDefaultHostnameVerifier.call(this, TrustAllHostnameVerifier.$new());
     };
   } catch (e) {
     console.log("[-] HostnameVerifier bypass skipped");

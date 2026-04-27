@@ -21,6 +21,57 @@ def list_interfaces() -> List[Dict[str, str]]:
     return _list_interfaces_linux()
 
 
+def list_scan_interfaces() -> List[Dict[str, str]]:
+    """Return host interfaces annotated for scan/capture UI selection."""
+    interfaces = list_interfaces()
+    if not is_windows():
+        return [
+            {
+                "label": iface.get("name", ""),
+                "name": iface.get("name", ""),
+                "device": iface.get("device", iface.get("name", "")),
+                "runtime_id": iface.get("device", iface.get("name", "")),
+                "description": iface.get("description", ""),
+            }
+            for iface in interfaces
+            if iface.get("name")
+        ]
+
+    mappings = list_nmap_interfaces_windows()
+    by_device = {entry["device"]: entry for entry in mappings if entry.get("device")}
+    annotated = []
+    for iface in interfaces:
+        device = iface.get("device", "")
+        mapping = by_device.get(device, {})
+        runtime_id = mapping.get("runtime_id") or device or iface.get("name", "")
+        annotated.append({
+            "label": iface.get("name", ""),
+            "name": iface.get("name", ""),
+            "device": device,
+            "runtime_id": runtime_id,
+            "description": iface.get("description", ""),
+            "nmap_name": mapping.get("runtime_id", ""),
+            "resolved": bool(mapping),
+        })
+    return annotated
+
+
+def resolve_scan_interface(selection: Optional[str]) -> Optional[Dict[str, str]]:
+    """Resolve a friendly or device identifier to the current runtime interface."""
+    if not selection:
+        return None
+    token = selection.strip()
+    for iface in list_scan_interfaces():
+        if token in {
+            iface.get("name", ""),
+            iface.get("device", ""),
+            iface.get("runtime_id", ""),
+            iface.get("label", ""),
+        }:
+            return iface
+    return None
+
+
 def _list_interfaces_windows() -> List[Dict[str, str]]:
     """Return interfaces with name=friendly_name, device=npf_path, description=friendly_name.
 
@@ -76,6 +127,40 @@ def _list_interfaces_windows() -> List[Dict[str, str]]:
         ]
     except Exception:
         return []
+
+
+def list_nmap_interfaces_windows() -> List[Dict[str, str]]:
+    """Parse `nmap --iflist` and map WinPcap/Npcap devices to Nmap runtime ids."""
+    from utils.platform_info import find_tool
+
+    nmap = find_tool("nmap")
+    if not nmap:
+        return []
+    try:
+        result = subprocess.run([nmap, "--iflist"], capture_output=True, text=True, timeout=15)
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return []
+
+    lines = (result.stdout or "").splitlines()
+    mappings: List[Dict[str, str]] = []
+    in_mapping_block = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("DEV") and "WINDEVICE" in stripped:
+            in_mapping_block = True
+            continue
+        if not in_mapping_block:
+            continue
+        if not stripped or stripped.startswith("*") or stripped.startswith("ROUTES"):
+            if mappings:
+                break
+            continue
+        parts = stripped.split(None, 1)
+        if len(parts) != 2:
+            continue
+        runtime_id, device = parts
+        mappings.append({"runtime_id": runtime_id, "device": device.strip()})
+    return mappings
 
 
 def _list_interfaces_linux() -> List[Dict[str, str]]:

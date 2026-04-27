@@ -24,6 +24,8 @@ Or use the CLI directly:
 python chainrecon.py analyze-traffic captures/device.pcap --format html
 python chainrecon.py analyze-ssl 192.168.1.50 --ports 443 8443
 python chainrecon.py analyze-scan scans/device.xml
+python chainrecon.py firmware firmware.bin --format json --output output/firmware.json
+python chainrecon.py workflow run workflows/nooie.yaml --target 192.168.123.99 --dry-run
 ```
 
 ## How the network setup works
@@ -59,7 +61,7 @@ Identifies UDP protocols by first-byte heuristics: STUN (RFC 5389 magic cookie),
 
 ### Certificate extraction from pcap
 
-Scans TLS and DTLS handshakes for DER-encoded X.509 certificates. Parses each one and checks RSA key size, signature algorithm (SHA-1/MD5 = weak), expiry, self-signed status, and Fermat factorisation vulnerability (p close to q). Needs the `cryptography` package.
+Scans TLS and DTLS handshakes, pyshark TLS certificate fields, and raw TCP-reassembled payloads for DER-encoded X.509 certificates. Parses SANs, subject/issuer details, signature algorithms, expiry, self-signed status, and Fermat factorisation vulnerability (p close to q). Needs the `cryptography` package.
 
 ### MQTT deep parsing
 
@@ -77,6 +79,12 @@ Decodes MQTT from raw TCP payloads:
 - Scans for hardcoded credentials, API keys, AWS config
 - Identifies SDKs: Tuya, AWS IoT, Firebase, Paho MQTT, OkHttp, Agora, WebRTC
 
+### Firmware analysis
+
+- Extracts images with `binwalk`
+- Inventories extracted filesystems for web UI assets, SSH/web configs, passwd/shadow files, and embedded certificates or private keys
+- Scans extracted text files for credential-like strings and protocol configuration hints
+
 ### SSL/TLS (live probing)
 
 - Connects to open ports and reads the certificate chain
@@ -87,6 +95,7 @@ Decodes MQTT from raw TCP payloads:
 ### Network scanning
 
 **nmap profiles** (6 built-in):
+- ARP Discovery -- local-subnet host discovery via `nmap -sn -PR`
 - Quick -- top 1000 ports with service detection
 - Gentle -- full TCP connect, slow timing (safe for fragile IoT devices)
 - Full -- all 65535 ports + OS detection + traceroute (2-hour timeout)
@@ -94,10 +103,16 @@ Decodes MQTT from raw TCP payloads:
 - Vulnerability -- NSE vuln scripts (EternalBlue, Heartbleed, default creds)
 - SSL/Cert -- ssl-cert + ssl-enum-ciphers on HTTPS/MQTT-TLS ports
 
-**Python-native scans** (no nmap required):
-- TCP Connect -- socket-based port scan with banner grabbing on IoT ports
-- ARP Discovery -- find devices on the local network via Scapy or ARP cache
+**Extended probes**:
 - Service Fingerprint -- deep probe with HTTP/RTSP/MQTT protocol handshakes
+
+### Workflow automation
+
+- `python chainrecon.py workflow run <pipeline.yaml>` executes scan, TLS, PCAP, Frida, firmware, report, and community-plugin steps from YAML
+- `when:` expressions provide conditional branching between steps
+- `critical: true` marks steps that should stop the pipeline on failure
+- Shared device profiles live under `profiles/devices/*.yaml`
+- Community analyzers are discovered from `community_plugins/*/plugin.yaml`
 
 ## External tools
 
@@ -265,7 +280,7 @@ Verify ChainRecon can build every built-in Frida command:
 python -m pytest tests/test_frida.py -q
 ```
 
-To run a built-in script from the TUI, open `Frida`, enter the package/process name such as `com.nooie.home`, choose a built-in script, choose `Attach` or `Spawn`, and press `Run`.
+To run a built-in script from the TUI, open `Frida`, choose or boot a device from the device selector, check the Frida compatibility note, enter the package/process name such as `com.nooie.home`, choose a built-in script, choose `Attach` or `Spawn`, and press `Run`. If `adb`, the Android emulator tools, or Frida host tools are missing, the screen now shows a short install message with the required commands.
 
 ## Configuration
 
@@ -293,7 +308,7 @@ Environment variables also work: `CHAINRECON_JADX_PATH`, `CHAINRECON_APKTOOL_PAT
 python -m pytest --tb=short -q
 ```
 
-479 tests covering analyzers, runners, CLI, TUI screens, and plugins. All offline by default.
+484 tests covering analyzers, runners, CLI, TUI screens, and plugins. All offline by default.
 See `documentation/testing.md` for the unit, integration, end-to-end, requirement, and live Nooie verification workflow.
 
 ## TUI reliability notes
@@ -304,9 +319,13 @@ All single-line input fields use the same paste handling. `Ctrl+V`, `Ctrl+Shift+
 
 Output boxes are bounded to the last 1000 retained lines. When older lines are dropped, the log says so. Analyzer and tool artifacts are still written to the configured output directory, and each output box has controls for Clear, Copy, Save Log, Open File, and Open Folder.
 
+Long saved paths are wrapped in the output widgets so the scrollbar does not hide the actual filename, and the main scroll containers reserve space for the scrollbar instead of drawing it over controls.
+
 ## Scan and SSL semantics
 
 Nmap-backed profiles run the real `nmap` executable and save both raw output and structured JSON. The structured result records the exact command, return code, output files, preflight reachability context, host-state, open ports, closed ports, and filtered ports.
+
+You can now set the nmap interface explicitly from the Scan screen or with `python chainrecon.py scan --interface <name> ...`. If omitted, ChainRecon uses `scan.interface` from configuration.
 
 The `-Pn` flag means nmap scans even if host discovery is inconclusive; it does not prove the target is alive. Python-native ARP fallback reads the local ARP table and is explicitly labeled as cached data because old entries can outlive the current device state.
 
@@ -320,6 +339,8 @@ The report screen has two source modes:
 - `All JSON files in configured output directory`: imports top-level ChainRecon `*.json` analysis artifacts from the configured output directory and annotates each section with its source filename. Generated multi-section reports and decompiled APK asset JSON files are skipped so reports do not recursively include themselves.
 
 The default report path is based on `output.directory` from configuration, which is `./nooie_analysis` in this repo.
+
+HTML reports are now organized into collapsible sections so long reports stay navigable. CSV exports now include a `page` column so spreadsheet filters can group rows by section like separate pages.
 
 ## Project layout
 

@@ -15,7 +15,7 @@ The offline suite must not require real network access, Android devices, Nmap, t
 Current baseline after the stabilization pass:
 
 ```text
-479 passed
+484 passed
 ```
 
 Coverage command:
@@ -77,10 +77,10 @@ Offline verification:
 
 ```text
 python -m pytest -q
-479 passed
+484 passed
 
 python -m pytest --cov=analysis --cov=runners --cov=tui --cov=plugins --cov=utils --cov-report=term-missing -q
-479 passed, total measured coverage 49%
+484 passed, total measured coverage 49%
 ```
 
 Live target status:

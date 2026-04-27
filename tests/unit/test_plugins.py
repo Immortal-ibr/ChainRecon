@@ -4,9 +4,11 @@ import csv
 import json
 import tempfile
 import unittest
+from pathlib import Path
 
-from plugins import CsvExportPlugin, HtmlReportPlugin, JsonReportPlugin, get_plugin
+from plugins import CsvExportPlugin, HtmlReportPlugin, JsonReportPlugin, XlsxReportPlugin, get_plugin
 from plugins.base import ReportPlugin
+from openpyxl import load_workbook
 
 
 SAMPLE_DATA = {
@@ -57,19 +59,24 @@ class PluginContractTests(unittest.TestCase):
     def test_csv_plugin_is_report_plugin(self):
         self.assertIsInstance(CsvExportPlugin(), ReportPlugin)
 
+    def test_xlsx_plugin_is_report_plugin(self):
+        self.assertIsInstance(XlsxReportPlugin(), ReportPlugin)
+
     def test_plugins_have_name_attribute(self):
         self.assertEqual(JsonReportPlugin.name, "json")
         self.assertEqual(HtmlReportPlugin.name, "html")
         self.assertEqual(CsvExportPlugin.name, "csv")
+        self.assertEqual(XlsxReportPlugin.name, "xlsx")
 
     def test_plugins_have_description(self):
-        for cls in (JsonReportPlugin, HtmlReportPlugin, CsvExportPlugin):
+        for cls in (JsonReportPlugin, HtmlReportPlugin, CsvExportPlugin, XlsxReportPlugin):
             self.assertTrue(len(cls.description) > 0, f"{cls.__name__} has no description")
 
     def test_plugins_have_file_extension(self):
         self.assertEqual(JsonReportPlugin().file_extension(), ".json")
         self.assertEqual(HtmlReportPlugin().file_extension(), ".html")
         self.assertEqual(CsvExportPlugin().file_extension(), ".csv")
+        self.assertEqual(XlsxReportPlugin().file_extension(), ".xlsx")
 
 
 # ===========================================================================
@@ -86,6 +93,9 @@ class RegistryTests(unittest.TestCase):
 
     def test_lookup_csv(self):
         self.assertIsInstance(get_plugin("csv"), CsvExportPlugin)
+
+    def test_lookup_xlsx(self):
+        self.assertIsInstance(get_plugin("xlsx"), XlsxReportPlugin)
 
     def test_lookup_case_insensitive(self):
         self.assertIsInstance(get_plugin("JSON"), JsonReportPlugin)
@@ -183,6 +193,22 @@ class HtmlPluginTests(unittest.TestCase):
         content, _ = self._generate()
         self.assertIn("api.vendor.example", content)
 
+    def test_uses_collapsible_sections(self):
+        content, _ = self._generate()
+        self.assertIn("<details", content)
+        self.assertIn("Toggle section", content)
+
+    def test_renders_file_links_for_source_files(self):
+        data = {
+            "traffic": {
+                "metadata": {"source_file": "/tmp/example.json"},
+                "findings": {},
+                "summary": {},
+            }
+        }
+        content, _ = self._generate(data)
+        self.assertIn("file:///", content)
+
     def test_escapes_special_characters(self):
         """Ensure user-controlled data is escaped to prevent XSS."""
         data = {"xss_test": {"findings": {"payload": "<script>alert('xss')</script>"}}}
@@ -226,6 +252,7 @@ class CsvPluginTests(unittest.TestCase):
     def test_all_rows_have_section_and_key(self):
         rows, _ = self._generate()
         for row in rows:
+            self.assertIn("page", row)
             self.assertIn("section", row)
             self.assertIn("key", row)
 
@@ -267,6 +294,59 @@ class CsvPluginTests(unittest.TestCase):
         with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False, encoding="utf-8", newline="") as f:
             result = CsvExportPlugin().generate(SAMPLE_DATA, f.name)
         self.assertEqual(result, f.name)
+
+
+class XlsxPluginTests(unittest.TestCase):
+    def test_writes_summary_and_section_sheets(self):
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            path = XlsxReportPlugin().generate(SAMPLE_DATA, f.name)
+        workbook = load_workbook(path)
+        self.assertIn("summary", workbook.sheetnames)
+        self.assertIn("traffic", workbook.sheetnames)
+        self.assertIn("ssl", workbook.sheetnames)
+        self.assertIn("scan", workbook.sheetnames)
+        summary = workbook["summary"]
+        rows = list(summary.iter_rows(values_only=True))
+        traffic_row = next(row for row in rows if row and row[0] == "traffic")
+        self.assertGreater(int(traffic_row[1]), 0)
+        workbook.close()
+        Path(path).unlink(missing_ok=True)
+
+    def test_csv_and_html_render_frida_sessions(self):
+        frida_data = {
+            "frida": {
+                "metadata": {"section": "frida"},
+                "sessions": [
+                    {
+                        "target": "com.nooie.home",
+                        "script": "hook_all_methods",
+                        "status": "stopped_by_user",
+                        "hook_event_count": 3,
+                        "error_count": 1,
+                        "summary": {"status": "stopped_by_user"},
+                        "events_by_tag": {"HOOK": 3, "WARN": 1},
+                        "hook_events": ["[HOOK] java.net.Socket.connect"],
+                        "error_events": ["[WARN] retrying"],
+                        "artifacts": [{"type": "frida_summary", "path": "/tmp/session.json"}],
+                    }
+                ],
+                "findings": {"sessions": []},
+                "summary": {"session_count": 1},
+                "risk_indicators": [],
+                "artifacts": [],
+            }
+        }
+        with tempfile.NamedTemporaryFile("r+", suffix=".csv", delete=False, encoding="utf-8", newline="") as csv_file:
+            CsvExportPlugin().generate(frida_data, csv_file.name)
+            csv_file.seek(0)
+            csv_text = csv_file.read()
+        self.assertIn("session_hook_event", csv_text)
+        with tempfile.NamedTemporaryFile("r+", suffix=".html", delete=False, encoding="utf-8") as html_file:
+            HtmlReportPlugin().generate(frida_data, html_file.name)
+            html_file.seek(0)
+            html_text = html_file.read()
+        self.assertIn("Frida Sessions", html_text)
+        self.assertIn("java.net.Socket.connect", html_text)
 
 
 if __name__ == "__main__":

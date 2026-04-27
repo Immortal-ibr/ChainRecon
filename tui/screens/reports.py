@@ -1,4 +1,4 @@
-"""Reports screen for generating JSON, HTML, and CSV artifacts."""
+"""Reports screen for generating JSON, HTML, CSV, and XLSX artifacts."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from textual.widgets import Button, Footer, Header, Label, Select
 from tui.screens.help_screen import HelpScreen
 from tui.widgets.log_viewer import LogActionBar, LogViewer
 from tui.widgets.pasteable_input import PasteableInput as Input
+from utils.artifacts import artifact_path
 
 HELP_TEXT = """[bold underline]Report Generation[/]
 
@@ -24,6 +25,7 @@ JSON file from the configured output directory.
   - HTML: Human-readable report with risk summary and raw sections.
   - JSON: Full machine-readable output. Good for scripting.
   - CSV: Flat tabular export for Excel or Google Sheets.
+  - XLSX: Spreadsheet workbook with a summary sheet and one worksheet per section.
 
 [bold]Source files[/]
 Current session mode avoids stale result files. All output files mode loads
@@ -64,16 +66,21 @@ class ReportsScreen(Screen):
     def compose(self) -> ComposeResult:
         from utils.config import get_output_dir
 
-        default_output = str((get_output_dir() / "report").resolve())
+        default_output = str(get_output_dir().resolve())
         yield Header()
         with VerticalScroll(id="reports-form"):
             yield Label("[bold]Report Generation[/]")
             yield Label("[dim]Choose current session results or all saved JSON files from the configured output directory.[/]")
-            yield Label("Output file path (without extension):")
+            yield Label("Output directory or file path:")
             yield Input(placeholder=default_output, value=default_output, id="output-path")
             yield Label("Format:")
             yield Select(
-                [("HTML (browser-readable)", "html"), ("JSON (machine-readable)", "json"), ("CSV (spreadsheet)", "csv")],
+                [
+                    ("HTML (browser-readable)", "html"),
+                    ("JSON (machine-readable)", "json"),
+                    ("CSV (spreadsheet)", "csv"),
+                    ("XLSX (multi-sheet workbook)", "xlsx"),
+                ],
                 value="html",
                 id="format",
             )
@@ -118,8 +125,12 @@ class ReportsScreen(Screen):
                 from plugins import get_plugin
 
                 plugin = get_plugin(fmt)
-                full_path = _report_output_path(out_path, plugin.file_extension())
-                gen = getattr(self.app, "_report_gen", None) or ReportGenerator()
+                stem = "report_all" if source_mode == "all_output" else "report_current"
+                full_path = _report_output_path(out_path, plugin.file_extension(), stem=stem)
+                if source_mode == "session":
+                    gen = getattr(self.app, "_report_gen", None) or ReportGenerator()
+                else:
+                    gen = ReportGenerator()
 
                 loaded_count = 0
                 if source_mode == "all_output":
@@ -152,10 +163,12 @@ class ReportsScreen(Screen):
         self.app.push_screen(HelpScreen(HELP_TEXT, title="Report Generation"))
 
 
-def _report_output_path(raw_path: str, extension: str) -> str:
+def _report_output_path(raw_path: str, extension: str, stem: str = "report") -> str:
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
         path = path.resolve()
+    if path.exists() and path.is_dir():
+        return str(artifact_path(path, stem, extension))
     if path.suffix.lower() == extension.lower():
         return str(path)
     return str(path.with_suffix(extension))

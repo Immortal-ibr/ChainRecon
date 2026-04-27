@@ -367,6 +367,18 @@ class SSLProbeTests(unittest.TestCase):
         self.assertFalse(result["reachable"])
         self.assertEqual(result["error_type"], "dns_resolution_failed")
         self.assertIn("plain IP address or hostname", result["error"])
+        self.assertFalse(result["target_resolved"])
+        self.assertFalse(result["tcp_reachable"])
+        self.assertFalse(result["tls_reachable"])
+
+    def test_tcp_failure_is_not_reported_as_dns_or_tls_success(self):
+        analyzer = SSLAnalyzer()
+        with patch("analysis.ssl_analyzer.socket.create_connection", side_effect=ConnectionRefusedError("refused")):
+            result = analyzer._probe_port("10.0.0.1", 443)
+        self.assertEqual(result["error_type"], "tcp_connection_failed")
+        self.assertTrue(result["target_resolved"])
+        self.assertFalse(result["tcp_reachable"])
+        self.assertFalse(result["tls_reachable"])
 
     def test_multiple_ports(self):
         probe = self._make_probe({
@@ -750,7 +762,7 @@ class ScannerTextParsingTests(unittest.TestCase):
 
     def test_empty_output(self):
         result = self._parse_text("")
-        self.assertEqual(result["metadata"]["host_count"], 1)  # placeholder host
+        self.assertEqual(result["metadata"]["host_count"], 0)
         self.assertEqual(result["summary"]["open_port_count"], 0)
 
     def test_udp_services(self):

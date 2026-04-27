@@ -24,6 +24,7 @@ from tui.widgets.pasteable_input import PasteableInput as Input
 
 from tui.screens.help_screen import HelpScreen
 from tui.widgets.log_viewer import LogActionBar, LogViewer
+from utils.artifacts import artifact_path, safe_token
 from utils.config import get_output_dir
 
 HELP_TEXT = """[bold underline]Custom Script Runner[/]
@@ -235,14 +236,14 @@ class CustomScriptScreen(Screen):
         out_dir = get_output_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
-        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in description)[:40]
-        out_file = out_dir / f"custom_{safe_name}_{timestamp}.json"
+        safe_name = safe_token(description[:40], "custom")
+        out_file = artifact_path(out_dir, f"custom_{safe_name}", ".json")
 
         payload = {
             "metadata": {
                 "analyzer": "CustomScriptRunner",
                 "description": description,
+                "section": safe_name,
                 "script": script_path,
                 "command": cmd,
                 "notes": notes,

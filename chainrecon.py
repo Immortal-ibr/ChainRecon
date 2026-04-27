@@ -7,7 +7,8 @@ import json
 from pathlib import Path
 from typing import Iterable, List
 
-from analysis import ReportGenerator, ScannerAnalyzer, SSLAnalyzer, TrafficAnalyzer
+from analysis import FirmwareAnalyzer, ReportGenerator, ScannerAnalyzer, SSLAnalyzer, TrafficAnalyzer
+from utils.artifacts import safe_token
 from utils.logging_config import get_logger, setup_logging
 
 logger = get_logger("cli")
@@ -23,7 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     traffic_parser = subparsers.add_parser("analyze-traffic", help="Analyze a packet capture")
     traffic_parser.add_argument("pcap")
-    traffic_parser.add_argument("--format", choices=["json", "html", "csv"])
+    traffic_parser.add_argument("--format", choices=["json", "html", "csv", "xlsx"])
     traffic_parser.add_argument("--output")
     traffic_parser.set_defaults(handler=handle_analyze_traffic)
 
@@ -31,20 +32,20 @@ def build_parser() -> argparse.ArgumentParser:
     ssl_parser.add_argument("target")
     ssl_parser.add_argument("--ports", nargs="*", type=int, default=DEFAULT_SSL_PORTS)
     ssl_parser.add_argument("--pcap", help="Optional pcap file for JA3 computation")
-    ssl_parser.add_argument("--format", choices=["json", "html", "csv"])
+    ssl_parser.add_argument("--format", choices=["json", "html", "csv", "xlsx"])
     ssl_parser.add_argument("--output")
     ssl_parser.set_defaults(handler=handle_analyze_ssl)
 
     scan_parser = subparsers.add_parser("analyze-scan", help="Analyze saved nmap output")
     scan_parser.add_argument("nmap_output")
     scan_parser.add_argument("--shodan-api-key")
-    scan_parser.add_argument("--format", choices=["json", "html", "csv"])
+    scan_parser.add_argument("--format", choices=["json", "html", "csv", "xlsx"])
     scan_parser.add_argument("--output")
     scan_parser.set_defaults(handler=handle_analyze_scan)
 
     report_parser = subparsers.add_parser("report", help="Aggregate saved JSON analysis files")
     report_parser.add_argument("inputs", nargs="+")
-    report_parser.add_argument("--format", required=True, choices=["json", "html", "csv"])
+    report_parser.add_argument("--format", required=True, choices=["json", "html", "csv", "xlsx"])
     report_parser.add_argument("--output", required=True)
     report_parser.set_defaults(handler=handle_report)
 
@@ -52,8 +53,14 @@ def build_parser() -> argparse.ArgumentParser:
     scan_live = subparsers.add_parser("scan", help="Run nmap scan, analyze, and report")
     scan_live.add_argument("target")
     scan_live.add_argument("--profile", default="quick",
-                           choices=["quick", "gentle", "full", "iot", "vuln"])
-    scan_live.add_argument("--format", choices=["json", "html", "csv"])
+                           choices=["arp", "quick", "gentle", "full", "iot", "vuln", "ssl"])
+    scan_live.add_argument("--interface", help="Network interface for nmap -e (defaults to config scan.interface)")
+    scan_live.add_argument(
+        "--allow-interface-mismatch",
+        action="store_true",
+        help="Allow nmap -e even when the selected interface does not match the OS route to the target",
+    )
+    scan_live.add_argument("--format", choices=["json", "html", "csv", "xlsx"])
     scan_live.add_argument("--output")
     scan_live.set_defaults(handler=handle_scan)
 
@@ -63,16 +70,33 @@ def build_parser() -> argparse.ArgumentParser:
                                 choices=["basic", "live", "dns", "http", "protocol_stats", "full"])
     capture_parser.add_argument("--duration", type=int, default=60)
     capture_parser.add_argument("--target-ip")
-    capture_parser.add_argument("--format", choices=["json", "html", "csv"])
+    capture_parser.add_argument("--format", choices=["json", "html", "csv", "xlsx"])
     capture_parser.add_argument("--output")
     capture_parser.set_defaults(handler=handle_capture)
 
     # -- APK analysis -------------------------------------------------
     apk_parser = subparsers.add_parser("apk", help="Run static analysis on an Android APK")
     apk_parser.add_argument("apk_path", help="Path to the APK file")
-    apk_parser.add_argument("--format", choices=["json", "html", "csv"])
+    apk_parser.add_argument("--format", choices=["json", "html", "csv", "xlsx"])
     apk_parser.add_argument("--output")
     apk_parser.set_defaults(handler=handle_apk)
+
+    firmware_parser = subparsers.add_parser("firmware", help="Extract and analyze a firmware image")
+    firmware_parser.add_argument("firmware_path", help="Path to the firmware image")
+    firmware_parser.add_argument("--extract-dir", help="Directory for extracted firmware contents")
+    firmware_parser.add_argument("--format", choices=["json", "html", "csv", "xlsx"])
+    firmware_parser.add_argument("--output")
+    firmware_parser.set_defaults(handler=handle_firmware)
+
+    workflow_parser = subparsers.add_parser("workflow", help="Run a YAML pipeline")
+    workflow_subparsers = workflow_parser.add_subparsers(dest="workflow_command")
+    workflow_run = workflow_subparsers.add_parser("run", help="Run a workflow pipeline")
+    workflow_run.add_argument("pipeline", help="Path to the workflow YAML file")
+    workflow_run.add_argument("--target", help="Override the workflow target")
+    workflow_run.add_argument("--profile", help="Override the workflow/device profile name")
+    workflow_run.add_argument("--device-profile", help="Load a shared device profile from profiles/devices or a YAML path")
+    workflow_run.add_argument("--dry-run", action="store_true", help="Render and validate steps without executing them")
+    workflow_run.set_defaults(handler=handle_workflow)
 
     # -- TUI ----------------------------------------------------------
     subparsers.add_parser("tui", help="Launch the interactive TUI")
@@ -240,17 +264,23 @@ def handle_analyze_ssl(args) -> int:
     certificates = analyzer.probe_certificates(args.target, args.ports)
     ciphers = analyzer.analyze_ciphers(args.target, args.ports)
     security = analyzer.assess_tls_security(certificates, ciphers)
+    certificate_rows = certificates["findings"]["certificates"]
+    cipher_rows = ciphers["findings"]["cipher_analysis"]
     result = {
         "metadata": {"target": args.target, "ports": args.ports},
         "findings": {
-            "certificates": certificates["findings"]["certificates"],
-            "cipher_analysis": ciphers["findings"]["cipher_analysis"],
+            "certificates": certificate_rows,
+            "cipher_analysis": cipher_rows,
             "security_findings": security["findings"]["security_findings"],
         },
         "summary": {
             "certificate_count": certificates["summary"]["certificate_count"],
             "weak_cipher_count": ciphers["summary"]["weak_cipher_count"],
             "risk_rating": security["summary"]["risk_rating"],
+            "target_resolved_count": sum(1 for row in certificate_rows if row.get("target_resolved")),
+            "tcp_reachable_count": sum(1 for row in certificate_rows if row.get("tcp_reachable")),
+            "tls_reachable_count": sum(1 for row in certificate_rows if row.get("tls_reachable", row.get("reachable"))),
+            "certificate_observed_count": sum(1 for row in certificate_rows if row.get("certificate_observed")),
         },
         "risk_indicators": security["risk_indicators"],
     }
@@ -285,10 +315,19 @@ def handle_report(args) -> int:
 def handle_scan(args) -> int:
     from runners import NmapRunner
     from runners.base import ToolNotFoundError
+    from runners.nmap_runner import NmapInterfaceMismatchError
 
     runner = NmapRunner()
     try:
-        scan_result = runner.run_scan(args.target, args.profile)
+        scan_result = runner.run_scan(
+            args.target,
+            args.profile,
+            interface=getattr(args, "interface", None),
+            allow_interface_mismatch=getattr(args, "allow_interface_mismatch", False),
+        )
+    except NmapInterfaceMismatchError as exc:
+        print(f"[!] {exc}")
+        return 2
     except ToolNotFoundError as exc:
         print(f"[!] {exc}")
         return 1
@@ -329,6 +368,33 @@ def combine_scan_results(scan_result: dict, parsed_results: list[dict]) -> dict:
     for host in hosts:
         for state, count in host.get("state_summary", {}).items():
             state_summary[state] = state_summary.get(state, 0) + int(count)
+    ambiguous_udp_count = sum(
+        1 for port in ports
+        if port.get("protocol") == "udp" and str(port.get("state", "")).lower() == "open|filtered"
+    )
+    ambiguous_udp_count += sum(int(count) for key, count in state_summary.items() if str(key).lower() == "open|filtered")
+    preflight = scan_result.get("preflight", {}) or {}
+    if preflight.get("interface_mismatch"):
+        risk_indicators.append({
+            "severity": "medium",
+            "title": "Selected scan interface mismatched target route",
+            "details": (
+                "The selected nmap interface did not match the OS route to the target. "
+                "Results may show filtered/open|filtered states caused by the route mismatch."
+            ),
+        })
+    if ambiguous_udp_count:
+        risk_indicators.append({
+            "severity": "info",
+            "title": "Ambiguous UDP scan results",
+            "details": (
+                f"{ambiguous_udp_count} UDP result(s) were open|filtered. "
+                "This is inconclusive and should not be treated as proof of an open UDP service."
+            ),
+        })
+    tls_probe = _scan_tls_findings(scan_result, hosts)
+    if tls_probe:
+        risk_indicators.extend(_dedupe_dicts(tls_probe.get("risk_indicators", [])))
     return {
         "metadata": {
             "target": scan_result.get("target"),
@@ -336,22 +402,103 @@ def combine_scan_results(scan_result: dict, parsed_results: list[dict]) -> dict:
             "nmap_path": scan_result.get("nmap_path"),
             "output_dir": scan_result.get("output_dir"),
             "output_files": scan_result.get("output_files", []),
-            "preflight": scan_result.get("preflight", {}),
+            "preflight": preflight,
             "host_discovery": scan_result.get("host_discovery", {}),
             "commands": scan_result.get("commands", []),
+            "artifacts": [{"type": "nmap_output", "path": path} for path in scan_result.get("output_files", [])],
         },
-        "findings": {"hosts": hosts, "iot_services": iot_services, "cve_hints": cve_hints},
+        "findings": {
+            "hosts": hosts,
+            "iot_services": iot_services,
+            "cve_hints": cve_hints,
+            **({"tls_probe": tls_probe.get("findings", {})} if tls_probe else {}),
+        },
         "summary": {
             "host_count": len(hosts),
             "open_port_count": len(services),
             "closed_port_count": _combined_state_count(ports, state_summary, "closed"),
             "filtered_port_count": _combined_state_count(ports, state_summary, "filtered"),
+            "ambiguous_udp_count": ambiguous_udp_count,
             "scanned_port_count": len(ports) + sum(state_summary.values()),
             "iot_service_count": len(iot_services),
             "cve_hint_count": len(cve_hints),
+            **(_tls_summary_fields(tls_probe) if tls_probe else {}),
         },
         "risk_indicators": risk_indicators,
     }
+
+
+def _scan_tls_findings(scan_result: dict, hosts: list[dict]) -> dict | None:
+    target = str(scan_result.get("target") or "").strip()
+    if not target or "/" in target or "-" in target.rsplit(".", 1)[-1] or len(hosts) != 1:
+        return None
+    try:
+        candidate_ports = _tls_candidate_ports(scan_result, hosts[0])
+        if not candidate_ports:
+            return None
+        analyzer = SSLAnalyzer()
+        certificates = analyzer.probe_certificates(target, candidate_ports)
+        cipher_analysis = analyzer.analyze_ciphers(target, candidate_ports)
+        security = analyzer.assess_tls_security(certificates, cipher_analysis)
+    except Exception:
+        return None
+    return {
+        "findings": {
+            "certificates": certificates.get("findings", {}).get("certificates", []),
+            "cipher_analysis": cipher_analysis.get("findings", {}).get("cipher_analysis", []),
+            "security_findings": security.get("findings", {}).get("security_findings", []),
+        },
+        "summary": {
+            "candidate_port_count": len(candidate_ports),
+            "reachable_port_count": certificates.get("summary", {}).get("reachable_ports", 0),
+            "certificate_count": certificates.get("summary", {}).get("certificate_count", 0),
+            "weak_cipher_count": cipher_analysis.get("summary", {}).get("weak_cipher_count", 0),
+            "risk_rating": security.get("summary", {}).get("risk_rating", "low"),
+        },
+        "risk_indicators": security.get("risk_indicators", []),
+    }
+
+
+def _tls_candidate_ports(scan_result: dict, host: dict) -> list[int]:
+    detected = set()
+    for service in host.get("services", []):
+        state = str(service.get("state") or "open").lower()
+        if state != "open":
+            continue
+        port = service.get("port")
+        service_name = str(service.get("service") or "").lower()
+        if _safe_int(port) in {443, 8443, 8883} or "ssl" in service_name or "tls" in service_name or service_name in {"https", "mqtts"}:
+            detected.add(int(port))
+    profile_ports = set(_profile_declared_ports(str(scan_result.get("profile") or "")))
+    for port in (443, 8443, 8883):
+        if port in profile_ports or port in detected:
+            detected.add(port)
+    return sorted(detected)
+
+
+def _profile_declared_ports(profile: str) -> list[int]:
+    if profile == "ssl":
+        return [443, 8443, 8883, 8080]
+    if profile == "iot":
+        return [443, 8443, 8883]
+    return []
+
+
+def _tls_summary_fields(tls_probe: dict) -> dict:
+    summary = tls_probe.get("summary", {})
+    return {
+        "tls_candidate_port_count": summary.get("candidate_port_count", 0),
+        "tls_reachable_port_count": summary.get("reachable_port_count", 0),
+        "tls_certificate_count": summary.get("certificate_count", 0),
+        "tls_weak_cipher_count": summary.get("weak_cipher_count", 0),
+    }
+
+
+def _safe_int(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _merge_scan_host(existing: dict | None, incoming: dict) -> dict:
@@ -414,7 +561,7 @@ def _dedupe_scalars(items: list) -> list:
 
 
 def _combined_state_count(ports: list[dict], state_summary: dict, state: str) -> int:
-    explicit = sum(1 for port in ports if port.get("state") == state)
+    explicit = sum(1 for port in ports if state in str(port.get("state", "")).split("|"))
     summarized = sum(int(count) for key, count in state_summary.items() if state in str(key).split("|"))
     return explicit + summarized
 
@@ -452,6 +599,25 @@ def handle_apk(args) -> int:
     return emit_result(result, "apk", args.format, args.output)
 
 
+def handle_firmware(args) -> int:
+    result = FirmwareAnalyzer().analyze(args.firmware_path, output_dir=getattr(args, "extract_dir", None))
+    return emit_result(result, "firmware", args.format, args.output)
+
+
+def handle_workflow(args) -> int:
+    from runners.workflow_runner import WorkflowRunner
+
+    result = WorkflowRunner().run(
+        args.pipeline,
+        target=getattr(args, "target", None),
+        profile=getattr(args, "profile", None),
+        device_profile=getattr(args, "device_profile", None),
+        dry_run=bool(getattr(args, "dry_run", False)),
+    )
+    print(json.dumps(result, indent=2))
+    return 0
+
+
 def load_report_inputs(inputs: Iterable[str]):
     grouped: dict[str, list[dict]] = {}
     files = []
@@ -463,6 +629,8 @@ def load_report_inputs(inputs: Iterable[str]):
             files.append(path)
 
     for file_path in files:
+        if file_path.name == "artifact_index.json":
+            continue
         try:
             raw_payload = json.loads(file_path.read_text(encoding="utf-8", errors="replace"))
         except (OSError, json.JSONDecodeError):
@@ -486,16 +654,11 @@ def _analysis_payload_from_json(payload):
     if any(key in payload for key in ("metadata", "summary", "risk_indicators")) or isinstance(payload.get("findings"), dict):
         return payload
 
-    known_sections = ("traffic", "ssl", "scan", "apk")
-    section_values = [
-        value
-        for key, value in payload.items()
-        if key in known_sections and value not in (None, {}, [])
-    ]
-    if len(section_values) == 1 and isinstance(section_values[0], dict):
-        return section_values[0]
-    if any(key in payload for key in known_sections):
+    section_values = [(key, value) for key, value in payload.items() if isinstance(value, dict) and value]
+    if len(section_values) > 1:
         return None
+    if len(section_values) == 1:
+        return section_values[0][1]
     return payload
 
 
@@ -504,7 +667,39 @@ def infer_section(payload, filename: str) -> str:
     findings = payload.get("findings", {})
     source = metadata.get("source", "")
     analyzer = metadata.get("analyzer", "")
+    declared_section = metadata.get("section")
     filename_l = filename.lower()
+    if declared_section:
+        return safe_token(str(declared_section), default="analysis")
+    if analyzer:
+        normalized = str(analyzer).strip().lower().replace("analyzer", "").strip("_- ")
+        aliases = {
+            "apk": "apk",
+            "traffic": "traffic",
+            "ssl": "ssl",
+            "scanner": "scan",
+            "scan": "scan",
+        }
+        if normalized in aliases:
+            return aliases[normalized]
+        if normalized:
+            return safe_token(normalized, default="analysis")
+    if filename_l[:8].isdigit() and len(filename_l) > 15:
+        middle = filename_l[9:-7]
+        if middle.startswith("analysis_"):
+            return safe_token(middle[len("analysis_"):], default="analysis")
+        if middle.startswith("scan_"):
+            return "scan"
+        if middle.startswith("frida_"):
+            return "frida"
+        if middle.startswith("capture_") or middle.startswith("traffic_"):
+            return "traffic"
+        if middle.startswith("apk_"):
+            return "apk"
+    if "session" in findings or "events_by_tag" in findings or metadata.get("serial") or "frida" in filename_l:
+        return "frida"
+    if analyzer == "FirmwareAnalyzer" or metadata.get("firmware") or "firmware" in filename_l:
+        return "firmware"
     if analyzer == "APKAnalyzer" or metadata.get("apk") or "apk" in filename_l:
         return "apk"
     if "app_flags" in findings or "permissions" in findings or "credentials" in findings:
@@ -517,10 +712,15 @@ def infer_section(payload, filename: str) -> str:
         return "scan"
     if metadata.get("target"):
         return "ssl"
-    return "scan"
+    return "analysis"
 
 
 def _aggregate_report_section(section: str, payloads: list[dict]):
+    if section == "frida":
+        generator = ReportGenerator()
+        for payload in payloads:
+            generator.add_results("frida", payload, mode="append")
+        return generator.get_data()["frida"]
     if len(payloads) == 1:
         return payloads[0]
     risk_indicators = []

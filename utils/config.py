@@ -15,6 +15,7 @@ import yaml
 
 _CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 _DEFAULT_CONFIG = _CONFIG_DIR / "default.yaml"
+_DEVICE_PROFILE_DIR = _CONFIG_DIR.parent / "profiles" / "devices"
 
 # Singleton cache
 _loaded_config: Optional[Dict[str, Any]] = None
@@ -147,6 +148,12 @@ def get_frida_config() -> Dict[str, Any]:
     return cfg.get("frida") or {}
 
 
+def get_scan_config() -> Dict[str, Any]:
+    """Return scan-related settings."""
+    cfg = get_config()
+    return cfg.get("scan") or {}
+
+
 def get_output_config() -> Dict[str, Any]:
     """Return output-related settings."""
     cfg = get_config()
@@ -157,6 +164,44 @@ def get_network_config() -> Dict[str, Any]:
     """Return saved network setup values."""
     cfg = get_config()
     return cfg.get("network") or {}
+
+
+def list_device_profiles() -> list[Dict[str, Any]]:
+    profiles = []
+    if not _DEVICE_PROFILE_DIR.exists():
+        return profiles
+    for path in sorted(_DEVICE_PROFILE_DIR.glob("*.yaml")):
+        try:
+            payload = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace")) or {}
+        except yaml.YAMLError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        profiles.append({
+            "name": payload.get("name") or path.stem,
+            "path": str(path.resolve()),
+            "profile": payload,
+        })
+    return profiles
+
+
+def load_device_profile(profile_name_or_path: Optional[str]) -> Dict[str, Any]:
+    if not profile_name_or_path:
+        return {}
+    requested = Path(profile_name_or_path)
+    if requested.exists():
+        path = requested
+    else:
+        candidate = _DEVICE_PROFILE_DIR / f"{requested.stem}.yaml"
+        if not candidate.exists():
+            raise FileNotFoundError(f"Device profile not found: {profile_name_or_path}")
+        path = candidate
+    payload = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace")) or {}
+    if not isinstance(payload, dict):
+        raise ValueError(f"Device profile must be a mapping: {path}")
+    payload.setdefault("name", path.stem)
+    payload.setdefault("path", str(path.resolve()))
+    return payload
 
 
 def get_output_dir() -> Path:
@@ -183,6 +228,38 @@ def save_network_config(data: Dict[str, Any]) -> None:
     with open(local_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(existing, f, default_flow_style=False)
     # Bust the singleton cache so next get_config() sees the update
+    reset_config()
+
+
+def save_frida_config(data: Dict[str, Any]) -> None:
+    """Persist Frida-related values to config/local.yaml."""
+    local_path = _CONFIG_DIR / "local.yaml"
+    existing: Dict[str, Any] = {}
+    if local_path.exists():
+        with open(local_path, encoding="utf-8") as f:
+            existing = yaml.safe_load(f) or {}
+    merged = dict(existing.get("frida") or {})
+    merged.update(data)
+    existing["frida"] = merged
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(local_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(existing, f, default_flow_style=False)
+    reset_config()
+
+
+def save_scan_config(data: Dict[str, Any]) -> None:
+    """Persist scan-related values to config/local.yaml."""
+    local_path = _CONFIG_DIR / "local.yaml"
+    existing: Dict[str, Any] = {}
+    if local_path.exists():
+        with open(local_path, encoding="utf-8") as f:
+            existing = yaml.safe_load(f) or {}
+    merged = dict(existing.get("scan") or {})
+    merged.update(data)
+    existing["scan"] = merged
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(local_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(existing, f, default_flow_style=False)
     reset_config()
 
 

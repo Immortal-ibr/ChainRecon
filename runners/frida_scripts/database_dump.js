@@ -1,71 +1,49 @@
-/*
- * database_dump.js — Monitor and dump SQLite database operations
- *
- * Hooks SQLiteDatabase to log queries, inserts, updates, and raw SQL.
- * Useful for finding locally stored credentials, tokens, and PII.
- */
-
 Java.perform(function () {
-    var SQLiteDatabase = Java.use("android.database.sqlite.SQLiteDatabase");
+  const config = typeof CHAINRECON_CONFIG !== "undefined" ? CHAINRECON_CONFIG : {};
+  const queryFilter = (config.query_filter || "").toLowerCase();
 
-    // --- rawQuery ----------------------------------------------------------
-    SQLiteDatabase.rawQuery.overload("java.lang.String", "[Ljava.lang.String;").implementation = function (sql, args) {
-        console.log("[SQLite rawQuery] " + sql);
-        if (args !== null) {
-            for (var i = 0; i < args.length; i++) {
-                console.log("  arg[" + i + "] = " + args[i]);
-            }
-        }
-        return this.rawQuery(sql, args);
+  const shouldLog = function (sql) {
+    const normalized = String(sql || "").toLowerCase();
+    return !queryFilter || normalized.indexOf(queryFilter) !== -1;
+  };
+
+  const SQLiteDatabase = Java.use("android.database.sqlite.SQLiteDatabase");
+  const rawQuery = SQLiteDatabase.rawQuery.overload("java.lang.String", "[Ljava.lang.String;");
+
+  rawQuery.implementation = function (sql, args) {
+    if (shouldLog(sql)) {
+      console.log("[SQL-RAW] " + sql);
+    }
+    return rawQuery.call(this, sql, args);
+  };
+
+  try {
+    const execSQL = SQLiteDatabase.execSQL.overload("java.lang.String");
+    execSQL.implementation = function (sql) {
+      if (shouldLog(sql)) {
+        console.log("[SQL-EXEC] " + sql);
+      }
+      return execSQL.call(this, sql);
     };
+  } catch (e) {}
 
-    // --- query (7-arg form) -----------------------------------------------
-    try {
-        SQLiteDatabase.query.overload(
-            "java.lang.String", "[Ljava.lang.String;",
-            "java.lang.String", "[Ljava.lang.String;",
-            "java.lang.String", "java.lang.String", "java.lang.String"
-        ).implementation = function (table, cols, sel, selArgs, group, having, order) {
-            console.log("[SQLite query] table=" + table + " selection=" + sel);
-            return this.query(table, cols, sel, selArgs, group, having, order);
-        };
-    } catch (e) {}
+  const insert = SQLiteDatabase.insert.overload("java.lang.String", "java.lang.String", "android.content.ContentValues");
+  insert.implementation = function (table, nullColumnHack, values) {
+    const summary = table + " values=" + values;
+    if (shouldLog(summary)) {
+      console.log("[SQL-INSERT] " + summary);
+    }
+    return insert.call(this, table, nullColumnHack, values);
+  };
 
-    // --- insert ------------------------------------------------------------
-    SQLiteDatabase.insert.overload("java.lang.String", "java.lang.String", "android.content.ContentValues").implementation = function (table, nullColHack, values) {
-        console.log("[SQLite insert] table=" + table + " values=" + values);
-        return this.insert(table, nullColHack, values);
-    };
+  const update = SQLiteDatabase.update.overload("java.lang.String", "android.content.ContentValues", "java.lang.String", "[Ljava.lang.String;");
+  update.implementation = function (table, values, where, whereArgs) {
+    const summary = table + " where=" + where + " values=" + values;
+    if (shouldLog(summary)) {
+      console.log("[SQL-UPDATE] " + summary);
+    }
+    return update.call(this, table, values, where, whereArgs);
+  };
 
-    // --- update ------------------------------------------------------------
-    SQLiteDatabase.update.overload("java.lang.String", "android.content.ContentValues", "java.lang.String", "[Ljava.lang.String;").implementation = function (table, values, where, whereArgs) {
-        console.log("[SQLite update] table=" + table + " where=" + where + " values=" + values);
-        return this.update(table, values, where, whereArgs);
-    };
-
-    // --- delete ------------------------------------------------------------
-    SQLiteDatabase.delete.overload("java.lang.String", "java.lang.String", "[Ljava.lang.String;").implementation = function (table, where, whereArgs) {
-        console.log("[SQLite delete] table=" + table + " where=" + where);
-        return this.delete(table, where, whereArgs);
-    };
-
-    // --- execSQL -----------------------------------------------------------
-    try {
-        SQLiteDatabase.execSQL.overload("java.lang.String").implementation = function (sql) {
-            console.log("[SQLite execSQL] " + sql);
-            return this.execSQL(sql);
-        };
-    } catch (e) {}
-
-    // --- openDatabase ------------------------------------------------------
-    try {
-        SQLiteDatabase.openDatabase.overload(
-            "java.lang.String", "android.database.sqlite.SQLiteDatabase$CursorFactory", "int"
-        ).implementation = function (path, factory, flags) {
-            console.log("[SQLite openDatabase] " + path);
-            return this.openDatabase(path, factory, flags);
-        };
-    } catch (e) {}
-
-    console.log("[*] SQLite database hooks installed");
+  console.log("[STATUS] sqlite monitor ready");
 });

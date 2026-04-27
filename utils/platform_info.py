@@ -45,6 +45,18 @@ _WINDOWS_SEARCH_PATHS: Dict[str, List[str]] = {
         os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\platform-tools"),
         r"C:\Android\platform-tools",
     ],
+    "emulator": [
+        os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\emulator"),
+        r"C:\Android\emulator",
+    ],
+    "sdkmanager": [
+        os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\cmdline-tools\latest\bin"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\tools\bin"),
+    ],
+    "avdmanager": [
+        os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\cmdline-tools\latest\bin"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\tools\bin"),
+    ],
     "jadx": [
         r"C:\jadx\bin",
         r"C:\Program Files\jadx\bin",
@@ -56,6 +68,17 @@ _WINDOWS_SEARCH_PATHS: Dict[str, List[str]] = {
         os.path.expandvars(r"%USERPROFILE%\apktool"),
     ],
 }
+
+
+def _candidate_binaries(name: str) -> List[str]:
+    """Return executable filename candidates for a tool on the current OS."""
+    candidates = [name]
+    if is_windows():
+        suffixes = [".exe", ".bat", ".cmd"]
+        for suffix in suffixes:
+            if not name.lower().endswith(suffix):
+                candidates.append(name + suffix)
+    return candidates
 
 
 def find_tool(name: str, extra_paths: Optional[List[str]] = None) -> Optional[str]:
@@ -75,13 +98,8 @@ def find_tool(name: str, extra_paths: Optional[List[str]] = None) -> Optional[st
         pass
 
     # 1. Check PATH
-    found = shutil.which(name)
-    if found:
-        return found
-
-    # 2. On Windows, also add .exe variant
-    if is_windows() and not name.endswith(".exe"):
-        found = shutil.which(name + ".exe")
+    for candidate in _candidate_binaries(name):
+        found = shutil.which(candidate)
         if found:
             return found
 
@@ -94,7 +112,7 @@ def find_tool(name: str, extra_paths: Optional[List[str]] = None) -> Optional[st
         directory = os.path.expandvars(directory)
         if not os.path.isdir(directory):
             continue
-        for candidate in (name, name + ".exe"):
+        for candidate in _candidate_binaries(name):
             full_path = os.path.join(directory, candidate)
             if os.path.isfile(full_path):
                 return full_path

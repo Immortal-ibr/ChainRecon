@@ -468,13 +468,13 @@ def _frida_run_builtin(runner: FridaRunner) -> None:
 def _configure_script_variables(runner: FridaRunner, script_key: str) -> None:
     """Prompt user for script-specific variables and inject them."""
     if script_key == "list_classes":
-        pkg = input("  Filter by package name (e.g., com.example) or Enter for all: ").strip()
+        pkg = input("  Filter by class/package term (comma, semicolon, or newline separated) or Enter for all: ").strip()
         if pkg:
             _inject_var(runner, script_key, "FILTER", json.dumps(pkg))
     elif script_key == "hook_all_methods":
-        classes = input("  Class names to hook (comma-separated): ").strip()
+        classes = input("  Class names to hook (comma, semicolon, or newline separated): ").strip()
         if classes:
-            class_list = [c.strip() for c in classes.split(",")]
+            class_list = [c.strip() for c in re.split(r"[\r\n,;]+", classes) if c.strip()]
             _inject_var(runner, script_key, "TARGET_CLASSES", json.dumps(class_list))
     elif script_key == "hook_method":
         cls = input("  Full class name (e.g., com.example.MyClass): ").strip()

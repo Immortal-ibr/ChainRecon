@@ -1,9 +1,4 @@
-"""Certificate extraction and analysis from packet captures.
-
-Extracts X.509 certificates from TLS and DTLS handshakes in pcap files,
-checks RSA key sizes, signature algorithms, expiry dates, and basic
-key-weakness indicators (small primes, Fermat factorisation proximity).
-"""
+"""Certificate extraction and analysis from packet captures."""
 
 from __future__ import annotations
 
@@ -11,7 +6,7 @@ import hashlib
 import math
 import struct
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 from utils.logging_config import get_logger
 
@@ -27,6 +22,18 @@ except ImportError:
 
 class CertAnalyzer:
     """Extract and analyse certificates found inside a packet capture."""
+
+    def analyze_pcap(self, pcap_path: str) -> Dict[str, Any]:
+        from analysis.traffic import TrafficAnalyzer
+
+        packets, capture = TrafficAnalyzer()._load_packets(pcap_path)
+        try:
+            result = self.analyze(packets)
+        finally:
+            if hasattr(capture, "close"):
+                capture.close()
+        result.setdefault("metadata", {})["source"] = pcap_path
+        return result
 
     def analyze(self, packets: Iterable[Any]) -> Dict[str, Any]:
         packet_list = list(packets)
@@ -66,6 +73,7 @@ class CertAnalyzer:
                 "packet_count": len(packet_list),
                 "certs_found": len(parsed),
                 "analyzer": self.__class__.__name__,
+                "extraction_sources": sorted({item.get("extracted_from", {}).get("source") for item in parsed if item.get("extracted_from")}),
             },
             "findings": {
                 "certificates": parsed,
@@ -82,56 +90,44 @@ class CertAnalyzer:
 
     # -- DER extraction from raw payloads -----------------------------
 
-    def _extract_der_certs(self, packets) -> List[bytes]:
-        """Find DER-encoded X.509 certificates in TLS/DTLS handshake payloads."""
-        certs: List[bytes] = []
-        seen: set = set()
+    def _extract_der_certs(self, packets) -> List[Dict[str, Any]]:
+        """Find DER-encoded X.509 certificates in TLS/DTLS/raw payloads."""
+        certs: List[Dict[str, Any]] = []
+        seen: set[str] = set()
 
-        for pkt in packets:
-            raw = self._get_payload(pkt)
-            if raw is None or len(raw) < 20:
-                continue
-            # Scan for the ASN.1 SEQUENCE tag (0x30 0x82) followed by a
-            # plausible length that fits inside the payload.
-            offset = 0
-            while offset < len(raw) - 4:
-                idx = raw.find(b"\x30\x82", offset)
-                if idx == -1:
-                    break
-                # Two-byte length after 0x30 0x82
-                if idx + 4 > len(raw):
-                    break
-                cert_len = struct.unpack("!H", raw[idx + 2 : idx + 4])[0] + 4
-                if cert_len < 100 or idx + cert_len > len(raw):
-                    offset = idx + 1
+        for packet_index, pkt in enumerate(packets):
+            for extracted in self._iter_packet_certificates(pkt):
+                fingerprint = hashlib.sha256(extracted["der"]).hexdigest()
+                if fingerprint in seen:
                     continue
-                der = raw[idx : idx + cert_len]
-                fingerprint = hashlib.sha256(der).digest()
-                if fingerprint not in seen:
-                    seen.add(fingerprint)
-                    certs.append(der)
-                offset = idx + cert_len
+                seen.add(fingerprint)
+                certs.append({
+                    "der": extracted["der"],
+                    "sha256": fingerprint,
+                    "packet_index": packet_index,
+                    "extracted_from": extracted["extracted_from"],
+                })
 
         logger.info("Extracted %d unique DER blobs", len(certs))
         return certs
 
-    def _parse_certs(self, der_list: List[bytes]) -> List[Dict[str, Any]]:
+    def _parse_certs(self, der_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not _CRYPTO_AVAILABLE:
             logger.warning("cryptography package not installed -- skipping cert parsing")
-            return [{"raw_sha256": hashlib.sha256(d).hexdigest(), "note": "Install 'cryptography' for full analysis"} for d in der_list]
+            return [{"raw_sha256": item["sha256"], "note": "Install 'cryptography' for full analysis", "extracted_from": item.get("extracted_from", {})} for item in der_list]
 
         results: List[Dict[str, Any]] = []
-        for der in der_list:
+        for item in der_list:
             try:
-                cert = x509.load_der_x509_certificate(der)
+                cert = x509.load_der_x509_certificate(item["der"])
             except Exception:
                 continue
 
-            info = self._cert_info(cert, der)
+            info = self._cert_info(cert, item["der"], item)
             results.append(info)
         return results
 
-    def _cert_info(self, cert, der: bytes) -> Dict[str, Any]:
+    def _cert_info(self, cert, der: bytes, extracted: Dict[str, Any]) -> Dict[str, Any]:
         now = datetime.now(timezone.utc)
         subject = cert.subject.rfc4514_string()
         issuer = cert.issuer.rfc4514_string()
@@ -146,8 +142,15 @@ class CertAnalyzer:
             "not_after": cert.not_valid_after_utc.isoformat(),
             "expired": expired,
             "self_signed": self_signed,
-            "sha256": hashlib.sha256(der).hexdigest(),
+            "sha256": extracted.get("sha256") or hashlib.sha256(der).hexdigest(),
             "signature_algorithm": cert.signature_algorithm_oid.dotted_string,
+            "signature_hash": getattr(getattr(cert, "signature_hash_algorithm", None), "name", None),
+            "subject_components": self._name_components(cert.subject),
+            "issuer_components": self._name_components(cert.issuer),
+            "san": self._subject_alt_names(cert),
+            "extracted_from": dict(extracted.get("extracted_from") or {}),
+            "packet_index": extracted.get("packet_index"),
+            "certificate_observed": True,
         }
 
         weaknesses: List[str] = []
@@ -191,6 +194,110 @@ class CertAnalyzer:
         info["weaknesses"] = weaknesses
         return info
 
+    def _iter_packet_certificates(self, pkt: Any) -> Iterator[Dict[str, Any]]:
+        for layer_name, protocol in (("tls", "tls"), ("dtls", "dtls")):
+            layer = getattr(pkt, layer_name, None)
+            if layer is None:
+                continue
+            yield from self._extract_from_layer_fields(layer, protocol)
+        for protocol, source, raw in self._payload_candidates(pkt):
+            yield from self._extract_from_blob(raw, {"protocol": protocol, "source": source})
+
+    def _extract_from_layer_fields(self, layer: Any, protocol: str) -> Iterator[Dict[str, Any]]:
+        for field_name in dir(layer):
+            lowered = field_name.lower()
+            if field_name.startswith("_") or "certificate" not in lowered:
+                continue
+            value = getattr(layer, field_name, None)
+            for item in self._flatten_field_values(value):
+                raw = self._decode_hex_blob(item)
+                if raw:
+                    yield from self._extract_from_blob(raw, {"protocol": protocol, "source": f"{protocol}.{field_name}"})
+
+    def _payload_candidates(self, pkt: Any) -> Iterator[tuple[str, str, bytes]]:
+        for layer_name, protocol in (("tls", "tls"), ("dtls", "dtls"), ("tcp", "tcp_reassembled"), ("udp", "dtls"), ("data", "raw")):
+            layer = getattr(pkt, layer_name, None)
+            if layer is None:
+                continue
+            for field in ("reassembled_data", "segment_data", "payload", "data_data", "app_data"):
+                value = getattr(layer, field, None)
+                raw = self._decode_hex_blob(value)
+                if raw:
+                    yield protocol, f"{layer_name}.{field}", raw
+
+    def _extract_from_blob(self, raw: bytes, extracted_from: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
+        if len(raw) < 8:
+            return
+        offset = 0
+        while offset < len(raw) - 4:
+            idx = raw.find(b"\x30\x82", offset)
+            if idx == -1 or idx + 4 > len(raw):
+                break
+            cert_len = struct.unpack("!H", raw[idx + 2 : idx + 4])[0] + 4
+            if cert_len < 100 or idx + cert_len > len(raw):
+                offset = idx + 1
+                continue
+            yield {"der": raw[idx : idx + cert_len], "extracted_from": dict(extracted_from)}
+            offset = idx + cert_len
+
+    @staticmethod
+    def _flatten_field_values(value: Any) -> List[Any]:
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple, set)):
+            items: List[Any] = []
+            for item in value:
+                items.extend(CertAnalyzer._flatten_field_values(item))
+            return items
+        return [value]
+
+    @staticmethod
+    def _decode_hex_blob(value: Any) -> Optional[bytes]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        cleaned = text.replace(":", "").replace(" ", "")
+        if len(cleaned) % 2 != 0:
+            return None
+        if any(ch not in "0123456789abcdefABCDEF" for ch in cleaned):
+            return None
+        try:
+            return bytes.fromhex(cleaned)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _name_components(name) -> Dict[str, Any]:
+        components: Dict[str, Any] = {}
+        for attribute in name:
+            label = getattr(attribute.oid, "_name", None) or attribute.oid.dotted_string
+            if label in components:
+                existing = components[label]
+                if isinstance(existing, list):
+                    existing.append(attribute.value)
+                else:
+                    components[label] = [existing, attribute.value]
+            else:
+                components[label] = attribute.value
+        return components
+
+    @staticmethod
+    def _subject_alt_names(cert) -> List[str]:
+        if not _CRYPTO_AVAILABLE:
+            return []
+        try:
+            extension = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+        except Exception:
+            return []
+        values: List[str] = []
+        for name in extension.value:
+            value = getattr(name, "value", None)
+            if value is not None:
+                values.append(str(value))
+        return values
+
     @staticmethod
     def _fermat_vulnerable(n: int, iterations: int = 100) -> bool:
         """Quick check if RSA modulus n = p*q where p ~ q (Fermat attack)."""
@@ -209,17 +316,3 @@ class CertAnalyzer:
 
     # -- helpers ------------------------------------------------------
 
-    @staticmethod
-    def _get_payload(pkt) -> Optional[bytes]:
-        for layer_name in ("data", "DATA", "tcp", "TCP", "udp", "UDP"):
-            layer = getattr(pkt, layer_name, None)
-            if layer is None:
-                continue
-            for field in ("data_data", "payload"):
-                raw_hex = getattr(layer, field, None)
-                if raw_hex:
-                    try:
-                        return bytes.fromhex(str(raw_hex).replace(":", ""))
-                    except ValueError:
-                        continue
-        return None
