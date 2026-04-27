@@ -117,19 +117,21 @@ class RegistryTests(unittest.TestCase):
 
 class JsonPluginTests(unittest.TestCase):
     def test_writes_valid_json(self):
-        with tempfile.NamedTemporaryFile("r+", suffix=".json", delete=False, encoding="utf-8") as f:
-            path = JsonReportPlugin().generate(SAMPLE_DATA, f.name)
-            f.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            fname = f.name
+        path = JsonReportPlugin().generate(SAMPLE_DATA, fname)
+        with open(fname, encoding="utf-8") as f:
             payload = json.load(f)
-        self.assertEqual(path, f.name)
+        self.assertEqual(path, fname)
         self.assertIn("traffic", payload)
         self.assertIn("ssl", payload)
         self.assertIn("scan", payload)
 
     def test_keys_are_sorted(self):
-        with tempfile.NamedTemporaryFile("r+", suffix=".json", delete=False, encoding="utf-8") as f:
-            JsonReportPlugin().generate(SAMPLE_DATA, f.name)
-            f.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            fname = f.name
+        JsonReportPlugin().generate(SAMPLE_DATA, fname)
+        with open(fname, encoding="utf-8") as f:
             content = f.read()
         # "scan" should appear before "ssl" before "traffic" in sorted keys
         scan_pos = content.index('"scan"')
@@ -139,9 +141,10 @@ class JsonPluginTests(unittest.TestCase):
         self.assertLess(ssl_pos, traffic_pos)
 
     def test_output_is_indented(self):
-        with tempfile.NamedTemporaryFile("r+", suffix=".json", delete=False, encoding="utf-8") as f:
-            JsonReportPlugin().generate(SAMPLE_DATA, f.name)
-            f.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            fname = f.name
+        JsonReportPlugin().generate(SAMPLE_DATA, fname)
+        with open(fname, encoding="utf-8") as f:
             content = f.read()
         self.assertIn("\n", content)
         self.assertIn("  ", content)
@@ -153,16 +156,18 @@ class JsonPluginTests(unittest.TestCase):
 
     def test_handles_none_sections(self):
         data = {"traffic": None, "ssl": None, "scan": None}
-        with tempfile.NamedTemporaryFile("r+", suffix=".json", delete=False, encoding="utf-8") as f:
-            JsonReportPlugin().generate(data, f.name)
-            f.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            fname = f.name
+        JsonReportPlugin().generate(data, fname)
+        with open(fname, encoding="utf-8") as f:
             payload = json.load(f)
         self.assertIsNone(payload["traffic"])
 
     def test_handles_empty_data(self):
-        with tempfile.NamedTemporaryFile("r+", suffix=".json", delete=False, encoding="utf-8") as f:
-            JsonReportPlugin().generate({}, f.name)
-            f.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            fname = f.name
+        JsonReportPlugin().generate({}, fname)
+        with open(fname, encoding="utf-8") as f:
             payload = json.load(f)
         self.assertEqual(payload, {})
 
@@ -175,10 +180,11 @@ class JsonPluginTests(unittest.TestCase):
 class HtmlPluginTests(unittest.TestCase):
     def _generate(self, data=None):
         data = data or SAMPLE_DATA
-        with tempfile.NamedTemporaryFile("r+", suffix=".html", delete=False, encoding="utf-8") as f:
-            HtmlReportPlugin().generate(data, f.name)
-            f.seek(0)
-            return f.read(), f.name
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+            fname = f.name
+        HtmlReportPlugin().generate(data, fname)
+        with open(fname, encoding="utf-8") as f:
+            return f.read(), fname
 
     def test_contains_title(self):
         content, _ = self._generate()
@@ -239,10 +245,11 @@ class HtmlPluginTests(unittest.TestCase):
 class CsvPluginTests(unittest.TestCase):
     def _generate(self, data=None):
         data = data or SAMPLE_DATA
-        with tempfile.NamedTemporaryFile("r+", suffix=".csv", delete=False, encoding="utf-8", newline="") as f:
-            CsvExportPlugin().generate(data, f.name)
-            f.seek(0)
-            return list(csv.DictReader(f)), f.name
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
+            fname = f.name
+        CsvExportPlugin().generate(data, fname)
+        with open(fname, encoding="utf-8", newline="") as f:
+            return list(csv.DictReader(f)), fname
 
     def test_flattens_traffic_findings(self):
         rows, _ = self._generate()
@@ -287,11 +294,11 @@ class CsvPluginTests(unittest.TestCase):
         self.assertEqual(len(matching), 2)
 
     def test_has_header_row(self):
-        with tempfile.NamedTemporaryFile("r+", suffix=".csv", delete=False, encoding="utf-8", newline="") as f:
-            CsvExportPlugin().generate(SAMPLE_DATA, f.name)
-            f.seek(0)
-            reader = csv.reader(f)
-            header = next(reader)
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
+            fname = f.name
+        CsvExportPlugin().generate(SAMPLE_DATA, fname)
+        with open(fname, encoding="utf-8", newline="") as f:
+            header = next(csv.reader(f))
         self.assertIn("section", header)
         self.assertIn("key", header)
 
@@ -341,14 +348,16 @@ class XlsxPluginTests(unittest.TestCase):
                 "artifacts": [],
             }
         }
-        with tempfile.NamedTemporaryFile("r+", suffix=".csv", delete=False, encoding="utf-8", newline="") as csv_file:
-            CsvExportPlugin().generate(frida_data, csv_file.name)
-            csv_file.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as csv_file:
+            csv_fname = csv_file.name
+        CsvExportPlugin().generate(frida_data, csv_fname)
+        with open(csv_fname, encoding="utf-8", newline="") as csv_file:
             csv_text = csv_file.read()
         self.assertIn("session_hook_event", csv_text)
-        with tempfile.NamedTemporaryFile("r+", suffix=".html", delete=False, encoding="utf-8") as html_file:
-            HtmlReportPlugin().generate(frida_data, html_file.name)
-            html_file.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as html_file:
+            html_fname = html_file.name
+        HtmlReportPlugin().generate(frida_data, html_fname)
+        with open(html_fname, encoding="utf-8") as html_file:
             html_text = html_file.read()
         self.assertIn("Frida Sessions", html_text)
         self.assertIn("java.net.Socket.connect", html_text)
@@ -366,9 +375,10 @@ class XlsxPluginTests(unittest.TestCase):
                 },
             }
         }
-        with tempfile.NamedTemporaryFile("r+", suffix=".csv", delete=False, encoding="utf-8", newline="") as f:
-            CsvExportPlugin().generate(data, f.name)
-            f.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
+            fname = f.name
+        CsvExportPlugin().generate(data, fname)
+        with open(fname, encoding="utf-8", newline="") as f:
             rows = list(csv.DictReader(f))
         step_rows = [r for r in rows if r.get("row_type") == "workflow_step"]
         self.assertEqual(len(step_rows), 2)
@@ -385,9 +395,10 @@ class XlsxPluginTests(unittest.TestCase):
                 }
             }
         }
-        with tempfile.NamedTemporaryFile("r+", suffix=".csv", delete=False, encoding="utf-8", newline="") as f:
-            CsvExportPlugin().generate(data, f.name)
-            f.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
+            fname = f.name
+        CsvExportPlugin().generate(data, fname)
+        with open(fname, encoding="utf-8", newline="") as f:
             rows = list(csv.DictReader(f))
         profile_rows = [r for r in rows if r.get("row_type") == "profile_field"]
         keys = {r["key"] for r in profile_rows}
@@ -406,9 +417,10 @@ class XlsxPluginTests(unittest.TestCase):
                 },
             }
         }
-        with tempfile.NamedTemporaryFile("r+", suffix=".html", delete=False, encoding="utf-8") as f:
-            HtmlReportPlugin().generate(data, f.name)
-            f.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+            fname = f.name
+        HtmlReportPlugin().generate(data, fname)
+        with open(fname, encoding="utf-8") as f:
             html = f.read()
         self.assertIn("Workflow Steps", html)
         self.assertIn("scan_main", html)
