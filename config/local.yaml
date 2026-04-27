@@ -1,7 +1,7 @@
 frida:
   apk_directory: C:\Users\tarok\OneDrive - purdue.edu\Desktop\Engineering\Year4\semester2\VIP
     chainvisor\Senior Design\ChainRecon\nooie_analysis\The APKs
-  device_serial: emulator-5554
+  device_serial: null
   frida_server_directory: C:\Users\tarok\OneDrive - purdue.edu\Desktop\Engineering\Year4\semester2\VIP
     chainvisor\Senior Design\ChainRecon\third_party\frida
   frida_server_path: null
@@ -13,8 +13,8 @@ network:
   static_ip: 192.168.123.100/24
   target_ip: 192.168.123.99
 scan:
-  interface: eth5
-  interface_device: \Device\NPF_{FD44B6E2-AD44-458A-8F54-06EF42A161D1}
+  interface: eth4
+  interface_device: \Device\NPF_{DEF}
   interface_name: Wi-Fi
 tools:
   apktool: D:\Cyber Security\tools\apktool\apktool.jar

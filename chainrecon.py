@@ -13,9 +13,6 @@ from utils.logging_config import get_logger, setup_logging
 
 logger = get_logger("cli")
 
-DEFAULT_SSL_PORTS = [443, 8443, 8008, 8080, 8883, 1883]
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="ChainRecon Python analysis CLI")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable debug-level logging")
@@ -27,21 +24,6 @@ def build_parser() -> argparse.ArgumentParser:
     traffic_parser.add_argument("--format", choices=["json", "html", "csv", "xlsx"])
     traffic_parser.add_argument("--output")
     traffic_parser.set_defaults(handler=handle_analyze_traffic)
-
-    ssl_parser = subparsers.add_parser("analyze-ssl", help="Analyze SSL/TLS posture for a target")
-    ssl_parser.add_argument("target")
-    ssl_parser.add_argument("--ports", nargs="*", type=int, default=DEFAULT_SSL_PORTS)
-    ssl_parser.add_argument("--pcap", help="Optional pcap file for JA3 computation")
-    ssl_parser.add_argument("--format", choices=["json", "html", "csv", "xlsx"])
-    ssl_parser.add_argument("--output")
-    ssl_parser.set_defaults(handler=handle_analyze_ssl)
-
-    scan_parser = subparsers.add_parser("analyze-scan", help="Analyze saved nmap output")
-    scan_parser.add_argument("nmap_output")
-    scan_parser.add_argument("--shodan-api-key")
-    scan_parser.add_argument("--format", choices=["json", "html", "csv", "xlsx"])
-    scan_parser.add_argument("--output")
-    scan_parser.set_defaults(handler=handle_analyze_scan)
 
     report_parser = subparsers.add_parser("report", help="Aggregate saved JSON analysis files")
     report_parser.add_argument("inputs", nargs="+")
@@ -334,7 +316,7 @@ def handle_scan(args) -> int:
 
     analyzer = ScannerAnalyzer()
     parsed_results = []
-    for output_file in scan_result["output_files"]:
+    for output_file in _nmap_text_output_files(scan_result["output_files"]):
         if Path(output_file).exists() and Path(output_file).stat().st_size > 0:
             parsed_results.append(analyzer.parse_nmap_output(output_file))
 
@@ -684,8 +666,23 @@ def infer_section(payload, filename: str) -> str:
             return aliases[normalized]
         if normalized:
             return safe_token(normalized, default="analysis")
+    stem_parts = Path(filename_l).stem.split("_")
+    if len(stem_parts) >= 3 and stem_parts[0].isdigit() and len(stem_parts[0]) == 8 and stem_parts[1].isdigit() and len(stem_parts[1]) == 6:
+        middle = "_".join(stem_parts[2:])
+        if middle.startswith("analysis_"):
+            return safe_token(middle[len("analysis_"):], default="analysis")
+        if middle.startswith("scan_"):
+            return "scan"
+        if middle.startswith("frida_"):
+            return "frida"
+        if middle.startswith("capture_") or middle.startswith("traffic_"):
+            return "traffic"
+        if middle.startswith("apk_"):
+            return "apk"
     if filename_l[:8].isdigit() and len(filename_l) > 15:
-        middle = filename_l[9:-7]
+        middle = Path(filename_l).stem[9:]
+        if len(middle) > 7 and middle[-7] == "_" and middle[-6:].isdigit():
+            middle = middle[:-7]
         if middle.startswith("analysis_"):
             return safe_token(middle[len("analysis_"):], default="analysis")
         if middle.startswith("scan_"):
@@ -713,6 +710,10 @@ def infer_section(payload, filename: str) -> str:
     if metadata.get("target"):
         return "ssl"
     return "analysis"
+
+
+def _nmap_text_output_files(paths: list[str]) -> list[str]:
+    return [path for path in paths if Path(path).suffix.lower() == ".txt"]
 
 
 def _aggregate_report_section(section: str, payloads: list[dict]):

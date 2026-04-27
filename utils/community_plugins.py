@@ -11,6 +11,30 @@ import yaml
 from utils.artifacts import safe_token
 
 COMMUNITY_PLUGIN_DIR = Path(__file__).resolve().parent.parent / "community_plugins"
+_REQUIRED_MANIFEST_FIELDS = ("name", "version", "type", "entrypoint", "inputs", "outputs", "description")
+
+
+def _normalize_plugin_manifest(payload: Dict[str, Any], plugin_dir: Path) -> Dict[str, Any]:
+    missing = [field for field in _REQUIRED_MANIFEST_FIELDS if field not in payload]
+    if missing:
+        raise ValueError(f"Community plugin manifest missing required fields: {', '.join(missing)}")
+    entrypoint = str(payload.get("entrypoint") or "").strip()
+    if ":" not in entrypoint:
+        raise ValueError("Community plugin entrypoint must use 'module.py:ClassName' format.")
+    python_file, class_name = [part.strip() for part in entrypoint.split(":", 1)]
+    if not python_file or not class_name:
+        raise ValueError("Community plugin entrypoint must include both a module path and class name.")
+    inputs = payload.get("inputs")
+    outputs = payload.get("outputs")
+    if not isinstance(inputs, list) or not all(isinstance(item, str) for item in inputs):
+        raise ValueError("Community plugin manifest 'inputs' must be a list of strings.")
+    if not isinstance(outputs, list) or not all(isinstance(item, str) for item in outputs):
+        raise ValueError("Community plugin manifest 'outputs' must be a list of strings.")
+    descriptor = dict(payload)
+    descriptor["python_file"] = python_file
+    descriptor["class_name"] = class_name
+    descriptor["plugin_dir"] = str(plugin_dir.resolve())
+    return descriptor
 
 
 def discover_community_plugins(base_dir: Optional[str | Path] = None) -> List[Dict[str, Any]]:
@@ -28,11 +52,10 @@ def discover_community_plugins(base_dir: Optional[str | Path] = None) -> List[Di
             continue
         if not isinstance(payload, dict):
             continue
-        payload.setdefault("name", plugin_dir.name)
-        payload.setdefault("python_file", "plugin.py")
-        payload.setdefault("class_name", "CommunityAnalyzer")
-        payload["plugin_dir"] = str(plugin_dir.resolve())
-        plugins.append(payload)
+        try:
+            plugins.append(_normalize_plugin_manifest(payload, plugin_dir))
+        except ValueError:
+            continue
     return plugins
 
 

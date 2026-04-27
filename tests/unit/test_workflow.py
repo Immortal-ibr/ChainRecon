@@ -18,12 +18,19 @@ class DeviceProfileTests(unittest.TestCase):
         profile = load_device_profile("nooie")
         self.assertEqual(profile["name"], "Nooie Lab Device")
         self.assertEqual(profile["target"], "192.168.123.99")
+        self.assertIn("vendor", profile)
+        self.assertIn("scan_defaults", profile)
+        self.assertIn("firmware_rules", profile)
 
 
 class CommunityPluginTests(unittest.TestCase):
     def test_discovers_example_plugin(self):
-        names = {item["name"] for item in discover_community_plugins()}
+        descriptors = discover_community_plugins()
+        names = {item["name"] for item in descriptors}
         self.assertIn("example_string_scan", names)
+        descriptor = next(item for item in descriptors if item["name"] == "example_string_scan")
+        self.assertEqual(descriptor["type"], "analyzer")
+        self.assertEqual(descriptor["entrypoint"], "plugin.py:ExampleStringAnalyzer")
 
     def test_loads_example_plugin_and_analyzes_input(self):
         plugin = load_community_plugin("example_string_scan")
@@ -103,3 +110,21 @@ steps:
                 result = WorkflowRunner(output_root=td).run(str(pipeline))
         self.assertEqual(result["summary"]["status"], "failed")
         self.assertNotIn("never_runs", result["findings"]["steps"])
+
+    def test_when_reference_to_unknown_step_fails_validation(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = Path(td) / "pipeline.yaml"
+            pipeline.write_text(
+                """
+name: Bad Pipeline
+steps:
+  - id: conditional
+    type: scan
+    target: 10.0.0.1
+    profile: quick
+    when: "steps.missing.status == 'completed'"
+""",
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError):
+                WorkflowRunner(output_root=td).run(str(pipeline), dry_run=True)

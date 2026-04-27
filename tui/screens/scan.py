@@ -397,7 +397,7 @@ def _build_scan_report_payload(run_result: dict) -> dict:
 
     analyzer = ScannerAnalyzer()
     parsed_results = []
-    for fpath in run_result.get("output_files", []):
+    for fpath in _displayable_output_files(run_result.get("output_files", [])):
         path = Path(fpath)
         if path.exists() and path.stat().st_size > 0:
             parsed_results.append(analyzer.parse_nmap_output(str(path)))

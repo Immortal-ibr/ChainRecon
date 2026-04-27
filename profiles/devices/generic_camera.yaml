@@ -1,5 +1,26 @@
 name: Generic Camera
+vendor: Generic
+model: Camera
 target: 192.168.1.50
+ports:
+  - 80
+  - 554
+  - 8000
+expected_protocols:
+  - http
+  - rtsp
+scan_defaults:
+  profile: quick
+frida_defaults:
+  target: com.example.camera
+firmware_rules:
+  keywords:
+    - admin
+    - password
+  domains:
+    - camera.local
+  ips:
+    - 192.168.1.1
 scan:
   profile: quick
 firmware:

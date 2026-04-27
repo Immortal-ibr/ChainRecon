@@ -98,7 +98,7 @@ class ReportsHelperTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             path = _report_output_path(td, ".html", stem="report_current")
-        self.assertRegex(path, r"report_current_\d{6}\.html$")
+        self.assertRegex(path, r"\d{8}_\d{6}_report_current\.html$")
 
     def test_has_report_data_ignores_empty_defaults(self):
         self.assertFalse(_has_report_data({"traffic": None, "ssl": None, "scan": None}))
@@ -178,6 +178,25 @@ class TuiRequirementTests(unittest.TestCase):
                     await pilot.pause()
                     widget = screen.query_one("#param-nooie_mqtt_trace-class_filter", PasteableInput)
                     self.assertIsNotNone(widget)
+
+        asyncio.run(_run())
+
+    def test_frida_screen_populates_visible_defaults_for_filter_scripts(self):
+        async def _run() -> None:
+            app = ChainReconApp()
+            app.add_class("ascii-mode")
+            async with app.run_test(size=(100, 28)) as pilot:
+                await pilot.pause()
+                with patch("tui.screens.frida.FridaScreen.on_mount", return_value=None):
+                    app.push_screen("frida")
+                    await pilot.pause()
+                    screen = app.screen
+                    select = screen.query_one("#script", Select)
+                    select.value = "network_traffic_monitor"
+                    screen._refresh_script_inputs()
+                    await pilot.pause()
+                    widget = screen.query_one("#param-network_traffic_monitor-host_filter", PasteableInput)
+                    self.assertEqual(widget.value, "*")
 
         asyncio.run(_run())
 

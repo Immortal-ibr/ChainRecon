@@ -208,6 +208,11 @@ class HtmlPluginTests(unittest.TestCase):
         }
         content, _ = self._generate(data)
         self.assertIn("file:///", content)
+        self.assertIn("Source: example.json", content)
+
+    def test_includes_dark_mode_toggle(self):
+        content, _ = self._generate()
+        self.assertIn("Toggle dark mode", content)
 
     def test_escapes_special_characters(self):
         """Ensure user-controlled data is escaped to prevent XSS."""

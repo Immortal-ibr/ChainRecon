@@ -22,8 +22,8 @@ Or use the CLI directly:
 
 ```bash
 python chainrecon.py analyze-traffic captures/device.pcap --format html
-python chainrecon.py analyze-ssl 192.168.1.50 --ports 443 8443
-python chainrecon.py analyze-scan scans/device.xml
+python chainrecon.py scan 192.168.1.50 --profile ssl
+python chainrecon.py report output --format html --output output/report.html
 python chainrecon.py firmware firmware.bin --format json --output output/firmware.json
 python chainrecon.py workflow run workflows/nooie.yaml --target 192.168.123.99 --dry-run
 ```

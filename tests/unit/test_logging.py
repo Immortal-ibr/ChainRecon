@@ -86,13 +86,13 @@ class CLIVerboseTests(unittest.TestCase):
     def test_parser_accepts_verbose(self):
         from chainrecon import build_parser
         parser = build_parser()
-        args = parser.parse_args(["--verbose", "analyze-scan", "dummy.txt"])
+        args = parser.parse_args(["--verbose", "analyze-traffic", "dummy.txt"])
         self.assertTrue(args.verbose)
 
     def test_parser_accepts_log_file(self):
         from chainrecon import build_parser
         parser = build_parser()
-        args = parser.parse_args(["--log-file", "out.log", "analyze-scan", "dummy.txt"])
+        args = parser.parse_args(["--log-file", "out.log", "analyze-traffic", "dummy.txt"])
         self.assertEqual(args.log_file, "out.log")
 
 

@@ -66,3 +66,27 @@ class FirmwareAnalyzerTests(unittest.TestCase):
         self.assertEqual(result["summary"]["private_key_count"], 1)
         self.assertEqual(result["summary"]["shadow_file_count"], 1)
         self.assertGreaterEqual(result["summary"]["credential_hit_count"], 1)
+
+    def test_extracts_network_indicators_and_profile_rule_hits(self):
+        analyzer = FirmwareAnalyzer(executor=lambda *args, **kwargs: None, binwalk_path="binwalk")
+        with tempfile.TemporaryDirectory() as td:
+            image = Path(td) / "firmware.bin"
+            image.write_bytes(b"firmware")
+            extract_dir = Path(td) / "extract"
+            root = extract_dir / "_firmware.bin.extracted"
+            root.mkdir(parents=True)
+            (root / "endpoints.conf").write_text(
+                "api=https://api.nooie.com\nbroker=broker.nooie.com\npeer=192.168.1.1\n",
+                encoding="utf-8",
+            )
+            analyzer._run_binwalk = lambda *_args, **_kwargs: None
+            result = analyzer.analyze(
+                str(image),
+                output_dir=str(extract_dir),
+                rules={"domains": ["broker.nooie.com"], "urls": ["https://api.nooie.com"]},
+            )
+        indicators = result["findings"]["network_indicators"]
+        self.assertEqual(result["summary"]["url_count"], 1)
+        self.assertEqual(result["summary"]["ip_count"], 1)
+        self.assertGreaterEqual(result["summary"]["domain_count"], 2)
+        self.assertEqual(len(indicators["rule_hits"]), 2)

@@ -1,5 +1,31 @@
 name: Nooie Lab Device
+vendor: Nooie
+model: Lab Camera
 target: 192.168.123.99
+ports:
+  - 80
+  - 443
+  - 554
+  - 8443
+  - 8883
+expected_protocols:
+  - http
+  - https
+  - rtsp
+  - mqtts
+scan_defaults:
+  profile: iot
+  interface: Ethernet
+frida_defaults:
+  target: com.nooie.home
+firmware_rules:
+  keywords:
+    - mqtt
+    - webrtc
+  domains:
+    - api.nooie.com
+  urls:
+    - https://api.nooie.com
 scan:
   profile: iot
   interface: Ethernet

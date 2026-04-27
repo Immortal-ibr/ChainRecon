@@ -166,6 +166,23 @@ def get_network_config() -> Dict[str, Any]:
     return cfg.get("network") or {}
 
 
+def _validate_device_profile(payload: Dict[str, Any], path: Path) -> Dict[str, Any]:
+    required = ("name", "vendor", "model", "ports", "expected_protocols", "scan_defaults", "frida_defaults", "firmware_rules")
+    missing = [field for field in required if field not in payload]
+    if missing:
+        raise ValueError(f"Device profile {path} missing required fields: {', '.join(missing)}")
+    if not isinstance(payload.get("ports"), list):
+        raise ValueError(f"Device profile {path} field 'ports' must be a list.")
+    if not isinstance(payload.get("expected_protocols"), list):
+        raise ValueError(f"Device profile {path} field 'expected_protocols' must be a list.")
+    for mapping_field in ("scan_defaults", "frida_defaults", "firmware_rules"):
+        if not isinstance(payload.get(mapping_field), dict):
+            raise ValueError(f"Device profile {path} field '{mapping_field}' must be a mapping.")
+    validated = dict(payload)
+    validated.setdefault("path", str(path.resolve()))
+    return validated
+
+
 def list_device_profiles() -> list[Dict[str, Any]]:
     profiles = []
     if not _DEVICE_PROFILE_DIR.exists():
@@ -176,6 +193,10 @@ def list_device_profiles() -> list[Dict[str, Any]]:
         except yaml.YAMLError:
             continue
         if not isinstance(payload, dict):
+            continue
+        try:
+            payload = _validate_device_profile(payload, path)
+        except ValueError:
             continue
         profiles.append({
             "name": payload.get("name") or path.stem,
@@ -199,9 +220,7 @@ def load_device_profile(profile_name_or_path: Optional[str]) -> Dict[str, Any]:
     payload = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace")) or {}
     if not isinstance(payload, dict):
         raise ValueError(f"Device profile must be a mapping: {path}")
-    payload.setdefault("name", path.stem)
-    payload.setdefault("path", str(path.resolve()))
-    return payload
+    return _validate_device_profile(payload, path)
 
 
 def get_output_dir() -> Path:

@@ -17,9 +17,9 @@ def timestamp_parts(now: datetime | None = None) -> tuple[str, str]:
 
 
 def dated_name(stem: str, suffix: str, now: datetime | None = None) -> str:
-    """Return a date-first artifact name like 20260423_scan_quick_124059.json."""
+    """Return a timestamp-first artifact name like 20260423_124059_scan_quick.json."""
     date_part, time_part = timestamp_parts(now)
-    return f"{date_part}_{stem}_{time_part}{suffix}"
+    return f"{date_part}_{time_part}_{stem}{suffix}"
 
 
 def artifact_path(directory: str | Path, stem: str, suffix: str, now: datetime | None = None) -> Path:

@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from runners.base import ToolNotFoundError
-from runners.frida_runner import FRIDA_SCRIPTS, FridaDeviceError, FridaRunner, _SCRIPTS_DIR
+from runners.frida_runner import FRIDA_SCRIPTS, FridaDeviceError, FridaRunner, _SCRIPTS_DIR, _script_filename_from_label
 
 
 # ===========================================================================
@@ -294,6 +294,15 @@ class ScriptManagementTests(unittest.TestCase):
         self.assertEqual(FRIDA_SCRIPTS["list_classes"]["label"], "List App Loaded Classes")
         self.assertEqual(FRIDA_SCRIPTS["hook_all_methods"]["label"], "Hook Selected Class Methods")
 
+    def test_script_file_names_match_display_labels(self):
+        for meta in FRIDA_SCRIPTS.values():
+            self.assertEqual(meta["file"], _script_filename_from_label(meta["label"]))
+
+    def test_filter_scripts_have_visible_default_values(self):
+        self.assertEqual(FRIDA_SCRIPTS["network_traffic_monitor"]["params"][0]["default"], "*")
+        self.assertEqual(FRIDA_SCRIPTS["hook_all_methods"]["params"][1]["default"], "50")
+        self.assertEqual(FRIDA_SCRIPTS["crypto_monitor"]["params"][0]["default"], "*")
+
 
 # ===========================================================================
 # Script execution
@@ -329,6 +338,26 @@ class RunScriptTests(unittest.TestCase):
         self.assertIn("-N", cmd)
         self.assertNotIn("-n", cmd)
         self.assertIn("com.example.app", cmd)
+
+    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/frida")
+    def test_device_class_census_iterates_matching_processes(self, _):
+        self.runner.list_processes_structured = MagicMock(return_value=[
+            {"pid": "1", "name": "Nooie", "identifier": "com.nooie.home"},
+            {"pid": "2", "name": "NooiePlugin", "identifier": "com.nooie.plugin"},
+            {"pid": "3", "name": "Other", "identifier": "com.other.app"},
+        ])
+        self.executor.side_effect = [
+            subprocess.CompletedProcess([], 0, "[CLASS] total=4\n", ""),
+            subprocess.CompletedProcess([], 0, "[CLASS] total=7\n", ""),
+        ]
+        result = self.runner.run_script("nooie", "device_class_census")
+        self.assertEqual(result["returncode"], 0)
+        self.assertIn("[PROCESS] com.nooie.home", result["stdout"])
+        self.assertIn("[PROCESS] com.nooie.plugin", result["stdout"])
+        first_cmd = self.executor.call_args_list[0][0][0]
+        second_cmd = self.executor.call_args_list[1][0][0]
+        self.assertIn("com.nooie.home", first_cmd)
+        self.assertIn("com.nooie.plugin", second_cmd)
 
     def test_normalize_hook_all_methods_class_names_accepts_semicolons(self):
         normalized = self.runner._normalize_script_parameters(
@@ -547,6 +576,7 @@ class RunScriptTests(unittest.TestCase):
                 td,
             )
             content = rendered.read_text(encoding="utf-8")
+            self.assertNotEqual(rendered.parent.resolve(), Path(td).resolve())
         self.assertIn("CHAINRECON_CONFIG", content)
         self.assertIn('"class_name": "com.nooie.home.Device"', content)
         self.assertIn('"method_name": "connect"', content)
@@ -592,6 +622,7 @@ class RunScriptTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td, \
              patch.object(self.runner, "is_target_running", return_value=True), \
+             patch.object(self.runner, "_python_frida_available", return_value=False), \
              patch.object(self.runner, "ensure_online_device", return_value={"serial": "emulator-5554", "online": True}), \
              patch.object(self.runner, "list_device_inventory", return_value={"connected_devices": [{"serial": "emulator-5554", "frida_compatible": True}], "local_avds": []}), \
              patch.object(self.runner, "start_frida_server_if_needed", return_value={"running": True, "started": False, "frida_server": "/tmp/frida-server"}), \
@@ -638,6 +669,7 @@ class RunScriptTests(unittest.TestCase):
                 self.returncode = 1
 
         with tempfile.TemporaryDirectory() as td, \
+             patch.object(self.runner, "_python_frida_available", return_value=False), \
              patch.object(self.runner, "ensure_online_device", return_value={"serial": "emulator-5554", "online": True}), \
              patch.object(self.runner, "list_device_inventory", return_value={"connected_devices": [{"serial": "emulator-5554", "frida_compatible": True}], "local_avds": []}), \
              patch.object(self.runner, "start_frida_server_if_needed", return_value={"running": True, "started": False}), \
@@ -656,6 +688,66 @@ class RunScriptTests(unittest.TestCase):
     @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_stop_session_returns_none_when_idle(self, _):
         self.assertIsNone(self.runner.stop_session())
+
+    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    def test_start_session_uses_python_api_backend_for_long_running_scripts(self, _):
+        import tempfile
+
+        class FakeScript:
+            def __init__(self):
+                self._handler = None
+
+            def on(self, _event, handler):
+                self._handler = handler
+
+            def load(self):
+                if self._handler is not None:
+                    self._handler({"type": "log", "payload": "[STATUS] python api ready"}, None)
+
+            def unload(self):
+                return None
+
+        class FakeApiSession:
+            def __init__(self):
+                self._detached = None
+
+            def on(self, _event, handler):
+                self._detached = handler
+
+            def create_script(self, _source):
+                return FakeScript()
+
+            def detach(self):
+                return None
+
+        class FakeDevice:
+            def attach(self, _target):
+                return FakeApiSession()
+
+        class FakeFrida:
+            @staticmethod
+            def get_device(_serial, timeout=5):
+                return FakeDevice()
+
+        with tempfile.TemporaryDirectory() as td, \
+             patch.object(self.runner, "_python_frida_available", return_value=True), \
+             patch.object(self.runner, "_import_frida", return_value=FakeFrida()), \
+             patch.object(self.runner, "is_target_running", return_value=True), \
+             patch.object(self.runner, "ensure_online_device", return_value={"serial": "emulator-5554", "online": True}), \
+             patch.object(self.runner, "list_device_inventory", return_value={"connected_devices": [{"serial": "emulator-5554", "frida_compatible": True}], "local_avds": []}), \
+             patch.object(self.runner, "start_frida_server_if_needed", return_value={"running": True, "started": False, "frida_server": "/tmp/frida-server"}), \
+             patch.object(self.runner, "resolve_attach_target", return_value={"mode": "attach", "attach_flag": "-N", "attach_target": "com.nooie.home", "target_running_before": True, "launch_performed": False}):
+            result = self.runner.start_session(
+                target="com.nooie.home",
+                script_key="network_traffic_monitor",
+                output_dir=td,
+            )
+            active = self.runner.active_session()
+            self.assertIsNotNone(active)
+            self.assertEqual(self.runner._active_session.session_backend, "frida_python_api")
+            self.assertEqual(result["command"][0], "python-frida-api")
+            summary = self.runner.stop_session(timeout=2)
+        self.assertEqual(summary["status"], "stopped_by_user")
 
 
 @unittest.skipUnless(os.environ.get("CHAINRECON_LIVE_FRIDA") == "1", "live Frida validation disabled")

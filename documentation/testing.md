@@ -56,7 +56,7 @@ python chainrecon.py scan 192.168.123.99 --profile quick --format json --output 
 python chainrecon.py scan 192.168.123.99 --profile iot --format json --output nooie_analysis/live_scan_iot.json
 python chainrecon.py scan 192.168.123.99 --profile full --format json --output nooie_analysis/live_scan_full.json
 python chainrecon.py scan 192.168.123.99 --profile vuln --format json --output nooie_analysis/live_scan_vuln.json
-python chainrecon.py analyze-ssl 192.168.123.99 --ports 443 8443 8883 8080 --format json --output nooie_analysis/live_ssl.json
+python chainrecon.py scan 192.168.123.99 --profile ssl --format json --output nooie_analysis/live_ssl.json
 python chainrecon.py analyze-traffic nooie_analysis/traffic.pcap --format json --output nooie_analysis/live_traffic.json
 python chainrecon.py capture Ethernet --mode basic --duration 10 --target-ip 192.168.123.99 --format json --output nooie_analysis/live_capture.json
 python chainrecon.py apk "nooie_analysis/The APKs/nooie_base_apk.apk" --format json --output nooie_analysis/live_apk.json

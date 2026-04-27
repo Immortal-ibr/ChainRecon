@@ -4,7 +4,7 @@ This is a rough map of what's where and why. If you're looking for a specific pi
 
 ## Top-level files
 
-- `chainrecon.py` -- CLI entry point. Handles subcommands: `tui`, `analyze-traffic`, `analyze-ssl`, `analyze-scan`, `report`.
+- `chainrecon.py` -- CLI entry point. Handles subcommands: `tui`, `analyze-traffic`, `scan`, `capture`, `apk`, `firmware`, `workflow`, `report`.
 - `interactive.py` -- Older interactive CLI that predates the TUI. Still works but the TUI is the main interface now.
 - `requirements.txt` -- Python dependencies. Install with `pip install -r requirements.txt`.
 - `Recon script.sh` -- Original bash script for Linux network setup and data collection. The Python/TUI layer replaces most of this, but it is kept for historical reference.
@@ -32,7 +32,7 @@ Subprocess wrappers. The goal is one consistent place that handles timeouts, enc
 
 - `base.py` -- `run_subprocess()` with UTF-8 encoding and error replacement, `check_tool()` for verifying tool availability, and `make_output_dir()` for timestamped output directories.
 - `nmap_runner.py` -- Builds nmap command lines for the different scan profiles and invokes them. Now outputs both .txt and .xml for every scan.
-- `extended_scanner.py` -- Python-native scanning without external tools: TCP connect scan with banner grabbing, ARP network discovery (Scapy or ARP cache), and service fingerprinting with protocol probes (HTTP, RTSP, MQTT).
+- `extended_scanner.py` -- Active service fingerprinting helpers for already-identified ports. Retired Python TCP connect and ARP discovery helpers now live under `legacy/` compatibility wrappers.
 - `frida_runner.py` -- Manages frida-server connections and script injection.
 - `capture_runner.py` -- Handles tshark/tcpdump captures with duration limits and file rotation.
 - `frida_scripts/` -- JavaScript snippets loaded by the frida runner: SSL pinning bypass, crypto monitor, method hooks, class listing.
@@ -109,5 +109,7 @@ Bash helper scripts, primarily for Linux. Not needed on Windows.
 
 Manual assets that are not part of the active runner surface.
 
+- `extended_scanner.py` -- Retired Python TCP connect and ARP discovery scans kept for compatibility and reference.
+- `scan_compat.py` -- Retired `analyze-ssl` and `analyze-scan` logic kept outside the active CLI surface.
 - `manual_frida_scripts/` -- Older standalone Frida snippets moved from the former top-level `Frida Scripts/` directory. Active TUI scripts live in `runners/frida_scripts/`.
 

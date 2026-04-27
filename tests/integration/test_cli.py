@@ -68,133 +68,6 @@ class AnalyzeTrafficCliTests(unittest.TestCase):
 
 
 # ===========================================================================
-# analyze-ssl subcommand
-# ===========================================================================
-
-
-class AnalyzeSslCliTests(unittest.TestCase):
-    def _mock_ssl(self):
-        patcher = patch("chainrecon.SSLAnalyzer")
-        mock_cls = patcher.start()
-        instance = mock_cls.return_value
-        instance.probe_certificates.return_value = {
-            "findings": {"certificates": [{"port": 443, "subject": "CN=dev"}]},
-            "summary": {"certificate_count": 1},
-        }
-        instance.analyze_ciphers.return_value = {
-            "findings": {"cipher_analysis": [{"port": 443, "weak_cipher": False}]},
-            "summary": {"weak_cipher_count": 0},
-        }
-        instance.assess_tls_security.return_value = {
-            "findings": {"security_findings": []},
-            "summary": {"risk_rating": "low"},
-            "risk_indicators": [],
-        }
-        instance.compute_ja3.return_value = {
-            "findings": {"ja3": {"available": True, "hash": "abc"}},
-        }
-        return patcher, instance
-
-    def test_ssl_analysis_runs(self):
-        patcher, instance = self._mock_ssl()
-        stdout = io.StringIO()
-        try:
-            with contextlib.redirect_stdout(stdout):
-                code = chainrecon.main(["analyze-ssl", "10.0.0.1"])
-        finally:
-            patcher.stop()
-        self.assertEqual(code, 0)
-        result = json.loads(stdout.getvalue())
-        self.assertIn("certificates", result["findings"])
-
-    def test_ssl_with_custom_ports(self):
-        patcher, instance = self._mock_ssl()
-        stdout = io.StringIO()
-        try:
-            with contextlib.redirect_stdout(stdout):
-                chainrecon.main(["analyze-ssl", "10.0.0.1", "--ports", "443", "8443"])
-        finally:
-            patcher.stop()
-        instance.probe_certificates.assert_called_once_with("10.0.0.1", [443, 8443])
-
-    def test_ssl_with_pcap_includes_ja3(self):
-        patcher, instance = self._mock_ssl()
-        stdout = io.StringIO()
-        try:
-            with contextlib.redirect_stdout(stdout):
-                chainrecon.main(["analyze-ssl", "10.0.0.1", "--pcap", "capture.pcap"])
-        finally:
-            patcher.stop()
-        result = json.loads(stdout.getvalue())
-        self.assertIn("ja3", result["findings"])
-        instance.compute_ja3.assert_called_once_with("capture.pcap")
-
-    def test_ssl_without_pcap_no_ja3(self):
-        patcher, instance = self._mock_ssl()
-        stdout = io.StringIO()
-        try:
-            with contextlib.redirect_stdout(stdout):
-                chainrecon.main(["analyze-ssl", "10.0.0.1"])
-        finally:
-            patcher.stop()
-        result = json.loads(stdout.getvalue())
-        self.assertNotIn("ja3", result["findings"])
-
-
-# ===========================================================================
-# analyze-scan subcommand
-# ===========================================================================
-
-
-class AnalyzeScanCliTests(unittest.TestCase):
-    PAYLOAD = {
-        "metadata": {"source": "scan.xml"},
-        "findings": {"hosts": [{"ip": "192.168.1.50"}], "iot_services": [], "cve_hints": []},
-        "summary": {"open_port_count": 1},
-        "risk_indicators": [],
-    }
-
-    def test_scan_dispatches_correctly(self):
-        stdout = io.StringIO()
-        with patch("chainrecon.ScannerAnalyzer") as cls:
-            cls.return_value.parse_nmap_output.return_value = copy.deepcopy(self.PAYLOAD)
-            with contextlib.redirect_stdout(stdout):
-                code = chainrecon.main(["analyze-scan", "scan.xml"])
-        self.assertEqual(code, 0)
-
-    def test_scan_with_shodan(self):
-        stdout = io.StringIO()
-        with patch("chainrecon.ScannerAnalyzer") as cls:
-            instance = cls.return_value
-            instance.parse_nmap_output.return_value = copy.deepcopy(self.PAYLOAD)
-            instance.lookup_shodan.return_value = {"enabled": True, "ip": "192.168.1.50", "organization": "Test"}
-            with contextlib.redirect_stdout(stdout):
-                chainrecon.main(["analyze-scan", "scan.xml", "--shodan-api-key", "key"])
-        result = json.loads(stdout.getvalue())
-        self.assertIn("shodan", result["findings"])
-        self.assertTrue(result["findings"]["shodan"][0]["enabled"])
-
-    def test_scan_without_shodan_no_enrichment(self):
-        stdout = io.StringIO()
-        with patch("chainrecon.ScannerAnalyzer") as cls:
-            cls.return_value.parse_nmap_output.return_value = copy.deepcopy(self.PAYLOAD)
-            with contextlib.redirect_stdout(stdout):
-                chainrecon.main(["analyze-scan", "scan.xml"])
-        result = json.loads(stdout.getvalue())
-        self.assertNotIn("shodan", result["findings"])
-
-    def test_scan_with_output_format(self):
-        with tempfile.TemporaryDirectory() as td:
-            output = str(Path(td) / "scan.html")
-            stdout = io.StringIO()
-            with patch("chainrecon.ScannerAnalyzer") as cls:
-                cls.return_value.parse_nmap_output.return_value = copy.deepcopy(self.PAYLOAD)
-                with contextlib.redirect_stdout(stdout):
-                    chainrecon.main(["analyze-scan", "scan.xml", "--format", "html", "--output", output])
-            self.assertTrue(Path(output).exists())
-
-
-# ===========================================================================
 # report subcommand
 # ===========================================================================
 
@@ -476,8 +349,8 @@ class BuildParserTests(unittest.TestCase):
 
     def test_default_ssl_ports(self):
         parser = chainrecon.build_parser()
-        args = parser.parse_args(["analyze-ssl", "10.0.0.1"])
-        self.assertEqual(args.ports, chainrecon.DEFAULT_SSL_PORTS)
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["analyze-ssl", "10.0.0.1"])
 
     def test_no_args_gives_none_command(self):
         parser = chainrecon.build_parser()

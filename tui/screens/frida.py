@@ -12,51 +12,77 @@ from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Label, Select
 
 from runners.base import ToolNotFoundError
-from runners.frida_runner import FRIDA_SCRIPTS, FridaDeviceError, FridaRunner
+from runners.frida_runner import FRIDA_SCRIPT_GUIDE, FRIDA_SCRIPTS, FridaDeviceError, FridaRunner
 from tui.screens.help_screen import HelpScreen
 from tui.widgets.log_viewer import LogActionBar, LogViewer
 from tui.widgets.pasteable_input import PasteableInput as Input
 from utils.artifacts import artifact_path, safe_token, write_json_artifact
 from utils.config import get_frida_config, get_output_dir, save_frida_config
 
-HELP_TEXT = r"""[bold underline]Frida Dynamic Instrumentation[/]
+def _build_help_text() -> str:
+    sections = [
+        "[bold underline]Frida Dynamic Instrumentation[/]",
+        "",
+        "This screen uses a managed Frida flow:",
+        "  1. check host prerequisites",
+        "  2. verify the selected device is managed-compatible",
+        "  3. make sure frida-server is running",
+        "  4. verify or launch the target package/process",
+        "  5. attach, spawn, or run process census automatically",
+        "  6. stream or summarize hook output and write session artifacts",
+        "",
+        "[bold]Per-Script Quick Reference[/]",
+    ]
+    for script_key, metadata in FRIDA_SCRIPTS.items():
+        guide = FRIDA_SCRIPT_GUIDE.get(script_key, {})
+        params = metadata.get("params", [])
+        if params:
+            param_bits = []
+            for param in params:
+                label = str(param.get("label", param["name"]))
+                default = str(param.get("default", "")).strip()
+                placeholder = str(param.get("placeholder", "")).strip()
+                if default:
+                    param_bits.append(f"{label} (default: {default})")
+                else:
+                    param_bits.append(label)
+                if placeholder:
+                    param_bits[-1] += f"; example: {placeholder}"
+            param_text = ", ".join(param_bits)
+        else:
+            param_text = "none"
+        tags = ", ".join(guide.get("expected_tags", [])) or "script-specific status lines"
+        sections.extend(
+            [
+                f"[bold]{metadata['label']}[/]",
+                f"  Hooks: {metadata.get('description', '')}",
+                f"  When to use: {guide.get('when_to_use', 'Use when this script matches your target behavior.')}",
+                f"  Parameters: {param_text}",
+                f"  Expected output tags: {tags}",
+                f"  Known limitations: {guide.get('limitations', 'Depends on the target app exposing hookable Java APIs.')}",
+                "",
+            ]
+        )
+    sections.extend(
+        [
+            "[bold]Managed Compatibility Policy[/]",
+            "  Compatible means compatible with ChainRecon's managed Frida workflow:",
+            "  - Google APIs emulator image",
+            "  - supported ABI",
+            "  - validated API range",
+            "  - working adb / emulator tooling",
+            "",
+            "[bold]Live Output[/]",
+            "  While a hook session is running:",
+            "  - streamed output is appended to the output box",
+            "  - the same stream is written to a session log in the output directory",
+            "  - Stop Hook ends the active session and finalizes a JSON summary artifact",
+        ]
+    )
+    return "\n".join(sections)
 
-This screen uses a managed Frida flow:
-  1. check host prerequisites
-  2. verify the selected device is managed-compatible
-  3. make sure frida-server is running
-  4. verify or launch the target package/process
-  5. attach or spawn automatically
-  6. stream hook output live until you stop it
 
-[bold]Managed Run[/]
-  - You no longer choose attach vs spawn.
-  - Run will attach to a live target if it exists.
-  - If the package is installed but not running, ChainRecon will try to launch it.
-  - If Frida cannot self-heal the state, it will tell you what setup is missing.
-
-[bold]Built-in Scripts[/]
-    - List App Loaded Classes
-    - Device-Wide Class Census
-    - Hook Selected Class Methods / Hook Single Method
-  - HTTP / Socket / Crypto / Preferences / SQLite monitors
-  - Nooie MQTT/token trace
-  - Nooie stream/WebRTC trace
-  - Nooie runtime-config watch
-
-[bold]Managed Compatibility Policy[/]
-  Compatible means compatible with ChainRecon's managed Frida workflow:
-  - Google APIs emulator image
-  - supported ABI
-  - validated API range
-  - working adb / emulator tooling
-
-[bold]Live Output[/]
-  While a hook session is running:
-  - streamed output is appended to the output box
-  - the same stream is written to a session log in the output directory
-  - Stop Hook ends the active session and finalizes a JSON summary artifact
-"""
+HELP_TEXT = _build_help_text()
 
 
 class FridaScreen(Screen):
@@ -286,7 +312,6 @@ class FridaScreen(Screen):
                             f"[dim]Mode: {result['mode']} | attach target: {result['attach_target']}[/]",
                             f"[dim]Log: {result['log_path']}[/]",
                             f"[dim]Summary: {result['summary_path']}[/]",
-                            f"[dim]Rendered script: {result['rendered_script_path']}[/]",
                             f"[dim]frida-server started during run: {result['frida_server_started']}[/]",
                             f"[dim]Target launched during run: {result['launch_performed']}[/]",
                         ]
@@ -339,7 +364,6 @@ class FridaScreen(Screen):
                 "artifacts": [
                     {"type": "frida_log", "path": summary.get("log_path")},
                     {"type": "frida_summary", "path": summary.get("summary_path")},
-                    {"type": "frida_script", "path": summary.get("rendered_script_path")},
                 ],
             },
             "findings": {

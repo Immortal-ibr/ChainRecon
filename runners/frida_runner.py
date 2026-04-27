@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -20,6 +21,18 @@ logger = get_logger("frida")
 _SCRIPTS_DIR = Path(__file__).parent / "frida_scripts"
 
 
+def _runtime_script_dir() -> Path:
+    """Return the runtime-only directory for rendered Frida wrappers."""
+    path = Path(tempfile.gettempdir()) / "chainrecon" / "frida_scripts"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _script_filename_from_label(label: str) -> str:
+    token = safe_token(label, "frida_script")
+    return f"{token}.js"
+
+
 def _expected_long_running(script_key: str) -> bool:
     runtime = FRIDA_SCRIPTS.get(script_key, {}).get("runtime", {})
     return bool(runtime.get("expected_long_running", runtime.get("expect_long_running_output", False)))
@@ -30,17 +43,27 @@ def _split_parameter_values(value: str) -> list[str]:
     return [piece.strip() for piece in pieces if piece.strip()]
 
 
+def _normalize_optional_filter_value(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"*", "any", "all"}:
+        return None
+    return text
+
+
 FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
     "list_classes": {
         "label": "List App Loaded Classes",
         "description": "Enumerate loaded Java classes in the attached app process. Filters accept comma, semicolon, or newline-separated terms.",
-        "file": "list_classes.js",
+        "file": _script_filename_from_label("List App Loaded Classes"),
         "target_type": "package",
         "params": [
             {
                 "name": "class_filter",
                 "label": "Class filter",
                 "placeholder": "com.nooie; com.thingclips",
+                "default": "*",
                 "required": False,
             }
         ],
@@ -48,8 +71,8 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
     },
     "device_class_census": {
         "label": "Device-Wide Class Census",
-        "description": "Capture a census-style class dump from the currently attached process and explicitly mark the output as process-scoped so it is not mistaken for global device state.",
-        "file": "device_class_census.js",
+        "description": "Iterate matching device processes explicitly and run a census-style class dump for each one so the result is device-scoped rather than a single attached-process snapshot.",
+        "file": _script_filename_from_label("Device-Wide Class Census"),
         "target_type": "package",
         "params": [],
         "runtime": {"launch_if_needed": True, "expect_long_running_output": False},
@@ -57,7 +80,7 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
     "hook_all_methods": {
         "label": "Hook Selected Class Methods",
         "description": "Hook every overload for one or more selected classes and stream calls live. Use package/class filters from the class-listing tools first, then paste the exact classes you want.",
-        "file": "hook_all_methods.js",
+        "file": _script_filename_from_label("Hook Selected Class Methods"),
         "target_type": "package",
         "params": [
             {
@@ -70,6 +93,7 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
                 "name": "max_events_per_second",
                 "label": "Max events/sec",
                 "placeholder": "50",
+                "default": "50",
                 "required": False,
             }
         ],
@@ -78,7 +102,7 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
     "hook_method": {
         "label": "Hook Single Method",
         "description": "Hook one method and log arguments and return values.",
-        "file": "hook_method.js",
+        "file": _script_filename_from_label("Hook Single Method"),
         "target_type": "package",
         "params": [
             {
@@ -99,7 +123,7 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
     "ssl_pinning_bypass": {
         "label": "SSL Pinning Bypass",
         "description": "Attempt common TrustManager, OkHttp, and WebView pinning bypasses.",
-        "file": "ssl_pinning_bypass.js",
+        "file": _script_filename_from_label("SSL Pinning Bypass"),
         "target_type": "package",
         "params": [],
         "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
@@ -107,13 +131,14 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
     "http_intercept": {
         "label": "HTTP Trace",
         "description": "Trace Java/Android HTTP requests through URLConnection, HttpURLConnection, WebView, and OkHttp hooks without injecting a new interceptor into the target app.",
-        "file": "http_intercept.js",
+        "file": _script_filename_from_label("HTTP Trace"),
         "target_type": "package",
         "params": [
             {
                 "name": "host_filter",
                 "label": "Host filter",
                 "placeholder": "api.nooie.com",
+                "default": "*",
                 "required": False,
             }
         ],
@@ -122,13 +147,14 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
     "network_traffic_monitor": {
         "label": "Socket and URL Monitor",
         "description": "Trace URLConnection, Socket, and OkHttp traffic with concise event tags. Prefer this for long-running network activity when you need lower-overhead output than the HTTP trace.",
-        "file": "network_traffic_monitor.js",
+        "file": _script_filename_from_label("Socket and URL Monitor"),
         "target_type": "package",
         "params": [
             {
                 "name": "host_filter",
                 "label": "Host filter",
                 "placeholder": "mqtt, nooie, or leave blank",
+                "default": "*",
                 "required": False,
             }
         ],
@@ -137,21 +163,37 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
     "crypto_monitor": {
         "label": "Crypto Monitor",
         "description": "Log selected Cipher, MessageDigest, and MAC operations.",
-        "file": "crypto_monitor.js",
+        "file": _script_filename_from_label("Crypto Monitor"),
         "target_type": "package",
-        "params": [],
+        "params": [
+            {
+                "name": "algorithm_filter",
+                "label": "Algorithm filter",
+                "placeholder": "AES, HmacSHA256, SHA-256",
+                "default": "*",
+                "required": False,
+            },
+            {
+                "name": "max_bytes",
+                "label": "Hex preview bytes",
+                "placeholder": "64",
+                "default": "64",
+                "required": False,
+            }
+        ],
         "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
     },
     "shared_preferences_dump": {
         "label": "Shared Preferences Watch",
         "description": "Dump and watch SharedPreferences reads and writes.",
-        "file": "shared_preferences_dump.js",
+        "file": _script_filename_from_label("Shared Preferences Watch"),
         "target_type": "package",
         "params": [
             {
                 "name": "key_filter",
                 "label": "Key filter",
                 "placeholder": "token, mqtt, user",
+                "default": "*",
                 "required": False,
             }
         ],
@@ -160,13 +202,14 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
     "database_dump": {
         "label": "Database Monitor",
         "description": "Trace SQLite queries, inserts, and updates.",
-        "file": "database_dump.js",
+        "file": _script_filename_from_label("Database Monitor"),
         "target_type": "package",
         "params": [
             {
                 "name": "query_filter",
                 "label": "Query filter",
                 "placeholder": "device, mqtt, token",
+                "default": "*",
                 "required": False,
             }
         ],
@@ -175,7 +218,7 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
     "certificate_pinning_detect": {
         "label": "Certificate Pinning Detection",
         "description": "Detect common pinning implementations without modifying behavior.",
-        "file": "certificate_pinning_detect.js",
+        "file": _script_filename_from_label("Certificate Pinning Detection"),
         "target_type": "package",
         "params": [],
         "runtime": {"launch_if_needed": True, "expect_long_running_output": False},
@@ -183,13 +226,14 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
     "nooie_mqtt_trace": {
         "label": "Nooie MQTT and Token Trace",
         "description": "Watch MQTT token fetches, connects, publishes, and subscription events. Good for correlating login, token refresh, and broker activity in one long-running hook.",
-        "file": "nooie_mqtt_trace.js",
+        "file": _script_filename_from_label("Nooie MQTT and Token Trace"),
         "target_type": "package",
         "params": [
             {
                 "name": "class_filter",
                 "label": "Class filter",
                 "placeholder": "com.thingclips or com.nooie",
+                "default": "*",
                 "required": False,
             }
         ],
@@ -198,13 +242,14 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
     "nooie_stream_trace": {
         "label": "Nooie Stream and WebRTC Trace",
         "description": "Trace stream lifecycle and WebRTC-related classes used by Nooie. Use after identifying the app-side stream classes from the class-listing tools.",
-        "file": "nooie_stream_trace.js",
+        "file": _script_filename_from_label("Nooie Stream and WebRTC Trace"),
         "target_type": "package",
         "params": [
             {
                 "name": "class_filter",
                 "label": "Class filter",
                 "placeholder": "webrtc, player, stream",
+                "default": "*",
                 "required": False,
             }
         ],
@@ -213,17 +258,92 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
     "nooie_runtime_config": {
         "label": "Nooie Runtime Config",
         "description": "Dump runtime preferences, token-like values, and selected config accesses so report artifacts preserve the configuration state seen during a session.",
-        "file": "nooie_runtime_config.js",
+        "file": _script_filename_from_label("Nooie Runtime Config"),
         "target_type": "package",
         "params": [
             {
                 "name": "key_filter",
                 "label": "Key filter",
                 "placeholder": "token, mqtt, stream",
+                "default": "*",
                 "required": False,
             }
         ],
         "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
+    },
+}
+
+
+FRIDA_SCRIPT_GUIDE: Dict[str, Dict[str, Any]] = {
+    "list_classes": {
+        "when_to_use": "Use first when you need app-process class discovery before choosing narrower hooks.",
+        "expected_tags": ["[STATUS]", "[CLASS]"],
+        "limitations": "Current attached app process only; not device-wide.",
+    },
+    "device_class_census": {
+        "when_to_use": "Use when you want a broader census across matching device processes, not just one app attachment.",
+        "expected_tags": ["[PROCESS]", "[STATUS]", "[CLASS]"],
+        "limitations": "Runs each matching process sequentially, so large filters take longer and system processes can still be missed if Frida cannot attach.",
+    },
+    "hook_all_methods": {
+        "when_to_use": "Use after class discovery when you need broad call tracing for a short list of exact classes.",
+        "expected_tags": ["[HOOK]", "[CALL]", "[RET]", "[WARN]"],
+        "limitations": "High-volume classes can flood output; keep class selection tight and use the rate limit.",
+    },
+    "hook_method": {
+        "when_to_use": "Use when you already know the exact class and method you want to inspect.",
+        "expected_tags": ["[HOOK]", "[CALL]", "[RET]", "[ERROR]"],
+        "limitations": "Only hooks one method definition at a time and depends on the class being loaded.",
+    },
+    "ssl_pinning_bypass": {
+        "when_to_use": "Use before HTTP or socket tracing when the target app enforces certificate pinning.",
+        "expected_tags": ["[STATUS]", "[HOOK]", "[WARN]"],
+        "limitations": "Common Android pinning patterns only; native or heavily obfuscated flows may still fail.",
+    },
+    "http_intercept": {
+        "when_to_use": "Use for request and response tracing in Java HTTP stacks such as URLConnection, HttpURLConnection, WebView, and OkHttp.",
+        "expected_tags": ["[HTTP-BUILD]", "[HTTP-REQ]", "[HTTP-RESP]", "[WEBVIEW]", "[HOOK]", "[WARN]"],
+        "limitations": "Java-side traffic only; native sockets and custom transports can bypass these hooks.",
+    },
+    "network_traffic_monitor": {
+        "when_to_use": "Use for lower-overhead long-running monitoring of sockets and URL opens.",
+        "expected_tags": ["[SOCKET]", "[URL]", "[HTTP]", "[HOOK]", "[WARN]"],
+        "limitations": "Less protocol detail than the HTTP trace and still limited to hookable Java networking APIs.",
+    },
+    "crypto_monitor": {
+        "when_to_use": "Use when you need to confirm when ciphers, digests, or MACs are exercised at runtime.",
+        "expected_tags": ["[CRYPTO-INIT]", "[CRYPTO-IN]", "[CRYPTO-OUT]", "[HASH-IN]", "[HASH-OUT]", "[HMAC-IN]", "[HMAC-OUT]", "[HOOK]", "[WARN]"],
+        "limitations": "Does not decrypt payloads; it only traces selected crypto API usage.",
+    },
+    "shared_preferences_dump": {
+        "when_to_use": "Use to observe preference reads and writes for tokens, broker settings, or feature flags.",
+        "expected_tags": ["[PREF-GET]", "[PREF-PUT]", "[HOOK]", "[WARN]"],
+        "limitations": "SharedPreferences only; Room, SQLite, and file-backed settings are outside this script.",
+    },
+    "database_dump": {
+        "when_to_use": "Use to trace SQLite queries and narrow on tables related to devices, auth, or messaging.",
+        "expected_tags": ["[DB-QUERY]", "[DB-EXEC]", "[DB-INSERT]", "[DB-UPDATE]", "[HOOK]", "[WARN]"],
+        "limitations": "SQLite-focused; custom native storage and encrypted wrappers can reduce visibility.",
+    },
+    "certificate_pinning_detect": {
+        "when_to_use": "Use when you want to detect likely pinning libraries before attempting a bypass.",
+        "expected_tags": ["[STATUS]", "[PINNING]", "[WARN]"],
+        "limitations": "Detection only; it does not alter behavior or guarantee every pinning path is found.",
+    },
+    "nooie_mqtt_trace": {
+        "when_to_use": "Use on Nooie builds when you want MQTT token, connect, publish, and subscribe activity in one session.",
+        "expected_tags": ["[MQTT-CALL]", "[MQTT-RET]", "[MQTT-TOKEN]", "[MQTT-CONNECT]", "[MQTT-PUBLISH]", "[MQTT-SUBSCRIBE]", "[HOOK]", "[WARN]"],
+        "limitations": "Tailored to the observed Nooie/Tuya class patterns and may need a class filter on new builds.",
+    },
+    "nooie_stream_trace": {
+        "when_to_use": "Use on Nooie builds to trace stream lifecycle, player setup, and WebRTC-related classes.",
+        "expected_tags": ["[STREAM]", "[WEBRTC]", "[HOOK]", "[WARN]"],
+        "limitations": "Best-effort hooks around known app-side classes; native media paths can remain opaque.",
+    },
+    "nooie_runtime_config": {
+        "when_to_use": "Use to preserve runtime config state such as token-like values and stream or broker settings.",
+        "expected_tags": ["[CONFIG]", "[HOOK]", "[WARN]"],
+        "limitations": "Focused on observed runtime config access paths and preference-like storage patterns.",
     },
 }
 
@@ -277,6 +397,7 @@ class FridaRunner:
         self._host_frida_version_cache: Optional[str] = None
         self._session_lock = threading.Lock()
         self._active_session: Optional[FridaSession] = None
+        self._python_frida_available_cache: Optional[bool] = None
 
     # -- Dependency checks --------------------------------------------
 
@@ -703,9 +824,9 @@ class FridaRunner:
             raise ValueError(f"Unknown script: {script_key}")
         return _SCRIPTS_DIR / FRIDA_SCRIPTS[script_key]["file"]
 
-    def render_script(self, script_key: str, parameters: Dict[str, Any], output_dir: str | Path) -> Path:
+    def render_script(self, script_key: str, parameters: Dict[str, Any], output_dir: str | Path | None = None) -> Path:
         script_path = self.get_script_path(script_key)
-        rendered_path = artifact_path(output_dir, f"frida_script_{safe_token(script_key)}", ".js")
+        rendered_path = artifact_path(_runtime_script_dir(), f"frida_script_{safe_token(script_key)}", ".js")
         rendered_payload = self._normalize_script_parameters(script_key, parameters)
         prelude = "const CHAINRECON_CONFIG = Object.freeze(" + json.dumps(rendered_payload, indent=2) + ");\n\n"
         rendered = prelude + script_path.read_text(encoding="utf-8")
@@ -744,6 +865,31 @@ class FridaRunner:
             if not has_server_hint and not self.is_frida_server_running(serial=serial):
                 raise FridaDeviceError(device.get("frida_note") or "Selected device is not managed-compatible for Frida.")
 
+        if script_key == "device_class_census" and not custom_script_path:
+            census = self._run_device_class_census(
+                target,
+                output_dir=output_dir,
+                on_output=on_output,
+                parameters=parameters or {},
+                serial=serial,
+            )
+            if on_exit is not None:
+                on_exit(census["summary"])
+            return {
+                "session_id": census["summary"]["session_id"],
+                "serial": serial,
+                "target": target,
+                "mode": "census",
+                "command": census["summary"]["command"],
+                "log_path": census["summary"]["log_path"],
+                "summary_path": census["summary"]["summary_path"],
+                "rendered_script_path": census["summary"]["rendered_script_path"],
+                "attach_target": target,
+                "frida_server_started": False,
+                "frida_server_path": None,
+                "launch_performed": False,
+            }
+
         server_status = self.start_frida_server_if_needed(serial=serial, frida_server_path=frida_server_path)
         resolution = self.resolve_attach_target(target, serial=serial)
 
@@ -769,6 +915,19 @@ class FridaRunner:
             rendered_script_path=rendered_script_path,
         )
 
+        session_backend = self._choose_session_backend(chosen_script_key)
+        health_checks = {
+            "device_online": True,
+            "frida_server_running": bool(server_status.get("running")),
+            "frida_server_started": bool(server_status.get("started")),
+            "target_running_before": bool(resolution.get("target_running_before")),
+            "target_launch_performed": bool(resolution.get("launch_performed")),
+            "attach_target": str(resolution["attach_target"]),
+            "java_bridge_mode": session_backend,
+            "script_loaded": False,
+            "expected_long_running": _expected_long_running(chosen_script_key),
+        }
+
         session = FridaSession(
             session_id=session_id,
             serial=serial,
@@ -788,24 +947,27 @@ class FridaRunner:
             launch_performed=bool(resolution.get("launch_performed")),
             frida_server_started=bool(server_status.get("started")),
             frida_server_path=server_status.get("frida_server"),
-            session_backend="frida_cli_managed",
-            health_checks={
-                "device_online": True,
-                "frida_server_running": bool(server_status.get("running")),
-                "frida_server_started": bool(server_status.get("started")),
-                "target_running_before": bool(resolution.get("target_running_before")),
-                "target_launch_performed": bool(resolution.get("launch_performed")),
-                "attach_target": str(resolution["attach_target"]),
-                "java_bridge_mode": "frida_cli_managed",
-                "script_loaded": False,
-                "expected_long_running": _expected_long_running(chosen_script_key),
-            },
+            session_backend=session_backend,
+            health_checks=health_checks,
         )
         with self._session_lock:
             self._active_session = session
 
         try:
-            self._start_cli_process(session, on_output)
+            if session_backend == "frida_python_api":
+                session.command = self._build_api_command(
+                    serial=serial,
+                    attach_flag=str(resolution["attach_flag"]),
+                    attach_target=str(resolution["attach_target"]),
+                    rendered_script_path=rendered_script_path,
+                )
+                self._load_api_script(session, on_output)
+                watcher_target = self._watch_api_session
+                watcher_args = (session, on_exit)
+            else:
+                self._start_cli_process(session, on_output)
+                watcher_target = self._watch_session
+                watcher_args = (session, on_output, on_exit)
         except Exception as exc:
             session.status_reason = f"attach_failed: {exc}"
             summary = self._write_session_summary(session, exit_code=1)
@@ -818,8 +980,8 @@ class FridaRunner:
             raise FridaDeviceError(f"Frida attach/script load failed: {exc}") from exc
 
         session.watcher_thread = threading.Thread(
-            target=self._watch_session,
-            args=(session, on_output, on_exit),
+            target=watcher_target,
+            args=watcher_args,
             daemon=True,
         )
         session.watcher_thread.start()
@@ -829,7 +991,7 @@ class FridaRunner:
             "serial": serial,
             "target": target,
             "mode": session.mode,
-            "command": cmd,
+            "command": session.command,
             "log_path": str(log_path),
             "summary_path": str(summary_path),
             "rendered_script_path": str(rendered_script_path),
@@ -861,6 +1023,40 @@ class FridaRunner:
             "pipe",
             "-q",
         ]
+
+    @staticmethod
+    def _build_api_command(
+        *,
+        serial: str,
+        attach_flag: str,
+        attach_target: str,
+        rendered_script_path: Path,
+    ) -> List[str]:
+        return [
+            "python-frida-api",
+            "-D",
+            serial,
+            attach_flag,
+            attach_target,
+            "-l",
+            str(rendered_script_path),
+        ]
+
+    def _choose_session_backend(self, script_key: str) -> str:
+        if _expected_long_running(script_key) and self._python_frida_available():
+            return "frida_python_api"
+        return "frida_cli_managed"
+
+    def _python_frida_available(self) -> bool:
+        if self._python_frida_available_cache is not None:
+            return self._python_frida_available_cache
+        try:
+            self._import_frida()
+        except FridaDeviceError:
+            self._python_frida_available_cache = False
+        else:
+            self._python_frida_available_cache = True
+        return bool(self._python_frida_available_cache)
 
     def _start_cli_process(
         self,
@@ -949,9 +1145,17 @@ class FridaRunner:
         channel = "stderr" if msg_type == "error" else "stdout"
         if msg_type == "error":
             payload = message.get("stack") or message.get("description") or message
+        elif msg_type == "log":
+            payload = message.get("payload") or message.get("message") or message
         else:
             payload = message.get("payload", message)
-        line = str(payload)
+        if isinstance(payload, dict):
+            if "line" in payload:
+                line = str(payload.get("line") or "")
+            else:
+                line = json.dumps(payload, sort_keys=True)
+        else:
+            line = str(payload)
         self._append_session_line(session, line, channel, on_output)
         tag = _event_tag(line)
         if tag:
@@ -959,6 +1163,11 @@ class FridaRunner:
         if isinstance(payload, dict) and "dropped_event_count" in payload:
             try:
                 session.dropped_event_count += int(payload["dropped_event_count"])
+            except (TypeError, ValueError):
+                pass
+        elif line.startswith("[DROPPED]") and "dropped_event_count=" in line:
+            try:
+                session.dropped_event_count += int(line.rsplit("dropped_event_count=", 1)[1])
             except (TypeError, ValueError):
                 pass
 
@@ -1076,6 +1285,15 @@ class FridaRunner:
         custom_script_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         check_tool("frida")
+        if script_key == "device_class_census" and custom_script_path is None:
+            census = self._run_device_class_census(process_name)
+            return {
+                "process": process_name,
+                "script": script_key,
+                "stdout": census["stdout"],
+                "stderr": census["stderr"],
+                "returncode": census["returncode"],
+            }
         selector = self._frida_selector()
         self.ensure_online_device()
         script_path = custom_script_path or str(self.get_script_path(script_key))
@@ -1097,6 +1315,8 @@ class FridaRunner:
         custom_script_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         check_tool("frida")
+        if script_key == "device_class_census" and custom_script_path is None:
+            return self.run_script(package_name, script_key)
         selector = self._frida_selector()
         self.ensure_online_device()
         script_path = custom_script_path or str(self.get_script_path(script_key))
@@ -1334,12 +1554,201 @@ class FridaRunner:
 
     def _normalize_script_parameters(self, script_key: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
         normalized = {key: value for key, value in (parameters or {}).items() if value not in (None, "")}
+        for filter_key in ("class_filter", "host_filter", "key_filter", "query_filter"):
+            if filter_key in normalized:
+                filter_value = _normalize_optional_filter_value(normalized[filter_key])
+                if filter_value is None:
+                    normalized.pop(filter_key, None)
+                else:
+                    normalized[filter_key] = filter_value
         if "class_names" in normalized and isinstance(normalized["class_names"], str):
             normalized["class_names"] = _split_parameter_values(normalized["class_names"])
         if script_key == "list_classes" and "class_filter" in normalized and isinstance(normalized["class_filter"], str):
             pieces = _split_parameter_values(normalized["class_filter"])
             normalized["class_filter"] = pieces if len(pieces) > 1 else (pieces[0] if pieces else "")
         return normalized
+
+    def _run_device_class_census(
+        self,
+        target_filter: str,
+        *,
+        output_dir: Optional[str | Path] = None,
+        on_output: Optional[Callable[[str], None]] = None,
+        parameters: Optional[Dict[str, Any]] = None,
+        serial: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        state = self.ensure_online_device()
+        selected_serial = serial or str(state.get("serial"))
+        processes = self.list_processes_structured(serial=selected_serial)
+        filters = _split_parameter_values(target_filter) or [target_filter.strip()]
+        filters = [item.lower() for item in filters if item.strip()]
+        candidates: List[Dict[str, str]] = []
+        seen_targets: set[str] = set()
+        for process in processes:
+            identifier = str(process.get("identifier") or "").strip()
+            name = str(process.get("name") or "").strip()
+            attach_target = identifier or name
+            haystacks = [attach_target.lower(), name.lower()]
+            if not attach_target:
+                continue
+            if filters and not any(filter_value in haystack for filter_value in filters for haystack in haystacks):
+                continue
+            if attach_target in seen_targets:
+                continue
+            seen_targets.add(attach_target)
+            candidates.append({
+                "attach_target": attach_target,
+                "attach_flag": "-N" if identifier and "." in identifier else "-n",
+                "identifier": identifier,
+                "name": name,
+            })
+        if not candidates:
+            raise FridaDeviceError(f"No matching processes found for device-wide class census filter: {target_filter}")
+
+        selector = ["-D", selected_serial]
+        script_path = str(self.get_script_path("device_class_census"))
+        output_lines = [f"[STATUS] Starting device-wide class census across {len(candidates)} process(es)."]
+        error_lines: List[str] = []
+        process_results: List[Dict[str, Any]] = []
+
+        for candidate in candidates[:12]:
+            header = f"[PROCESS] {candidate['attach_target']}"
+            output_lines.append(header)
+            if on_output is not None:
+                on_output(header)
+            cmd = [
+                "frida",
+                *selector,
+                candidate["attach_flag"],
+                candidate["attach_target"],
+                "-l",
+                script_path,
+                "-q",
+                "-t",
+                "30",
+                "--exit-on-error",
+            ]
+            try:
+                result = self._executor(cmd, timeout=30)
+                stdout = result.stdout or ""
+                stderr = result.stderr or ""
+                returncode = int(result.returncode or 0)
+            except Exception as exc:
+                stdout = ""
+                stderr = str(exc)
+                returncode = 1
+            class_count = 0
+            match = re.search(r"\[CLASS\]\s+total=(\d+)", stdout)
+            if match:
+                class_count = int(match.group(1))
+            for line in stdout.splitlines():
+                normalized = line.strip()
+                if not normalized:
+                    continue
+                output_lines.append(normalized)
+                if on_output is not None:
+                    on_output(normalized)
+            if stderr.strip():
+                warning = f"[WARN] {candidate['attach_target']}: {stderr.strip()}"
+                output_lines.append(warning)
+                error_lines.append(warning)
+                if on_output is not None:
+                    on_output(warning)
+            process_results.append({
+                "target": candidate["attach_target"],
+                "identifier": candidate["identifier"],
+                "name": candidate["name"],
+                "class_count": class_count,
+                "returncode": returncode,
+                "status": "completed" if returncode == 0 else "failed",
+            })
+
+        output_lines.append("[STATUS] device-wide class census complete")
+        summary = self._write_device_census_summary(
+            selected_serial,
+            target_filter,
+            output_dir=output_dir,
+            rendered_script_path=script_path,
+            process_results=process_results,
+            output_lines=output_lines,
+            error_lines=error_lines,
+            parameters=parameters or {},
+        )
+        return {
+            "stdout": "\n".join(output_lines) + "\n",
+            "stderr": "\n".join(error_lines).strip(),
+            "returncode": 0 if all(item["returncode"] == 0 for item in process_results) else 1,
+            "summary": summary,
+        }
+
+    def _write_device_census_summary(
+        self,
+        serial: str,
+        target_filter: str,
+        *,
+        output_dir: Optional[str | Path],
+        rendered_script_path: str,
+        process_results: List[Dict[str, Any]],
+        output_lines: List[str],
+        error_lines: List[str],
+        parameters: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if output_dir:
+            base_dir = Path(output_dir)
+        else:
+            from utils.config import get_output_dir
+
+            base_dir = get_output_dir()
+        base_dir.mkdir(parents=True, exist_ok=True)
+        session_id = safe_token(f"{serial}_{target_filter}_device_class_census_{int(time.time())}", "frida_session")
+        log_path = artifact_path(base_dir, f"frida_session_{session_id}", ".log").resolve()
+        summary_path = artifact_path(base_dir, f"frida_session_{session_id}", ".json").resolve()
+        log_path.write_text("\n".join(output_lines) + "\n", encoding="utf-8")
+        events_by_tag: Dict[str, int] = {}
+        for line in output_lines:
+            if line.startswith("[") and "]" in line:
+                tag = line[1 : line.index("]")]
+                events_by_tag[tag] = events_by_tag.get(tag, 0) + 1
+        summary = {
+            "session_id": session_id,
+            "serial": serial,
+            "target": target_filter,
+            "attach_target": target_filter,
+            "attach_flag": "multi",
+            "script": "device_class_census",
+            "parameters": parameters,
+            "command": ["frida", "-D", serial, "--device-census", target_filter],
+            "mode": "census",
+            "target_running_before": True,
+            "launch_performed": False,
+            "frida_server_started": False,
+            "frida_server_path": None,
+            "session_backend": "frida_cli_census",
+            "health_checks": {
+                "device_online": True,
+                "processes_scanned": len(process_results),
+                "expected_long_running": False,
+            },
+            "rendered_script_path": rendered_script_path,
+            "log_path": str(log_path),
+            "summary_path": str(summary_path),
+            "started_at": time.time(),
+            "ended_at": time.time(),
+            "exit_code": 0 if all(item["returncode"] == 0 for item in process_results) else 1,
+            "stopped_by_user": False,
+            "stdout_lines": len(output_lines),
+            "stderr_lines": len(error_lines),
+            "status_reason": "completed" if all(item["returncode"] == 0 for item in process_results) else "partial_failure",
+            "reattach_count": 0,
+            "events_by_tag": dict(sorted(events_by_tag.items())),
+            "dropped_event_count": 0,
+            "target_alive_at_exit": None,
+            "expected_long_running": False,
+            "status": "completed" if all(item["returncode"] == 0 for item in process_results) else "unexpected_exit",
+            "process_results": process_results,
+        }
+        summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        return summary
 
     def _resolve_frida_server_path(self, configured_path: Optional[str], *, serial: str) -> tuple[Optional[Path], Dict[str, Any]]:
         candidates: List[Path] = []

@@ -122,6 +122,7 @@ class FridaLifecycleRequirementTests(unittest.TestCase):
 
         runner = FridaRunner()
         with tempfile.TemporaryDirectory() as td, \
+             patch.object(runner, "_python_frida_available", return_value=False), \
              patch.object(runner, "is_target_running", return_value=True), \
              patch.object(runner, "ensure_online_device", return_value={"serial": "emulator-5554", "online": True}), \
              patch.object(runner, "list_device_inventory", return_value={"connected_devices": [{"serial": "emulator-5554", "frida_compatible": True}], "local_avds": []}), \

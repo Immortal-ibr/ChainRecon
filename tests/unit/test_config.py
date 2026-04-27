@@ -17,6 +17,7 @@ from utils.config import (
     get_scan_profiles,
     get_ssl_ports,
     get_tool_path,
+    load_device_profile,
     load_config,
     reset_config,
     save_scan_config,
@@ -158,6 +159,18 @@ class SaveScanConfigTests(unittest.TestCase):
         cfg = get_config()
         self.assertEqual(cfg["scan"]["interface"], "eth4")
         self.assertEqual(cfg["scan"]["interface_name"], "Wi-Fi")
+
+
+class DeviceProfileValidationTests(unittest.TestCase):
+    def test_builtin_profile_contains_required_schema_fields(self):
+        profile = load_device_profile("nooie")
+        self.assertIn("vendor", profile)
+        self.assertIn("model", profile)
+        self.assertIsInstance(profile["ports"], list)
+        self.assertIsInstance(profile["expected_protocols"], list)
+        self.assertIsInstance(profile["scan_defaults"], dict)
+        self.assertIsInstance(profile["frida_defaults"], dict)
+        self.assertIsInstance(profile["firmware_rules"], dict)
 
 
 if __name__ == "__main__":

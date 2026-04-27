@@ -41,6 +41,7 @@ class WorkflowRunner:
         steps = definition.get("steps") or []
         if not isinstance(steps, list):
             raise ValueError("Workflow pipeline 'steps' must be a list.")
+        self._validate_definition(steps)
 
         loaded_profile = load_device_profile(device_profile) if device_profile else {}
         context = self._build_context(definition, loaded_profile, target=target, profile=profile)
@@ -111,8 +112,37 @@ class WorkflowRunner:
         if profile:
             context["profile"] = profile
         context.setdefault("target", (device_profile or {}).get("target"))
-        context.setdefault("profile", (device_profile or {}).get("scan", {}).get("profile"))
+        context.setdefault(
+            "profile",
+            (device_profile or {}).get("scan_defaults", {}).get("profile")
+            or (device_profile or {}).get("scan", {}).get("profile"),
+        )
+        context.setdefault(
+            "frida_target",
+            (device_profile or {}).get("frida_defaults", {}).get("target")
+            or (device_profile or {}).get("frida", {}).get("target"),
+        )
         return context
+
+    def _validate_definition(self, steps: List[Dict[str, Any]]) -> None:
+        declared_ids = [str(step.get("id") or f"step_{index}") for index, step in enumerate(steps, start=1) if isinstance(step, dict)]
+        seen: List[str] = []
+        for index, step in enumerate(steps, start=1):
+            if not isinstance(step, dict):
+                raise ValueError(f"Workflow step {index} must be a mapping.")
+            step_id = str(step.get("id") or f"step_{index}")
+            step_type = str(step.get("type") or "").strip()
+            if not step_type:
+                raise ValueError(f"Workflow step '{step_id}' is missing a type.")
+            when_expr = str(step.get("when") or "")
+            references = re.findall(r"steps\.([A-Za-z0-9_]+)", when_expr)
+            unknown = [ref for ref in references if ref not in declared_ids]
+            if unknown:
+                raise ValueError(f"Workflow step '{step_id}' references unknown step(s) in when: {', '.join(sorted(set(unknown)))}")
+            future = [ref for ref in references if ref not in seen]
+            if future:
+                raise ValueError(f"Workflow step '{step_id}' references step(s) before they execute: {', '.join(sorted(set(future)))}")
+            seen.append(step_id)
 
     def _execute_step(self, step_id: str, step: Dict[str, Any], run_dir: Path, context: Dict[str, Any], results: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         step_type = str(step.get("type") or "").strip().lower()
@@ -127,7 +157,7 @@ class WorkflowRunner:
         if step_type == "frida":
             return self._step_frida(step_id, step, run_dir)
         if step_type == "firmware":
-            return self._step_firmware(step_id, step, run_dir)
+            return self._step_firmware(step_id, step, run_dir, context)
         if step_type == "report":
             return self._step_report(step_id, step, run_dir, results)
         if step_type == "community":
@@ -148,7 +178,11 @@ class WorkflowRunner:
             allow_interface_mismatch=bool(step.get("allow_interface_mismatch", False)),
         )
         analyzer = __import__("analysis", fromlist=["ScannerAnalyzer"]).ScannerAnalyzer()
-        parsed = [analyzer.parse_nmap_output(path) for path in scan_result.get("output_files", []) if Path(path).exists()]
+        parsed = [
+            analyzer.parse_nmap_output(path)
+            for path in scan_result.get("output_files", [])
+            if Path(path).exists() and Path(path).suffix.lower() == ".txt"
+        ]
         result = chainrecon.combine_scan_results(scan_result, parsed) if parsed else {"metadata": scan_result, "findings": {}, "summary": {}, "risk_indicators": []}
         output_path = artifact_path(run_dir, f"workflow_{safe_token(step_id)}", ".json")
         write_json_artifact(output_path, result)
@@ -252,12 +286,16 @@ class WorkflowRunner:
         write_json_artifact(output_path, result)
         return {"type": "frida", "status": "completed", "output_path": str(output_path), "result": result}
 
-    def _step_firmware(self, step_id: str, step: Dict[str, Any], run_dir: Path) -> Dict[str, Any]:
+    def _step_firmware(self, step_id: str, step: Dict[str, Any], run_dir: Path, context: Dict[str, Any]) -> Dict[str, Any]:
         firmware_path = str(step.get("firmware") or step.get("image") or step.get("input") or "").strip()
         if not firmware_path:
             raise ValueError("Firmware step requires an image path.")
         firmware_dir = run_dir / safe_token(step_id)
-        result = FirmwareAnalyzer().analyze(firmware_path, output_dir=str(firmware_dir))
+        result = FirmwareAnalyzer().analyze(
+            firmware_path,
+            output_dir=str(firmware_dir),
+            rules=dict(step.get("rules") or context.get("firmware_rules") or {}),
+        )
         output_path = artifact_path(run_dir, f"workflow_{safe_token(step_id)}", ".json")
         write_json_artifact(output_path, result)
         return {"type": "firmware", "status": "completed", "output_path": str(output_path), "result": result}

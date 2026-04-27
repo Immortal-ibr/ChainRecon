@@ -1,93 +1,101 @@
-/**
- * Monitor cryptographic operations in the app.
- *
- * Hooks:
- *  - javax.crypto.Cipher.doFinal (encryption/decryption payloads)
- *  - javax.crypto.Cipher.init    (algorithm + key)
- *  - java.security.MessageDigest.digest (hashing)
- *  - javax.crypto.Mac.doFinal    (HMAC)
- *
- * Useful for IoT apps that encrypt MQTT payloads, API tokens, etc.
- *
- * Usage:  frida -U -n <app> -l crypto_monitor.js
- */
 Java.perform(function () {
-  console.log("[*] Crypto Monitor loaded");
+  const config = typeof CHAINRECON_CONFIG !== "undefined" ? CHAINRECON_CONFIG : {};
+  const algorithmFilter = String(config.algorithm_filter || "").toLowerCase();
+  const maxBytes = Math.max(parseInt(config.max_bytes || "64", 10) || 64, 8);
 
-  function bytesToHex(bytes) {
+  const shouldLogAlgorithm = function (algorithm) {
+    const normalized = String(algorithm || "").toLowerCase();
+    return !algorithmFilter || algorithmFilter === "*" || normalized.indexOf(algorithmFilter) !== -1;
+  };
+
+  const bytesToHex = function (bytes) {
     if (!bytes) return "(null)";
     const arr = Java.array("byte", bytes);
     let hex = "";
-    for (let i = 0; i < arr.length && i < 64; i++) {
+    for (let i = 0; i < arr.length && i < maxBytes; i++) {
       hex += ("0" + (arr[i] & 0xff).toString(16)).slice(-2);
     }
-    if (arr.length > 64) hex += "...(" + arr.length + " bytes)";
+    if (arr.length > maxBytes) {
+      hex += "...(" + arr.length + " bytes)";
+    }
     return hex;
-  }
+  };
 
-  // 1. Cipher.init — log algorithm and mode
   try {
     const Cipher = Java.use("javax.crypto.Cipher");
     const cipherInit = Cipher.init.overload("int", "java.security.Key");
     cipherInit.implementation = function (mode, key) {
-      const modeStr = mode === 1 ? "ENCRYPT" : mode === 2 ? "DECRYPT" : "mode=" + mode;
-      console.log("[CRYPTO] Cipher.init " + modeStr + " alg=" + this.getAlgorithm());
+      const algorithm = this.getAlgorithm();
+      if (!shouldLogAlgorithm(algorithm)) {
+        return cipherInit.call(this, mode, key);
+      }
+      const modeText = mode === 1 ? "ENCRYPT" : mode === 2 ? "DECRYPT" : "mode=" + mode;
+      console.log("[CRYPTO-INIT] " + modeText + " alg=" + algorithm);
       try {
-        console.log("         Key: " + bytesToHex(key.getEncoded()));
+        console.log("[CRYPTO-KEY] " + bytesToHex(key.getEncoded()));
       } catch (e) {
-        console.log("         Key: <not exportable>");
+        console.log("[CRYPTO-KEY] <not exportable>");
       }
       return cipherInit.call(this, mode, key);
     };
-    console.log("[+] Hooked Cipher.init");
+    console.log("[HOOK] javax.crypto.Cipher.init");
   } catch (e) {
-    console.log("[-] Cipher.init hook failed: " + e);
+    console.log("[WARN] Cipher.init hook failed: " + e);
   }
 
-  // 2. Cipher.doFinal — log plaintext/ciphertext
   try {
     const Cipher = Java.use("javax.crypto.Cipher");
     const doFinalBytes = Cipher.doFinal.overload("[B");
     doFinalBytes.implementation = function (input) {
-      console.log("[CRYPTO] Cipher.doFinal input:  " + bytesToHex(input));
+      const algorithm = this.getAlgorithm();
+      if (!shouldLogAlgorithm(algorithm)) {
+        return doFinalBytes.call(this, input);
+      }
+      console.log("[CRYPTO-IN] " + algorithm + " " + bytesToHex(input));
       const result = doFinalBytes.call(this, input);
-      console.log("[CRYPTO] Cipher.doFinal output: " + bytesToHex(result));
+      console.log("[CRYPTO-OUT] " + algorithm + " " + bytesToHex(result));
       return result;
     };
-    console.log("[+] Hooked Cipher.doFinal");
+    console.log("[HOOK] javax.crypto.Cipher.doFinal");
   } catch (e) {
-    console.log("[-] Cipher.doFinal hook failed: " + e);
+    console.log("[WARN] Cipher.doFinal hook failed: " + e);
   }
 
-  // 3. MessageDigest.digest — log hash input
   try {
-    const MD = Java.use("java.security.MessageDigest");
-    const digestBytes = MD.digest.overload("[B");
+    const MessageDigest = Java.use("java.security.MessageDigest");
+    const digestBytes = MessageDigest.digest.overload("[B");
     digestBytes.implementation = function (input) {
-      console.log("[HASH]   " + this.getAlgorithm() + " input: " + bytesToHex(input));
+      const algorithm = this.getAlgorithm();
+      if (!shouldLogAlgorithm(algorithm)) {
+        return digestBytes.call(this, input);
+      }
+      console.log("[HASH-IN] " + algorithm + " " + bytesToHex(input));
       const result = digestBytes.call(this, input);
-      console.log("[HASH]   " + this.getAlgorithm() + " output: " + bytesToHex(result));
+      console.log("[HASH-OUT] " + algorithm + " " + bytesToHex(result));
       return result;
     };
-    console.log("[+] Hooked MessageDigest.digest");
+    console.log("[HOOK] java.security.MessageDigest.digest");
   } catch (e) {
-    console.log("[-] MessageDigest hook failed: " + e);
+    console.log("[WARN] MessageDigest.digest hook failed: " + e);
   }
 
-  // 4. Mac.doFinal — log HMAC
   try {
     const Mac = Java.use("javax.crypto.Mac");
     const macDoFinalBytes = Mac.doFinal.overload("[B");
     macDoFinalBytes.implementation = function (input) {
-      console.log("[HMAC]   " + this.getAlgorithm() + " input: " + bytesToHex(input));
+      const algorithm = this.getAlgorithm();
+      if (!shouldLogAlgorithm(algorithm)) {
+        return macDoFinalBytes.call(this, input);
+      }
+      console.log("[HMAC-IN] " + algorithm + " " + bytesToHex(input));
       const result = macDoFinalBytes.call(this, input);
-      console.log("[HMAC]   " + this.getAlgorithm() + " output: " + bytesToHex(result));
+      console.log("[HMAC-OUT] " + algorithm + " " + bytesToHex(result));
       return result;
     };
-    console.log("[+] Hooked Mac.doFinal");
+    console.log("[HOOK] javax.crypto.Mac.doFinal");
   } catch (e) {
-    console.log("[-] Mac hook failed: " + e);
+    console.log("[WARN] Mac.doFinal hook failed: " + e);
   }
 
-  console.log("[*] Crypto Monitor ready");
+  console.log("[STATUS] crypto monitor ready");
 });

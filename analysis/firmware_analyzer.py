@@ -26,12 +26,15 @@ class FirmwareAnalyzer:
         "mqtt": "mqtt configuration present in firmware",
         "webrtc": "webrtc configuration or dependency present",
     }
+    _URL_PATTERN = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+    _IP_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+    _DOMAIN_PATTERN = re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\b", re.IGNORECASE)
 
     def __init__(self, executor: Optional[Callable] = None, binwalk_path: Optional[str] = None):
         self._executor = executor or run_subprocess
         self._binwalk = binwalk_path or find_tool("binwalk") or "binwalk"
 
-    def analyze(self, firmware_path: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
+    def analyze(self, firmware_path: str, output_dir: Optional[str] = None, rules: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         image = Path(firmware_path)
         if not image.exists():
             raise FileNotFoundError(f"Firmware image not found: {firmware_path}")
@@ -45,6 +48,7 @@ class FirmwareAnalyzer:
         credential_hits = self._scan_text_hits(extracted_paths)
         config_findings = self._scan_config_paths(file_inventory)
         secrets = self._detect_secrets(extracted_paths)
+        network_indicators = self._extract_network_indicators(extracted_paths, rules=rules or {})
 
         risk_indicators: List[Dict[str, str]] = []
         if secrets["private_keys"]:
@@ -65,6 +69,12 @@ class FirmwareAnalyzer:
                 "title": "Credential-like strings found in extracted files",
                 "details": f"Detected {len(credential_hits)} credential-like hit(s) across extracted firmware files.",
             })
+        if network_indicators["urls"] or network_indicators["domains"] or network_indicators["ips"]:
+            risk_indicators.append({
+                "severity": "medium",
+                "title": "Network endpoints embedded in firmware",
+                "details": "Extracted firmware contains hardcoded URLs, domains, or IPs that should be reviewed against the device profile.",
+            })
 
         return {
             "metadata": {
@@ -81,6 +91,7 @@ class FirmwareAnalyzer:
                 "private_keys": secrets["private_keys"],
                 "certificate_files": secrets["certificate_files"],
                 "shadow_files": secrets["shadow_files"],
+                "network_indicators": network_indicators,
             },
             "summary": {
                 "extracted_path_count": len(extracted_paths),
@@ -90,6 +101,10 @@ class FirmwareAnalyzer:
                 "private_key_count": len(secrets["private_keys"]),
                 "certificate_file_count": len(secrets["certificate_files"]),
                 "shadow_file_count": len(secrets["shadow_files"]),
+                "url_count": len(network_indicators["urls"]),
+                "ip_count": len(network_indicators["ips"]),
+                "domain_count": len(network_indicators["domains"]),
+                "firmware_rule_hit_count": len(network_indicators["rule_hits"]),
             },
             "risk_indicators": risk_indicators,
         }
@@ -179,6 +194,49 @@ class FirmwareAnalyzer:
             "private_keys": sorted(set(private_keys)),
             "certificate_files": sorted(set(certificate_files)),
             "shadow_files": sorted(set(shadow_files)),
+        }
+
+    def _extract_network_indicators(self, roots: Iterable[Path], *, rules: Dict[str, Any]) -> Dict[str, List[Dict[str, str]] | List[Dict[str, Any]]]:
+        urls: Dict[tuple[str, str], Dict[str, str]] = {}
+        ips: Dict[tuple[str, str], Dict[str, str]] = {}
+        domains: Dict[tuple[str, str], Dict[str, str]] = {}
+        rule_hits: List[Dict[str, Any]] = []
+        text_cache: List[tuple[Path, str]] = []
+        for path in self._iter_small_text_files(roots):
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            text_cache.append((path, text))
+            for value in self._URL_PATTERN.findall(text):
+                urls[(str(path), value)] = {"path": str(path), "value": value}
+            for value in self._IP_PATTERN.findall(text):
+                ips[(str(path), value)] = {"path": str(path), "value": value}
+            for value in self._DOMAIN_PATTERN.findall(text):
+                if value.lower() == path.suffix.lower().lstrip("."):
+                    continue
+                domains[(str(path), value)] = {"path": str(path), "value": value}
+
+        for rule_name, expected in (rules or {}).items():
+            candidates = expected if isinstance(expected, list) else [expected]
+            for candidate in [str(item) for item in candidates if str(item).strip()]:
+                if rule_name == "urls" and any(item["value"] == candidate for item in urls.values()):
+                    rule_hits.append({"rule": rule_name, "value": candidate})
+                elif rule_name == "ips" and any(item["value"] == candidate for item in ips.values()):
+                    rule_hits.append({"rule": rule_name, "value": candidate})
+                elif rule_name == "domains" and any(item["value"] == candidate for item in domains.values()):
+                    rule_hits.append({"rule": rule_name, "value": candidate})
+                elif rule_name == "keywords":
+                    for path, text in text_cache:
+                        if candidate.lower() in text.lower():
+                            rule_hits.append({"rule": rule_name, "value": candidate, "path": str(path)})
+                            break
+
+        return {
+            "urls": sorted(urls.values(), key=lambda item: (item["value"], item["path"])),
+            "ips": sorted(ips.values(), key=lambda item: (item["value"], item["path"])),
+            "domains": sorted(domains.values(), key=lambda item: (item["value"], item["path"])),
+            "rule_hits": rule_hits,
         }
 
     def _iter_small_text_files(self, roots: Iterable[Path]) -> Iterable[Path]:

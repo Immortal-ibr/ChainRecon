@@ -44,7 +44,7 @@ class MakeOutputDirTests(unittest.TestCase):
             result = make_output_dir(td)
             self.assertTrue(result.exists())
             self.assertTrue(result.is_dir())
-            self.assertRegex(result.name, r"^\d{8}_iot_recon_\d{6}$")
+            self.assertRegex(result.name, r"^\d{8}_\d{6}_iot_recon$")
 
     def test_returns_path_object(self):
         import tempfile
