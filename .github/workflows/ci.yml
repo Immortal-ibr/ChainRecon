@@ -43,16 +43,44 @@ jobs:
         run: python -m compileall -q analysis runners tui plugins utils chainrecon.py
 
       - name: Run offline pytest suite
+        id: pytest_run
         env:
           PYTHONUTF8: "1"
-        run: python -m pytest -m "unit or integration or requirement" --tb=short -q
+        run: python -m pytest -m "unit or integration or requirement" --tb=short --junitxml=test-results.xml
 
-      - name: Upload pytest cache on failure
+      - name: Dump test failures to step summary
+        if: always()
+        shell: python
+        run: |
+          import xml.etree.ElementTree as ET, os, sys
+          results_path = "test-results.xml"
+          if not os.path.exists(results_path):
+              print("No test-results.xml found")
+              sys.exit(0)
+          try:
+              tree = ET.parse(results_path)
+              root = tree.getroot()
+              failures = []
+              for tc in root.iter("testcase"):
+                  err = tc.find("failure") or tc.find("error")
+                  if err is not None:
+                      name = tc.get("classname", "") + "." + tc.get("name", "")
+                      text = (err.text or "")[:1200]
+                      failures.append(f"### {name}\n```\n{text}\n```\n")
+              summary_file = os.environ.get("GITHUB_STEP_SUMMARY", "")
+              if summary_file and failures:
+                  with open(summary_file, "a", encoding="utf-8") as f:
+                      f.write("# Failed Tests\n\n")
+                      for fail in failures:
+                          f.write(fail + "\n")
+              print(f"Found {len(failures)} failure(s)" if failures else "All tests passed.")
+          except Exception as exc:
+              print(f"Parse error: {exc}")
+
+      - name: Upload test results on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: pytest-state-${{ matrix.os }}-py${{ matrix.python-version }}
-          path: |
-            .pytest_cache
-            output
+          name: test-results-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: test-results.xml
           if-no-files-found: ignore
