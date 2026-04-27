@@ -14,6 +14,10 @@ from tui.screens.frida import FridaScreen
 from tui.screens.apk import APKScreen
 from tui.screens.reports import ReportsScreen
 from tui.screens.settings import SettingsScreen
+from tui.screens.workflow import WorkflowScreen
+from tui.screens.firmware import FirmwareScreen
+from tui.screens.community_plugins import CommunityPluginsScreen
+from tui.screens.device_profiles import DeviceProfilesScreen
 from tui.screens.scan import SCAN_PROFILE_OPTIONS
 from tui.screens.scan import _displayable_output_files
 from tui.screens.scan import _interface_options
@@ -30,7 +34,11 @@ class AppRegistrationTests(unittest.TestCase):
     """Verify the app registers all expected screens."""
 
     def test_all_screens_registered(self):
-        expected = {"dashboard", "scan", "capture", "analyze", "frida", "apk", "reports", "settings", "network_setup", "custom_script"}
+        expected = {
+            "dashboard", "scan", "capture", "analyze", "frida", "apk", "reports",
+            "settings", "network_setup", "custom_script",
+            "workflow", "firmware", "plugins", "profiles",
+        }
         self.assertEqual(set(ChainReconApp.SCREENS.keys()), expected)
 
     def test_screen_classes(self):
@@ -43,9 +51,58 @@ class AppRegistrationTests(unittest.TestCase):
             "apk": APKScreen,
             "reports": ReportsScreen,
             "settings": SettingsScreen,
+            "workflow": WorkflowScreen,
+            "firmware": FirmwareScreen,
+            "plugins": CommunityPluginsScreen,
+            "profiles": DeviceProfilesScreen,
         }
         for key, cls in mapping.items():
             self.assertIs(ChainReconApp.SCREENS[key], cls)
+
+
+class NewScreenAttributeTests(unittest.TestCase):
+    """Verify new TUI screens have required HELP_TEXT and action_toggle_help."""
+
+    def _check_screen(self, cls):
+        self.assertTrue(hasattr(cls, "HELP_TEXT"), f"{cls.__name__} missing HELP_TEXT")
+        self.assertTrue(callable(getattr(cls, "action_toggle_help", None)), f"{cls.__name__} missing action_toggle_help")
+
+    def test_workflow_screen_has_help(self):
+        self._check_screen(WorkflowScreen)
+
+    def test_firmware_screen_has_help(self):
+        self._check_screen(FirmwareScreen)
+
+    def test_community_plugins_screen_has_help(self):
+        self._check_screen(CommunityPluginsScreen)
+
+    def test_device_profiles_screen_has_help(self):
+        self._check_screen(DeviceProfilesScreen)
+
+
+class DashboardMenuTests(unittest.TestCase):
+    """Verify dashboard menu includes new entries."""
+
+    def test_dashboard_menu_items_include_new_screens(self):
+        from tui.screens.dashboard import _MENU_ITEMS
+        shortcuts = {item[0] for item in _MENU_ITEMS}
+        self.assertIn("w", shortcuts, "Workflow shortcut missing")
+        self.assertIn("m", shortcuts, "Firmware shortcut missing")
+        self.assertIn("p", shortcuts, "Plugins shortcut missing")
+        self.assertIn("d", shortcuts, "Device Profiles shortcut missing")
+
+    def test_dashboard_bindings_include_new_screens(self):
+        # BINDINGS entries may be tuples (key, action, label) or Binding objects
+        binding_keys = set()
+        for b in DashboardScreen.BINDINGS:
+            if isinstance(b, tuple):
+                binding_keys.add(b[0])
+            else:
+                binding_keys.add(b.key)
+        self.assertIn("w", binding_keys)
+        self.assertIn("m", binding_keys)
+        self.assertIn("p", binding_keys)
+        self.assertIn("d", binding_keys)
 
 
 class WidgetImportTests(unittest.TestCase):

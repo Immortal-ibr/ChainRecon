@@ -12,14 +12,18 @@ from analysis.report_generator import ReportGenerator
 from tui.screens.analyze import AnalyzeScreen
 from tui.screens.apk import APKScreen
 from tui.screens.capture import CaptureScreen
+from tui.screens.community_plugins import CommunityPluginsScreen
 from tui.screens.custom_script import CustomScriptScreen
 from tui.screens.dashboard import DashboardScreen
+from tui.screens.device_profiles import DeviceProfilesScreen
+from tui.screens.firmware import FirmwareScreen
 from tui.screens.frida import FridaScreen
 from tui.screens.network_setup import NetworkSetupScreen
 from tui.screens.reports import ReportsScreen
 from tui.screens.scan import ScanScreen
 from tui.screens.settings import SettingsScreen
 from tui.screens.welcome import WelcomeScreen
+from tui.screens.workflow import WorkflowScreen
 from tui.widgets.log_viewer import (
     LOG_CLEAR_ID,
     LOG_COPY_ID,
@@ -219,6 +223,10 @@ class ChainReconApp(App):
         "settings": SettingsScreen,
         "network_setup": NetworkSetupScreen,
         "custom_script": CustomScriptScreen,
+        "workflow": WorkflowScreen,
+        "firmware": FirmwareScreen,
+        "plugins": CommunityPluginsScreen,
+        "profiles": DeviceProfilesScreen,
     }
 
     def __init__(self, **kwargs) -> None:

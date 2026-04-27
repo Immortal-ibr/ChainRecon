@@ -485,6 +485,103 @@ class HtmlReportPlugin(ReportPlugin):
         {% if payload.risk_indicators %}
         <details open title="Toggle section"><summary>Section Risk Indicators</summary><div class="raw-block"><pre>{{ payload.risk_indicators | tojson(indent=2) }}</pre></div></details>
         {% endif %}
+
+        {% if name == 'workflow' and payload.findings and payload.findings.steps %}
+        <details open><summary>Workflow Steps</summary>
+          <div class="panel-body">
+            <table>
+              <thead><tr><th>Step</th><th>Type</th><th>Status</th><th>Error / Details</th></tr></thead>
+              <tbody>
+              {% for step_id, step in payload.findings.steps.items() %}
+                <tr>
+                  <td>{{ step_id }}</td>
+                  <td>{{ step.get("type", "") }}</td>
+                  <td><span class="badge badge-{{ "high" if step.get("status") == "failed" else ("info" if step.get("status") in ("skipped","planned") else "low") }}">{{ step.get("status","?") }}</span></td>
+                  <td>{{ step.get("error", step.get("reason", "")) }}</td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </details>
+        {% endif %}
+
+        {% if name == 'firmware' and payload.findings %}
+        {% set fw = payload.findings %}
+        {% if fw.credential_hits %}
+        <details open><summary>Credential-like Strings ({{ fw.credential_hits | length }})</summary>
+          <div class="panel-body">
+            <table>
+              <thead><tr><th>File</th><th>Keyword</th><th>Description</th></tr></thead>
+              <tbody>
+              {% for hit in fw.credential_hits %}
+                <tr><td>{{ hit.path }}</td><td>{{ hit.keyword }}</td><td>{{ hit.description }}</td></tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </details>
+        {% endif %}
+        {% if fw.private_keys or fw.shadow_files or fw.certificate_files %}
+        <details open><summary>Security-sensitive Files</summary>
+          <div class="panel-body">
+            {% if fw.private_keys %}<h3>Private Keys</h3><ul>{% for p in fw.private_keys %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
+            {% if fw.shadow_files %}<h3>Password Databases</h3><ul>{% for p in fw.shadow_files %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
+            {% if fw.certificate_files %}<h3>Certificates</h3><ul>{% for p in fw.certificate_files %}<li>{{ p }}</li>{% endfor %}</ul>{% endif %}
+          </div>
+        </details>
+        {% endif %}
+        {% if fw.network_indicators %}
+        {% set ni = fw.network_indicators %}
+        <details><summary>Embedded Network Indicators</summary>
+          <div class="panel-body">
+            {% if ni.urls %}<h3>URLs ({{ ni.urls | length }})</h3><ul>{% for u in ni.urls[:20] %}<li>{{ u.value }}</li>{% endfor %}{% if ni.urls | length > 20 %}<li>...and {{ (ni.urls | length) - 20 }} more</li>{% endif %}</ul>{% endif %}
+            {% if ni.ips %}<h3>IP Addresses ({{ ni.ips | length }})</h3><ul>{% for i in ni.ips[:20] %}<li>{{ i.value }}</li>{% endfor %}</ul>{% endif %}
+            {% if ni.domains %}<h3>Domains ({{ ni.domains | length }})</h3><ul>{% for d in ni.domains[:20] %}<li>{{ d.value }}</li>{% endfor %}</ul>{% endif %}
+            {% if ni.rule_hits %}<h3>Device Profile Rule Hits ({{ ni.rule_hits | length }})</h3><table><thead><tr><th>Rule</th><th>Value</th></tr></thead><tbody>{% for h in ni.rule_hits %}<tr><td>{{ h.rule }}</td><td>{{ h.value }}</td></tr>{% endfor %}</tbody></table>{% endif %}
+          </div>
+        </details>
+        {% endif %}
+        {% endif %}
+
+        {% if name == 'community' %}
+        {% set items = payload.findings.items if payload.findings and payload.findings.items else [] %}
+        {% if items %}
+        <details open><summary>Plugin Results ({{ items | length }})</summary>
+          <div class="panel-body">
+            <table>
+              <thead><tr><th>Plugin</th><th>Version</th><th>Type</th><th>Findings</th></tr></thead>
+              <tbody>
+              {% for item in items %}
+                <tr>
+                  <td>{{ item.get("metadata", {}).get("analyzer", item.get("name", "?")) }}</td>
+                  <td>{{ item.get("metadata", {}).get("version", "?") }}</td>
+                  <td>{{ item.get("metadata", {}).get("type", "analyzer") }}</td>
+                  <td>{{ item.get("summary", {}) | tojson }}</td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </details>
+        {% endif %}
+        {% endif %}
+
+        {% if name == 'device_profile' %}
+        <details open><summary>Profile Details</summary>
+          <div class="panel-body">
+            <dl class="kv">
+              {% for key, value in (payload.findings or payload.metadata or payload).items() %}
+              {% if not key.startswith("_") and value is not none %}
+              <dt>{{ key }}</dt>
+              <dd>{% if value is iterable and value is not string %}{{ value | tojson }}{% else %}{{ value }}{% endif %}</dd>
+              {% endif %}
+              {% endfor %}
+            </dl>
+          </div>
+        </details>
+        {% endif %}
+
         {% if payload.findings %}
         <details title="Toggle section"><summary>Findings JSON</summary><div class="raw-block"><pre>{{ payload.findings | tojson(indent=2) }}</pre></div></details>
         {% endif %}

@@ -37,10 +37,15 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
+      - name: Compile-check all Python sources
+        env:
+          PYTHONUTF8: "1"
+        run: python -m compileall -q analysis runners tui plugins utils chainrecon.py
+
       - name: Run offline pytest suite
         env:
           PYTHONUTF8: "1"
-        run: python -m pytest --tb=no -q
+        run: python -m pytest -m "unit or integration or requirement" --tb=short -q
 
       - name: Upload pytest cache on failure
         if: failure()

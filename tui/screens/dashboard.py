@@ -30,10 +30,12 @@ except now you control the pipe and can see everything.
   - adb       -- Connects to Android devices/emulators for Frida injection
   - frida     -- Injects JavaScript into running Android apps at runtime
   - jadx      -- Decompiles APK files to Java source code
+  - binwalk   -- Extracts and inspects firmware images
 
 [bold]Navigation[/]
   n = Network Setup   s = Scan         c = Capture     a = Analyze
   k = APK             f = Frida        r = Reports     t = Settings
+  w = Workflow        m = Firmware     p = Plugins     d = Profiles
   x = Custom Script   q = Quit         ? = Toggle help
 
 [bold]Tip -- Windows Terminal vs old PowerShell console[/]
@@ -69,6 +71,10 @@ _MENU_ITEMS = [
     ("f", "frida",         "Frida          -- instrument a running Android app"),
     ("r", "reports",       "Reports        -- generate HTML / JSON / CSV report"),
     ("t", "settings",      "Settings       -- tool paths, config, API keys"),
+    ("w", "workflow",      "Workflow       -- run YAML-defined scan pipelines"),
+    ("m", "firmware",      "Firmware       -- extract and inspect firmware images"),
+    ("p", "plugins",       "Plugins        -- community analyzer plugins"),
+    ("d", "profiles",      "Profiles       -- shared device profiles"),
 ]
 
 
@@ -83,6 +89,10 @@ class DashboardScreen(Screen):
         ("r", "app.push_screen('reports')", "Reports"),
         ("t", "app.push_screen('settings')", "Settings"),
         ("x", "app.push_screen('custom_script')", "Custom Script"),
+        ("w", "app.push_screen('workflow')", "Workflow"),
+        ("m", "app.push_screen('firmware')", "Firmware"),
+        ("p", "app.push_screen('plugins')", "Plugins"),
+        ("d", "app.push_screen('profiles')", "Profiles"),
         ("question_mark", "toggle_help", "Help"),
         ("q", "app.quit", "Quit"),
     ]
@@ -128,6 +138,7 @@ class DashboardScreen(Screen):
             yield Label("")
             yield Label(
                 "[dim]Press a key above to navigate  -  [b]?[/b] help  -  [b]q[/b] quit  -  "
+                "[b]w[/b] workflow  [b]m[/b] firmware  [b]p[/b] plugins  [b]d[/b] profiles  "
                 "[b]x[/b] custom script[/]"
             )
         yield Footer()

@@ -661,6 +661,10 @@ def infer_section(payload, filename: str) -> str:
             "ssl": "ssl",
             "scanner": "scan",
             "scan": "scan",
+            "firmware": "firmware",
+            "workflow": "workflow",
+            "community": "community",
+            "deviceprofile": "device_profile",
         }
         if normalized in aliases:
             return aliases[normalized]
@@ -697,6 +701,10 @@ def infer_section(payload, filename: str) -> str:
         return "frida"
     if analyzer == "FirmwareAnalyzer" or metadata.get("firmware") or "firmware" in filename_l:
         return "firmware"
+    if metadata.get("pipeline") or "workflow" in filename_l or "steps" in findings:
+        return "workflow"
+    if "hit_count" in (payload.get("summary") or {}) or "community" in filename_l:
+        return "community"
     if analyzer == "APKAnalyzer" or metadata.get("apk") or "apk" in filename_l:
         return "apk"
     if "app_flags" in findings or "permissions" in findings or "credentials" in findings:

@@ -111,6 +111,50 @@ class CsvExportPlugin(ReportPlugin):
                             row["path"] = artifact
                         yield row
                 continue
+            if section == "workflow":
+                steps = payload.get("findings", {}).get("steps") or {}
+                for step_id, step in steps.items():
+                    if not isinstance(step, dict):
+                        continue
+                    yield {
+                        "page": page_name,
+                        "section": section,
+                        "row_type": "workflow_step",
+                        "key": "step",
+                        "step_id": step_id,
+                        "type": step.get("type"),
+                        "status": step.get("status"),
+                        "error": step.get("error"),
+                        "reason": step.get("reason"),
+                    }
+                workflow_meta = payload.get("metadata") or {}
+                yield {
+                    "page": page_name,
+                    "section": section,
+                    "row_type": "workflow_metadata",
+                    "key": "__workflow__",
+                    "pipeline": workflow_meta.get("pipeline"),
+                    "name": workflow_meta.get("name"),
+                    "output_dir": workflow_meta.get("output_dir"),
+                    "dry_run": workflow_meta.get("dry_run"),
+                    "status": (payload.get("summary") or {}).get("status"),
+                }
+                continue
+            if section == "device_profile":
+                profile_data = payload.get("findings") or payload.get("metadata") or payload
+                if isinstance(profile_data, dict):
+                    for key, value in profile_data.items():
+                        if key.startswith("_"):
+                            continue
+                        import json as _json
+                        yield {
+                            "page": page_name,
+                            "section": section,
+                            "row_type": "profile_field",
+                            "key": key,
+                            "value": _json.dumps(value) if isinstance(value, (dict, list)) else value,
+                        }
+                continue
             for item in payload.get("risk_indicators", []) or []:
                 row = {"page": page_name, "section": section, "row_type": "risk_indicator", "key": "risk_indicators"}
                 if isinstance(item, dict):

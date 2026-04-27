@@ -14,6 +14,18 @@ from utils.platform_info import find_tool
 logger = get_logger("firmware")
 
 
+class BinwalkNotFoundError(Exception):
+    """Raised when binwalk is not installed or not on PATH."""
+
+    INSTALL_GUIDANCE = (
+        "binwalk is required for firmware extraction.\n"
+        "  pip install binwalk          (Python wrapper)\n"
+        "  sudo apt install binwalk     (Debian/Ubuntu)\n"
+        "  brew install binwalk         (macOS)\n"
+        "Then ensure binwalk is on your PATH and try again."
+    )
+
+
 class FirmwareAnalyzer:
     """Extract firmware images with binwalk and inspect the extracted filesystem."""
 
@@ -110,9 +122,15 @@ class FirmwareAnalyzer:
         }
 
     def _run_binwalk(self, image: Path, extract_root: Path) -> None:
+        # Fail early with installation guidance if binwalk is not on PATH.
+        if not find_tool(self._binwalk):
+            raise BinwalkNotFoundError(BinwalkNotFoundError.INSTALL_GUIDANCE)
         cmd = [self._binwalk, "--extract", "--matryoshka", "--directory", str(extract_root), str(image)]
         logger.info("Running binwalk extraction on %s", image)
-        self._executor(cmd, timeout=900)
+        try:
+            self._executor(cmd, timeout=900)
+        except FileNotFoundError:
+            raise BinwalkNotFoundError(BinwalkNotFoundError.INSTALL_GUIDANCE) from None
 
     def _collect_extracted_paths(self, extract_root: Path) -> List[Path]:
         paths = [path for path in extract_root.iterdir() if path.exists()]

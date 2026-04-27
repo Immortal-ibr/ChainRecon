@@ -353,6 +353,67 @@ class XlsxPluginTests(unittest.TestCase):
         self.assertIn("Frida Sessions", html_text)
         self.assertIn("java.net.Socket.connect", html_text)
 
+    def test_csv_flattens_workflow_steps(self):
+        data = {
+            "workflow": {
+                "metadata": {"pipeline": "test.yaml", "name": "Test"},
+                "summary": {"status": "completed"},
+                "findings": {
+                    "steps": {
+                        "scan_main": {"type": "scan", "status": "completed"},
+                        "report": {"type": "report", "status": "completed"},
+                    }
+                },
+            }
+        }
+        with tempfile.NamedTemporaryFile("r+", suffix=".csv", delete=False, encoding="utf-8", newline="") as f:
+            CsvExportPlugin().generate(data, f.name)
+            f.seek(0)
+            rows = list(csv.DictReader(f))
+        step_rows = [r for r in rows if r.get("row_type") == "workflow_step"]
+        self.assertEqual(len(step_rows), 2)
+        step_ids = {r["step_id"] for r in step_rows}
+        self.assertIn("scan_main", step_ids)
+
+    def test_csv_flattens_device_profile_fields(self):
+        data = {
+            "device_profile": {
+                "findings": {
+                    "name": "Test Camera",
+                    "vendor": "Acme",
+                    "target": "10.0.0.1",
+                }
+            }
+        }
+        with tempfile.NamedTemporaryFile("r+", suffix=".csv", delete=False, encoding="utf-8", newline="") as f:
+            CsvExportPlugin().generate(data, f.name)
+            f.seek(0)
+            rows = list(csv.DictReader(f))
+        profile_rows = [r for r in rows if r.get("row_type") == "profile_field"]
+        keys = {r["key"] for r in profile_rows}
+        self.assertIn("name", keys)
+        self.assertIn("vendor", keys)
+
+    def test_html_renders_workflow_steps_table(self):
+        data = {
+            "workflow": {
+                "summary": {"status": "completed"},
+                "findings": {
+                    "steps": {
+                        "scan_main": {"type": "scan", "status": "completed"},
+                        "failed_step": {"type": "tls_scan", "status": "failed", "error": "connection refused"},
+                    }
+                },
+            }
+        }
+        with tempfile.NamedTemporaryFile("r+", suffix=".html", delete=False, encoding="utf-8") as f:
+            HtmlReportPlugin().generate(data, f.name)
+            f.seek(0)
+            html = f.read()
+        self.assertIn("Workflow Steps", html)
+        self.assertIn("scan_main", html)
+        self.assertIn("failed_step", html)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,40 @@
+name: Nooie MQTT TLS Check
+# Sample pipeline: scan device for MQTT, check TLS, flag critical if missing.
+# Usage:
+#   chainrecon workflow run workflows/nooie_mqtt_tls.yaml --target 192.168.123.99 --dry-run
+#   chainrecon workflow run workflows/nooie_mqtt_tls.yaml --target 192.168.123.99 --device-profile nooie
+
+variables:
+  scan_profile: iot
+  tls_ports: "8883"
+
+steps:
+  - id: port_scan
+    type: scan
+    target: "{{ target }}"
+    profile: "{{ scan_profile }}"
+    description: "IoT port scan to find open services including MQTT broker"
+
+  - id: mqtt_tls_check
+    type: tls_scan
+    target: "{{ target }}"
+    ports:
+      - 8883
+      - 443
+      - 8443
+    when: "steps.port_scan.status == 'completed'"
+    description: "Check TLS on MQTT (8883) and HTTPS ports; flag cleartext MQTT as critical"
+
+  - id: flag_cleartext_mqtt
+    type: report
+    critical: true
+    when: "steps.mqtt_tls_check.status == 'completed' and not steps.mqtt_tls_check.findings.get('tls_enabled', True)"
+    description: "Fail workflow when MQTT runs without TLS -- device credentials may be exposed"
+
+  - id: final_report
+    type: report
+    formats:
+      - json
+      - html
+    when: "steps.port_scan.status == 'completed'"
+    description: "Generate HTML + JSON report of scan and TLS findings"
