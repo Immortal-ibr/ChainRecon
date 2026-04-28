@@ -71,7 +71,7 @@ jobs:
           import xml.etree.ElementTree as ET, os, sys
           results_path = "test-results.xml"
           if not os.path.exists(results_path):
-              print("No test-results.xml found")
+              print("::warning::No test-results.xml found")
               sys.exit(0)
           try:
               tree = ET.parse(results_path)
@@ -81,22 +81,24 @@ jobs:
                   err = tc.find("failure") or tc.find("error")
                   if err is not None:
                       name = tc.get("classname", "") + "." + tc.get("name", "")
-                      text = (err.text or "")[:2000]
-                      failures.append(f"### {name}\n```\n{text}\n```\n")
+                      text = (err.text or "")[:3000]
+                      failures.append((name, text))
               summary_file = os.environ.get("GITHUB_STEP_SUMMARY", "")
               if summary_file and failures:
                   with open(summary_file, "a", encoding="utf-8") as f:
                       f.write("# Failed Tests\n\n")
-                      for fail in failures:
-                          f.write(fail + "\n")
+                      for name, text in failures:
+                          f.write(f"### {name}\n```\n{text}\n```\n\n")
               if failures:
                   print(f"Found {len(failures)} failure(s):")
-                  for f in failures:
-                      print(f)
+                  for name, text in failures:
+                      # Emit as GitHub Actions error annotation (visible in logs)
+                      safe = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                      print(f"::error title={name}::{safe}")
               else:
                   print("All tests passed.")
           except Exception as exc:
-              print(f"Parse error: {exc}")
+              print(f"::error::Parse error: {exc}")
 
       - name: Upload artifacts on failure
         if: failure()
