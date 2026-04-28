@@ -57,6 +57,12 @@ jobs:
           python -m pytest -m "unit or integration or requirement" --tb=long --junitxml=test-results.xml 2>&1 | tee pytest-output.txt
           exit ${PIPESTATUS[0]}
 
+      - name: Print pytest output (Linux)
+        if: runner.os == 'Linux' && always()
+        run: |
+          echo "=== PYTEST OUTPUT ==="
+          cat pytest-output.txt 2>/dev/null || echo "No output file"
+
       - name: Run offline pytest suite (Windows)
         if: runner.os == 'Windows'
         id: pytest_run_windows
