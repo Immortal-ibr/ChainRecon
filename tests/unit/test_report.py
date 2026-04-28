@@ -82,29 +82,32 @@ class ReportGeneratorOutputTests(unittest.TestCase):
 
     def test_generate_json(self):
         gen = self._full_generator()
-        with tempfile.NamedTemporaryFile("r+", suffix=".json", delete=False, encoding="utf-8") as f:
-            path = gen.generate("json", f.name)
-            f.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            fname = f.name
+        path = gen.generate("json", fname)
+        with open(fname, encoding="utf-8") as f:
             payload = json.load(f)
-        self.assertEqual(path, f.name)
+        self.assertEqual(path, fname)
         self.assertIn("traffic", payload)
         self.assertIn("ssl", payload)
         self.assertIn("scan", payload)
 
     def test_generate_html(self):
         gen = self._full_generator()
-        with tempfile.NamedTemporaryFile("r+", suffix=".html", delete=False, encoding="utf-8") as f:
-            gen.generate("html", f.name)
-            f.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+            fname = f.name
+        gen.generate("html", fname)
+        with open(fname, encoding="utf-8") as f:
             content = f.read()
         self.assertIn("ChainRecon", content)
         self.assertIn("example.com", content)
 
     def test_generate_csv(self):
         gen = self._full_generator()
-        with tempfile.NamedTemporaryFile("r+", suffix=".csv", delete=False, encoding="utf-8", newline="") as f:
-            gen.generate("csv", f.name)
-            f.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
+            fname = f.name
+        gen.generate("csv", fname)
+        with open(fname, encoding="utf-8", newline="") as f:
             content = f.read()
         self.assertIn("section", content)
         self.assertIn("traffic", content)
@@ -118,9 +121,10 @@ class ReportGeneratorOutputTests(unittest.TestCase):
         """Only traffic added, and untouched sections are omitted."""
         gen = ReportGenerator()
         gen.add_traffic_results({"findings": {"dns_queries": []}})
-        with tempfile.NamedTemporaryFile("r+", suffix=".json", delete=False, encoding="utf-8") as f:
-            gen.generate("json", f.name)
-            f.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            fname = f.name
+        gen.generate("json", fname)
+        with open(fname, encoding="utf-8") as f:
             payload = json.load(f)
         self.assertIsNotNone(payload["traffic"])
         self.assertNotIn("ssl", payload)
@@ -262,9 +266,10 @@ class ReportGeneratorFindingsTests(unittest.TestCase):
         gen = ReportGenerator()
         gen.add_finding(Finding("Weak TLS", "desc", Severity.HIGH, Category.TLS, "ssl"))
         gen.add_traffic_results({"findings": {"dns": []}})
-        with tempfile.NamedTemporaryFile("r+", suffix=".json", delete=False, encoding="utf-8") as f:
-            gen.generate("json", f.name)
-            f.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            fname = f.name
+        gen.generate("json", fname)
+        with open(fname, encoding="utf-8") as f:
             payload = json.load(f)
         self.assertIn("findings", payload)
         self.assertEqual(payload["findings"][0]["title"], "Weak TLS")
@@ -272,9 +277,10 @@ class ReportGeneratorFindingsTests(unittest.TestCase):
     def test_generate_html_with_findings(self):
         gen = ReportGenerator()
         gen.add_finding(Finding("Open Port", "desc", Severity.MEDIUM, Category.NETWORK, "nmap"))
-        with tempfile.NamedTemporaryFile("r+", suffix=".html", delete=False, encoding="utf-8") as f:
-            gen.generate("html", f.name)
-            f.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+            fname = f.name
+        gen.generate("html", fname)
+        with open(fname, encoding="utf-8") as f:
             content = f.read()
         self.assertIn("Open Port", content)
         self.assertIn("Findings Summary", content)
@@ -304,9 +310,10 @@ class ReportGeneratorFindingsTests(unittest.TestCase):
         gen = ReportGenerator()
         gen.add_finding(Finding("CSV Test", "d", Severity.LOW, Category.NETWORK, "s"))
         gen.add_traffic_results({"findings": {"dns": [{"query": "test.com"}]}})
-        with tempfile.NamedTemporaryFile("r+", suffix=".csv", delete=False, encoding="utf-8", newline="") as f:
-            gen.generate("csv", f.name)
-            f.seek(0)
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
+            fname = f.name
+        gen.generate("csv", fname)
+        with open(fname, encoding="utf-8", newline="") as f:
             content = f.read()
         self.assertIn("section", content)
 
