@@ -18,6 +18,7 @@ from tui.widgets.log_viewer import LogActionBar, LogViewer
 from tui.widgets.pasteable_input import PasteableInput as Input
 from utils.artifacts import artifact_path, safe_token, write_json_artifact
 from utils.config import get_frida_config, get_output_dir, save_frida_config
+from utils.frida_utils import _extract_frida_log_events
 
 def _build_help_text() -> str:
     sections = [
@@ -615,24 +616,6 @@ class FridaScreen(Screen):
             self.app.call_from_thread(callback, *args)
         except Exception:
             return
-
-
-def _extract_frida_log_events(path: str | None, *, prefixes: tuple[str, ...], limit: int = 50) -> list[str]:
-    if not path:
-        return []
-    try:
-        lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return []
-    matched = []
-    for line in lines:
-        stripped = line.strip()
-        normalized = stripped
-        if normalized.startswith("[stdout] "):
-            normalized = normalized[len("[stdout] "):]
-        if any(normalized.startswith(prefix) or stripped.startswith(prefix) for prefix in prefixes):
-            matched.append(stripped)
-    return matched[-limit:]
 
 
 def _frida_risk_indicators(summary: dict) -> list[dict]:

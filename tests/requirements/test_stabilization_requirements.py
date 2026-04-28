@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 from analysis.report_generator import ReportGenerator, normalize_report_data
 from analysis.scanner import ScannerAnalyzer
 from runners.nmap_runner import NmapInterfaceMismatchError, NmapRunner
-from tui.screens.frida import _extract_frida_log_events
 from utils.artifacts import update_artifact_index, write_json_artifact
+from utils.frida_utils import _extract_frida_log_events
 
 
 class ScanRequirementTests(unittest.TestCase):

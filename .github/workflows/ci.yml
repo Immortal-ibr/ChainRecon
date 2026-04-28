@@ -42,8 +42,24 @@ jobs:
           PYTHONUTF8: "1"
         run: python -m compileall -q analysis runners tui plugins utils chainrecon.py
 
-      - name: Run offline pytest suite
-        id: pytest_run
+      - name: Collect-only debug
+        if: runner.os == 'Linux'
+        env:
+          PYTHONUTF8: "1"
+        run: python -m pytest -m "unit or integration or requirement" --collect-only -q 2>&1 | tail -50
+
+      - name: Run offline pytest suite (Linux)
+        if: runner.os == 'Linux'
+        id: pytest_run_linux
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          python -m pytest -m "unit or integration or requirement" --tb=long --junitxml=test-results.xml 2>&1 | tee pytest-output.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Run offline pytest suite (Windows)
+        if: runner.os == 'Windows'
+        id: pytest_run_windows
         env:
           PYTHONUTF8: "1"
         run: python -m pytest -m "unit or integration or requirement" --tb=short --junitxml=test-results.xml
@@ -65,7 +81,7 @@ jobs:
                   err = tc.find("failure") or tc.find("error")
                   if err is not None:
                       name = tc.get("classname", "") + "." + tc.get("name", "")
-                      text = (err.text or "")[:1200]
+                      text = (err.text or "")[:2000]
                       failures.append(f"### {name}\n```\n{text}\n```\n")
               summary_file = os.environ.get("GITHUB_STEP_SUMMARY", "")
               if summary_file and failures:
@@ -73,14 +89,21 @@ jobs:
                       f.write("# Failed Tests\n\n")
                       for fail in failures:
                           f.write(fail + "\n")
-              print(f"Found {len(failures)} failure(s)" if failures else "All tests passed.")
+              if failures:
+                  print(f"Found {len(failures)} failure(s):")
+                  for f in failures:
+                      print(f)
+              else:
+                  print("All tests passed.")
           except Exception as exc:
               print(f"Parse error: {exc}")
 
-      - name: Upload test results on failure
+      - name: Upload artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.os }}-py${{ matrix.python-version }}
-          path: test-results.xml
+          path: |
+            test-results.xml
+            pytest-output.txt
           if-no-files-found: ignore
