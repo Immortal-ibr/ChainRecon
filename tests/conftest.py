@@ -17,10 +17,10 @@ def pytest_collection_modifyitems(items):
         name = item.name.lower()
         cls_name = (item.cls.__name__.lower() if item.cls else "")
 
-        if "/requirements/" in path or "requirement" in cls_name or "requirement" in name:
-            item.add_marker("requirement")
-        elif "/e2e/" in path or "live" in cls_name or "run_test" in name or "tui" in path:
+        if "/e2e/" in path or "live" in cls_name or "run_test" in name or "tui" in path:
             item.add_marker("e2e")
+        elif "/requirements/" in path or "requirement" in cls_name or "requirement" in name:
+            item.add_marker("requirement")
         elif "/integration/" in path or any(token in cls_name for token in ("full", "dispatch", "output")):
             item.add_marker("integration")
         else:
