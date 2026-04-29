@@ -1,6 +1,6 @@
 ## What ChainRecon is
 
-ChainRecon is an IoT security analysis tool built for the Purdue ChainVisor senior design project. The core idea is that when you're researching an IoT device, you always end up running the same set of tools in the same order -- nmap to find open ports, tshark to capture traffic, jadx to look at the APK, frida to hook interesting functions at runtime. Doing that manually for every new device is tedious, so ChainRecon ties it all together into a single TUI that keeps results organized and lets you jump between analysis steps without having to remember every command.
+ChainRecon is an IoT security analysis tool. The core idea is that when you're researching an IoT device, you always end up running the same set of tools in the same order -- nmap to find open ports, tshark to capture traffic, jadx to look at the APK, frida to hook interesting functions at runtime. Doing that manually for every new device is tedious, so ChainRecon ties it all together into a single TUI that keeps results organized and lets you jump between analysis steps without having to remember every command.
 
 The tool is designed to be used with a physical man-in-the-middle setup: the IoT device connects through a router, the router connects to your computer over Ethernet, and your computer bridges to Wi-Fi. That puts you in a position to see everything the device sends and receives without modifying it.
 

@@ -1,6 +1,6 @@
 # ChainRecon
 
-A network security analysis tool built for the Purdue ChainVisor project. The goal is to figure out what an IoT device actually does on the network -- what servers it connects to, what protocols it uses, whether its traffic is encrypted, and whether the APK has anything sketchy in it.
+A network security analysis tool for figuring out what an IoT device actually does on the network -- what servers it connects to, what protocols it uses, whether its traffic is encrypted, and whether the APK has anything sketchy in it.
 
 This was written because manually running nmap, tshark, jadx, and frida on every new device gets old fast. ChainRecon wraps all of that into a single TUI that you can navigate with a keyboard.
 
