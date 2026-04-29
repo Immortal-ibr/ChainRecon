@@ -39,6 +39,13 @@ Classic man-in-the-middle position -- your computer sits between the IoT device 
 
 No rooting or installing anything on the device. You're watching at the network layer.
 
+The Network Setup screen has active setup scripts for both supported desktop paths:
+
+- Windows uses `scripts/network_setup.ps1` with PowerShell and administrator privileges.
+- Linux uses `scripts/network_setup.sh` with `sudo`, `ip`, `iptables`, `sysctl`, and the same interface/static-IP values from the TUI.
+
+The old interactive Linux shell script is kept only under `legacy/manual_shell_scripts/` for reference. The active Linux path is `scripts/network_setup.sh`.
+
 ## What it analyzes
 
 ### Traffic analysis (from .pcap or live capture)
@@ -371,7 +378,7 @@ tui/                 Textual TUI app and screens
 plugins/             Report output plugins (JSON, HTML, CSV)
 tests/               Test suite
 config/              Default and local configuration files
-scripts/             Bash helper scripts (Linux-focused)
+scripts/             Active helper scripts for Windows and Linux network setup/testing
 legacy/              Manual legacy assets not used by active runners
 ```
 

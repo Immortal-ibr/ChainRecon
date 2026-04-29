@@ -17,6 +17,7 @@ from tui.screens.settings import SettingsScreen
 from tui.screens.scan import SCAN_PROFILE_OPTIONS
 from tui.screens.scan import _displayable_output_files
 from tui.screens.scan import _interface_options
+from tui.screens.network_setup import NetworkSetupScreen
 from tui.screens.dashboard import _format_tool_status
 from tui.widgets.findings_table import FindingsTable
 from tui.widgets.log_viewer import LogViewer, _wrap_display_text, sanitize_terminal_controls
@@ -133,6 +134,31 @@ class ScanInterfaceOptionTests(unittest.TestCase):
 
 
 class TuiRequirementTests(unittest.TestCase):
+    def test_network_setup_scripts_exist_for_windows_and_linux(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2]
+        self.assertTrue((root / "scripts" / "network_setup.ps1").exists())
+        self.assertTrue((root / "scripts" / "network_setup.sh").exists())
+
+    def test_network_setup_builds_noninteractive_linux_command(self):
+        cmd = NetworkSetupScreen._build_network_setup_command(
+            is_windows=False,
+            eth_interface="eth0",
+            internet_interface="wlan0",
+            static_ip="192.168.123.100",
+            subnet_prefix="24",
+            remove=True,
+        )
+        self.assertEqual(cmd[0], "sudo")
+        self.assertEqual(cmd[1], "bash")
+        self.assertTrue(cmd[2].endswith("network_setup.sh"))
+        self.assertIn("--eth-interface", cmd)
+        self.assertIn("eth0", cmd)
+        self.assertIn("--internet-interface", cmd)
+        self.assertIn("wlan0", cmd)
+        self.assertIn("--remove", cmd)
+
     def test_apk_path_input_keeps_cursor_at_end_for_long_value(self):
         async def _run() -> None:
             app = ChainReconApp()

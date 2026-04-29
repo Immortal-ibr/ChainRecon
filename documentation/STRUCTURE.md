@@ -104,14 +104,13 @@ Tests cover the analysis layer, runners, CLI, TUI screens, workflows, reports, a
 
 ## scripts/
 
-Bash helper scripts, primarily for Linux. Not needed on Windows.
+Active helper scripts used by the TUI and local validation.
 
-- `setup.sh` -- Installs Linux dependencies
-- `network_setup.sh` -- Sets up iptables and IP forwarding
-- `capture.sh` -- tshark capture wrapper
-- `scan.sh` -- nmap scan wrapper
-- `ssl.sh` -- OpenSSL cert and cipher analysis
-- `main.sh` -- Menu-driven wrapper around the above
+- `network_setup.ps1` -- Windows NAT/routing setup used by the Network Setup screen.
+- `network_setup.sh` -- Linux equivalent for NAT/routing setup. It is non-interactive and accepts the same interface/static-IP values from the TUI.
+- `diagnose_environment.ps1` -- Windows environment diagnostics.
+- `run_offline_tests.ps1` -- Windows test runner helper.
+- `run_live_nooie_tests.ps1` -- Windows live Nooie validation helper.
 
 ## legacy/
 
@@ -120,4 +119,5 @@ Manual assets that are not part of the active runner surface.
 - `extended_scanner.py` -- Retired Python TCP connect and ARP discovery scans kept for compatibility and reference.
 - `scan_compat.py` -- Retired `analyze-ssl` and `analyze-scan` logic kept outside the active CLI surface.
 - `manual_frida_scripts/` -- Older standalone Frida snippets moved from the former top-level `Frida Scripts/` directory. Active TUI scripts live in `runners/frida_scripts/`.
+- `manual_shell_scripts/network_setup.sh` -- Older interactive Linux network setup retained for reference. The active Linux path is `scripts/network_setup.sh`.
 

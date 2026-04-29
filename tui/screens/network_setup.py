@@ -184,24 +184,14 @@ class NetworkSetupScreen(Screen):
 
         def _worker() -> None:
             try:
-                if is_win:
-                    script = str(_SCRIPTS_DIR / "network_setup.ps1")
-                    cmd = [
-                        "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                        "-File", script,
-                        "-EthInterface", eth,
-                        "-InternetInterface", inet,
-                        "-StaticIP", ip_part,
-                        "-SubnetPrefix", prefix,
-                    ]
-                    if remove:
-                        cmd.append("-Remove")
-                else:
-                    script = str(_SCRIPTS_DIR / "network_setup.sh")
-                    cmd = ["sudo", "bash", script]
-                    # The Linux script is interactive -- pass values via env
-                    # For automated use, we'd need to refactor network_setup.sh
-                    # For now, just run it and let the user interact in terminal
+                cmd = self._build_network_setup_command(
+                    is_windows=is_win,
+                    eth_interface=str(eth),
+                    internet_interface=str(inet),
+                    static_ip=ip_part,
+                    subnet_prefix=prefix,
+                    remove=remove,
+                )
 
                 result = subprocess.run(
                     cmd,
@@ -232,6 +222,53 @@ class NetworkSetupScreen(Screen):
                 self.app.call_from_thread(log.append, f"[red]{exc}[/]")
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    @staticmethod
+    def _build_network_setup_command(
+        *,
+        is_windows: bool,
+        eth_interface: str,
+        internet_interface: str,
+        static_ip: str,
+        subnet_prefix: str,
+        remove: bool,
+    ) -> list[str]:
+        if is_windows:
+            cmd = [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(_SCRIPTS_DIR / "network_setup.ps1"),
+                "-EthInterface",
+                eth_interface,
+                "-InternetInterface",
+                internet_interface,
+                "-StaticIP",
+                static_ip,
+                "-SubnetPrefix",
+                subnet_prefix,
+            ]
+            if remove:
+                cmd.append("-Remove")
+            return cmd
+        cmd = [
+            "sudo",
+            "bash",
+            str(_SCRIPTS_DIR / "network_setup.sh"),
+            "--eth-interface",
+            eth_interface,
+            "--internet-interface",
+            internet_interface,
+            "--static-ip",
+            static_ip,
+            "--subnet-prefix",
+            subnet_prefix,
+        ]
+        if remove:
+            cmd.append("--remove")
+        return cmd
 
     def action_toggle_help(self) -> None:
         self.app.push_screen(HelpScreen(HELP_TEXT, title="Network Setup"))
