@@ -28,8 +28,6 @@ python chainrecon.py firmware firmware.bin --format xlsx --output output/firmwar
 python chainrecon.py workflow run workflows/nooie_mqtt_tls.yaml --target 192.168.123.99 --device-profile nooie --dry-run
 ```
 
-XLSX is the default user-facing report format in the TUI because it keeps each analysis section on its own sheet and is easier to review during demos than a long JSON file. The report layer is usable now, but it is still an area that needs improvement in structure, polish, and cross-run comparison.
-
 ## How the network setup works
 
 Classic man-in-the-middle position -- your computer sits between the IoT device and the internet:
