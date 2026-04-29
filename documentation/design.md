@@ -37,7 +37,6 @@ The tool is designed to be used with a physical man-in-the-middle setup: the IoT
 **Reports:**
 - XLSX as the default user-facing report format, with JSON still available for automation
 - HTML and CSV outputs through the plugin system
-- Plugins should be swappable -- provide a base class and let users write their own
 - The TUI report screen must let users choose current-session results or top-level ChainRecon JSON analysis files in the configured output directory; generated multi-section reports and decompiled APK asset JSON files must not be recursively imported
 - Reports are still not a finished surface. They work, but they still need improvement in formatting, cross-session comparison, and large-result navigation.
 
