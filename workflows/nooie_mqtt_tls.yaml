@@ -22,19 +22,22 @@ steps:
       - 8883
       - 443
       - 8443
-    when: "steps.port_scan.status == 'completed'"
+    when: "steps.port_scan.status == 'completed' and 8883 in steps.port_scan.summary.open_ports"
     description: "Check TLS on MQTT (8883) and HTTPS ports; flag cleartext MQTT as critical"
 
-  - id: flag_cleartext_mqtt
-    type: report
+  - id: require_mqtt_tls
+    type: assert
     critical: true
-    when: "steps.mqtt_tls_check.status == 'completed' and not steps.mqtt_tls_check.findings.get('tls_enabled', True)"
-    description: "Fail workflow when MQTT runs without TLS -- device credentials may be exposed"
+    when: "steps.mqtt_tls_check.status == 'completed'"
+    condition: "steps.mqtt_tls_check.summary.reachable_port_count > 0 and steps.mqtt_tls_check.summary.certificate_count > 0"
+    message: "Port 8883 was open but TLS probing did not observe a certificate chain."
+    description: "Fail workflow when MQTT runs without TLS and a certificate chain"
 
   - id: final_report
     type: report
     formats:
-      - json
+      - xlsx
       - html
+      - json
     when: "steps.port_scan.status == 'completed'"
-    description: "Generate HTML + JSON report of scan and TLS findings"
+    description: "Generate XLSX, HTML, and JSON report of scan and TLS findings"

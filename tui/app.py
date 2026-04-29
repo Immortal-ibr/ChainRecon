@@ -40,7 +40,8 @@ Screen {
 }
 #dashboard, #scan-form, #capture-form, #analyze-form, #frida-form,
 #apk-form, #reports-form, #settings, #network-setup-form,
-#custom-script-form {
+#custom-script-form, #workflow-form, #firmware-form, #plugins-form,
+#profiles-form {
     padding: 1 6 1 2;
 }
 #title {
@@ -232,6 +233,7 @@ class ChainReconApp(App):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._report_gen = ReportGenerator()
+        self._active_device_profile: str | None = None
         self.os_mode: str = platform.system() if platform.system() in ("Windows", "Linux") else "Linux"
 
     def on_mount(self) -> None:
@@ -321,11 +323,16 @@ def run_tui() -> None:
             kernel32.SetConsoleCP(65001)
             stdin_handle = kernel32.GetStdHandle(-10)
             stdout_handle = kernel32.GetStdHandle(-11)
+            stderr_handle = kernel32.GetStdHandle(-12)
             mode = ctypes.c_uint()
             if kernel32.GetConsoleMode(stdin_handle, ctypes.byref(mode)):
                 # Disable processed input so Ctrl+C reaches the TUI as a key event.
                 kernel32.SetConsoleMode(stdin_handle, mode.value & ~0x0001)
-            kernel32.SetConsoleMode(stdout_handle, 0x0007)
+            if kernel32.GetConsoleMode(stdout_handle, ctypes.byref(mode)):
+                kernel32.SetConsoleMode(stdout_handle, mode.value | 0x0004)
+            if kernel32.GetConsoleMode(stderr_handle, ctypes.byref(mode)):
+                kernel32.SetConsoleMode(stderr_handle, mode.value | 0x0004)
         except Exception:
             pass
+        os.system("cls")
     ChainReconApp().run()

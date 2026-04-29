@@ -18,7 +18,6 @@ from tui.widgets.log_viewer import LogActionBar, LogViewer
 from tui.widgets.pasteable_input import PasteableInput as Input
 from utils.artifacts import artifact_path, safe_token, write_json_artifact
 from utils.config import get_frida_config, get_output_dir, save_frida_config
-from utils.frida_utils import _extract_frida_log_events
 
 def _build_help_text() -> str:
     sections = [
@@ -110,6 +109,7 @@ class FridaScreen(Screen):
         self._current_session: dict | None = None
         self._last_exit_summary: dict | None = None
         self._param_signature: tuple[str, tuple[str, ...]] | None = None
+        self._session_starting = False
 
     def compose(self) -> ComposeResult:
         frida_cfg = get_frida_config()
@@ -264,8 +264,8 @@ class FridaScreen(Screen):
 
     def _start_managed_session(self, log: LogViewer) -> None:
         self._persist_setup_config()
-        if self._current_session is not None:
-            log.append("[yellow]A Frida hook session is already running. Stop it first.[/]")
+        if self._session_starting or self._current_session is not None:
+            log.append("[yellow]A Frida hook session is already starting or running. Stop it first.[/]")
             return
 
         target = self.query_one("#target", Input).value.strip().strip('"\'')
@@ -285,6 +285,7 @@ class FridaScreen(Screen):
         except FridaDeviceError as exc:
             log.append(f"[red]{exc}[/]")
             return
+        self._session_starting = True
         log.append("[bold]Starting managed Frida session...[/]")
 
         def _worker() -> None:
@@ -301,9 +302,11 @@ class FridaScreen(Screen):
                 )
                 if self._last_exit_summary and self._last_exit_summary.get("session_id") == result.get("session_id"):
                     self._current_session = None
+                    self._session_starting = False
                     self._safe_call_from_thread(log.set_last_output_path, self._last_exit_summary.get("summary_path") or result["summary_path"])
                     return
                 self._current_session = result
+                self._session_starting = False
                 self._safe_call_from_thread(log.set_last_output_path, result["log_path"])
                 self._safe_call_from_thread(
                     log.append,
@@ -319,13 +322,16 @@ class FridaScreen(Screen):
                     ),
                 )
             except FridaDeviceError as exc:
+                self._session_starting = False
                 guidance = (exc.state or {}).get("install_guidance", [])
                 self._safe_call_from_thread(log.append, f"[red]{exc}[/]")
                 for step in guidance:
                     self._safe_call_from_thread(log.append, f"[yellow]{step}[/]")
             except ToolNotFoundError as exc:
+                self._session_starting = False
                 self._safe_call_from_thread(log.append, f"[red]{exc}[/]")
             except Exception as exc:
+                self._session_starting = False
                 self._safe_call_from_thread(log.append, f"[red]{exc}[/]")
 
         threading.Thread(target=_worker, daemon=True).start()
@@ -351,6 +357,7 @@ class FridaScreen(Screen):
 
     def _handle_session_exit(self, summary: dict, log: LogViewer) -> None:
         self._last_exit_summary = summary
+        self._session_starting = False
         if self._current_session and self._current_session.get("session_id") != summary.get("session_id"):
             return
         self._current_session = None
@@ -616,6 +623,24 @@ class FridaScreen(Screen):
             self.app.call_from_thread(callback, *args)
         except Exception:
             return
+
+
+def _extract_frida_log_events(path: str | None, *, prefixes: tuple[str, ...], limit: int = 50) -> list[str]:
+    if not path:
+        return []
+    try:
+        lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    matched = []
+    for line in lines:
+        stripped = line.strip()
+        normalized = stripped
+        if normalized.startswith("[stdout] "):
+            normalized = normalized[len("[stdout] "):]
+        if any(normalized.startswith(prefix) or stripped.startswith(prefix) for prefix in prefixes):
+            matched.append(stripped)
+    return matched[-limit:]
 
 
 def _frida_risk_indicators(summary: dict) -> list[dict]:

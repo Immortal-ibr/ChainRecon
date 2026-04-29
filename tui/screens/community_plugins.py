@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import threading
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Label, Select, Static
 
@@ -67,28 +68,27 @@ class CommunityPluginsScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with VerticalScroll():
-            with Vertical(id="plugins-form"):
-                yield Label("[bold]Community Plugins[/]", id="title")
-                yield Label("Available Plugins")
-                yield Select([], id="plugin-select", allow_blank=True)
-                yield Static("", id="plugin-description")
-                yield Label("Input Path")
-                yield Input(placeholder="/path/to/file or directory", id="plugin-input")
-                yield Label("Output Directory (optional)")
-                yield Input(placeholder="leave empty for session output dir", id="plugin-output-dir")
-                with Horizontal():
-                    yield Button("Run Plugin", id="run-plugin", variant="primary")
-                    yield Button("Validate All", id="validate-plugins")
-                    yield Button("Back", id="back-btn")
-                yield LogActionBar()
-                yield LogViewer(id="plugins-log")
+        with VerticalScroll(id="plugins-form"):
+            yield Label("[bold]Community Plugins[/]", id="title")
+            yield Label("Available Plugins")
+            yield Select([("(select a plugin)", "__none__")], id="plugin-select", value="__none__")
+            yield Static("", id="plugin-description")
+            yield Label("Input Path")
+            yield Input(placeholder="/path/to/file or directory", id="plugin-input")
+            yield Label("Output Directory (optional)")
+            yield Input(placeholder="leave empty for session output dir", id="plugin-output-dir")
+            with Horizontal():
+                yield Button("Run Plugin", id="run-plugin", variant="primary")
+                yield Button("Validate All", id="validate-plugins")
+                yield Button("Back", id="back-btn")
+            yield LogActionBar()
+            yield LogViewer(id="plugins-log")
         yield Footer()
 
     def on_mount(self) -> None:
-        self._running = False
+        self._plugin_running = False
         self._descriptors: list = []
-        self._refresh_plugins()
+        self.call_after_refresh(self._refresh_plugins)
 
     def _refresh_plugins(self) -> None:
         log = self.query_one(LogViewer)
@@ -101,7 +101,9 @@ class CommunityPluginsScreen(Screen):
 
         if self._descriptors:
             options = [(f"{d['name']} v{d.get('version', '?')} -- {d.get('description', '')[:50]}", d["name"]) for d in self._descriptors]
-            self.query_one("#plugin-select", Select).set_options(options)
+            select = self.query_one("#plugin-select", Select)
+            select.set_options([("(select a plugin)", "__none__"), *options])
+            select.value = "__none__"
         else:
             log.append("[dim]No community plugins found in community_plugins/.[/]")
 
@@ -109,7 +111,7 @@ class CommunityPluginsScreen(Screen):
         if event.select.id != "plugin-select":
             return
         desc_widget = self.query_one("#plugin-description", Static)
-        if event.value in (Select.BLANK, None):
+        if event.value in (Select.BLANK, "__none__", None):
             desc_widget.update("")
             return
         descriptor = next((d for d in self._descriptors if d["name"] == event.value), None)
@@ -157,10 +159,10 @@ class CommunityPluginsScreen(Screen):
             log.append(f"[red]Validation error:[/] {exc}")
 
     def _start_run(self) -> None:
-        if self._running:
+        if self._plugin_running:
             return
         plugin_name = self.query_one("#plugin-select", Select).value
-        if plugin_name in (Select.BLANK, None):
+        if plugin_name in (Select.BLANK, "__none__", None):
             self.query_one(LogViewer).append("[red]Select a plugin first.[/]")
             return
         input_path = self.query_one("#plugin-input", Input).value.strip()
@@ -173,34 +175,49 @@ class CommunityPluginsScreen(Screen):
         log.clear_log()
         log.append(f"[cyan]Running plugin:[/] {plugin_name}")
 
-        self._running = True
+        self._plugin_running = True
         threading.Thread(target=self._run_plugin, args=(str(plugin_name), input_path, output_dir), daemon=True).start()
 
     def _run_plugin(self, plugin_name: str, input_path: str, output_dir) -> None:
         log = self.query_one(LogViewer)
+        emit = self.app.call_from_thread
         try:
             from utils.community_plugins import load_community_plugin
             from utils.config import get_output_dir as _get_out
+            from utils.artifacts import artifact_path
+            from pathlib import Path
+
             plugin = load_community_plugin(plugin_name)
-            kwargs = {"input_path": input_path}
-            if output_dir:
-                kwargs["output_dir"] = output_dir
+            final_output_dir = output_dir or str(_get_out() / "community_plugins")
+            kwargs = {"input_path": input_path, "output_dir": final_output_dir}
             result = plugin.analyze(**kwargs)
+            descriptor = getattr(plugin, "descriptor", {})
+            metadata = dict(result.get("metadata") or {})
+            metadata.setdefault("section", "community")
+            metadata.setdefault("plugin_name", descriptor.get("name", plugin_name))
+            metadata.setdefault("plugin_version", descriptor.get("version"))
+            metadata.setdefault("plugin_type", descriptor.get("type"))
+            metadata.setdefault("plugin_description", descriptor.get("description"))
+            result["metadata"] = metadata
             summary = result.get("summary", {})
-            log.append(f"[green]Plugin completed.[/]")
+            emit(log.append, f"[green]Plugin completed.[/]")
             for k, v in summary.items():
-                log.append(f"  {k}: {v}")
+                emit(log.append, f"  {k}: {v}")
             risk = result.get("risk_indicators", [])
             for ri in risk:
                 sev = ri.get("severity", "info").upper()
                 sev_color = "red" if sev == "HIGH" else ("yellow" if sev == "MEDIUM" else "cyan")
-                log.append(f"  [{sev_color}][{sev}][/] {ri.get('title', '')}")
+                emit(log.append, f"  [{sev_color}][{sev}][/] {ri.get('title', '')}")
+            Path(final_output_dir).mkdir(parents=True, exist_ok=True)
+            report_path = artifact_path(Path(final_output_dir), f"community_{plugin_name}", ".json")
+            report_path.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
+            emit(log.append, f"Report saved: {report_path}")
             if hasattr(self, "app") and hasattr(self.app, "_report_gen"):
                 self.app._report_gen.add_results("community", result, mode="append")
         except Exception as exc:
-            log.append(f"[red]Plugin error:[/] {exc}")
+            emit(log.append, f"[red]Plugin error:[/] {exc}")
         finally:
-            self._running = False
+            self._plugin_running = False
 
     def action_toggle_help(self) -> None:
         self.app.push_screen(HelpScreen(HELP_TEXT, title="Community Plugins"))

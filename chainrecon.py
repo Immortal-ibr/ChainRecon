@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     report_parser = subparsers.add_parser("report", help="Aggregate saved JSON analysis files")
     report_parser.add_argument("inputs", nargs="+")
-    report_parser.add_argument("--format", required=True, choices=["json", "html", "csv", "xlsx"])
+    report_parser.add_argument("--format", default="xlsx", choices=["json", "html", "csv", "xlsx"])
     report_parser.add_argument("--output", required=True)
     report_parser.set_defaults(handler=handle_report)
 
@@ -66,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     firmware_parser = subparsers.add_parser("firmware", help="Extract and analyze a firmware image")
     firmware_parser.add_argument("firmware_path", help="Path to the firmware image")
     firmware_parser.add_argument("--extract-dir", help="Directory for extracted firmware contents")
-    firmware_parser.add_argument("--format", choices=["json", "html", "csv", "xlsx"])
+    firmware_parser.add_argument("--format", default="xlsx", choices=["json", "html", "csv", "xlsx"])
     firmware_parser.add_argument("--output")
     firmware_parser.set_defaults(handler=handle_firmware)
 
@@ -661,10 +661,6 @@ def infer_section(payload, filename: str) -> str:
             "ssl": "ssl",
             "scanner": "scan",
             "scan": "scan",
-            "firmware": "firmware",
-            "workflow": "workflow",
-            "community": "community",
-            "deviceprofile": "device_profile",
         }
         if normalized in aliases:
             return aliases[normalized]
@@ -701,10 +697,6 @@ def infer_section(payload, filename: str) -> str:
         return "frida"
     if analyzer == "FirmwareAnalyzer" or metadata.get("firmware") or "firmware" in filename_l:
         return "firmware"
-    if metadata.get("pipeline") or "workflow" in filename_l or "steps" in findings:
-        return "workflow"
-    if "hit_count" in (payload.get("summary") or {}) or "community" in filename_l:
-        return "community"
     if analyzer == "APKAnalyzer" or metadata.get("apk") or "apk" in filename_l:
         return "apk"
     if "app_flags" in findings or "permissions" in findings or "credentials" in findings:

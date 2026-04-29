@@ -1,4 +1,9 @@
 Java.perform(function () {
+  const config = typeof CHAINRECON_CONFIG !== "undefined" ? CHAINRECON_CONFIG : {};
+  const rawFilter = config.class_filter || config.target_filter || "";
+  const filters = Array.isArray(rawFilter)
+    ? rawFilter.map(function (item) { return String(item || "").toLowerCase(); }).filter(Boolean)
+    : String(rawFilter || "").toLowerCase().split(/[,\n;]+/).map(function (item) { return item.trim(); }).filter(Boolean);
   const classes = [];
   const seen = {};
 
@@ -17,6 +22,10 @@ Java.perform(function () {
     onMatch(name) {
       const normalized = normalize(name);
       if (!normalized || seen[normalized]) {
+        return;
+      }
+      const lowered = normalized.toLowerCase();
+      if (filters.length && filters.indexOf("*") === -1 && !filters.some(function (filter) { return lowered.indexOf(filter) !== -1; })) {
         return;
       }
       seen[normalized] = true;

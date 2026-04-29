@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Label, Select, Static
 
@@ -60,24 +60,23 @@ class DeviceProfilesScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with VerticalScroll():
-            with Vertical(id="profiles-form"):
-                yield Label("[bold]Device Profiles[/]", id="title")
-                yield Label("Available Profiles")
-                yield Select([], id="profile-select", allow_blank=True)
-                yield Static("", id="profile-detail")
-                with Horizontal():
-                    yield Button("Set as Active", id="set-active", variant="primary")
-                    yield Button("Refresh", id="refresh-profiles")
-                    yield Button("Back", id="back-btn")
-                yield LogActionBar()
-                yield LogViewer(id="profiles-log")
+        with VerticalScroll(id="profiles-form"):
+            yield Label("[bold]Device Profiles[/]", id="title")
+            yield Label("Available Profiles")
+            yield Select([("(select a profile)", "__none__")], id="profile-select", value="__none__")
+            yield Static("", id="profile-detail")
+            with Horizontal():
+                yield Button("Set as Active", id="set-active", variant="primary")
+                yield Button("Refresh", id="refresh-profiles")
+                yield Button("Back", id="back-btn")
+            yield LogActionBar()
+            yield LogViewer(id="profiles-log")
         yield Footer()
 
     def on_mount(self) -> None:
         self._profiles: list = []
         self._active_profile: str | None = None
-        self._load_profiles()
+        self.call_after_refresh(self._load_profiles)
 
     def _load_profiles(self) -> None:
         log = self.query_one(LogViewer)
@@ -89,8 +88,11 @@ class DeviceProfilesScreen(Screen):
             self._profiles = []
 
         if self._profiles:
-            options = [(f"{p['name']} ({p.get('vendor', '?')} / {p.get('model', '?')})", p.get("stem") or p["name"]) for p in self._profiles]
-            self.query_one("#profile-select", Select).set_options(options)
+            options = [(f"{p['name']} ({p.get('vendor', '?')} / {p.get('model', '?')})", p["stem"]) for p in self._profiles]
+            select = self.query_one("#profile-select", Select)
+            select.set_options([("(select a profile)", "__none__"), *options])
+            active_profile = getattr(self.app, "_active_device_profile", None)
+            select.value = active_profile if active_profile in {value for _, value in options} else "__none__"
             log.append(f"Loaded {len(self._profiles)} device profile(s).")
         else:
             log.append("[dim]No device profiles found in profiles/devices/.[/]")
@@ -99,17 +101,17 @@ class DeviceProfilesScreen(Screen):
         if event.select.id != "profile-select":
             return
         detail = self.query_one("#profile-detail", Static)
-        if event.value in (Select.BLANK, None):
+        if event.value in (Select.BLANK, "__none__", None):
             detail.update("")
             return
-        profile = next((p for p in self._profiles if (p.get("stem") or p["name"]) == event.value), None)
+        profile = next((p for p in self._profiles if p["stem"] == event.value), None)
         if profile:
             lines = [
                 f"[bold]{profile.get('name')}[/]",
                 f"Vendor: {profile.get('vendor', '?')}  Model: {profile.get('model', '?')}",
                 f"Target: {profile.get('target', '?')}",
                 f"Ports: {', '.join(str(p) for p in profile.get('ports', []))}",
-                f"Protocols: {', '.join(profile.get('expected_protocols', []))}",
+                f"Protocols: {', '.join(str(protocol) for protocol in profile.get('expected_protocols', []))}",
                 f"Scan profile: {profile.get('scan_defaults', {}).get('profile', '?')}",
                 f"Frida target: {profile.get('frida_defaults', {}).get('target', '?')}",
             ]
@@ -134,13 +136,26 @@ class DeviceProfilesScreen(Screen):
 
     def _set_active(self) -> None:
         val = self.query_one("#profile-select", Select).value
-        if val in (Select.BLANK, None):
+        if val in (Select.BLANK, "__none__", None):
             self.query_one(LogViewer).append("[red]Select a profile first.[/]")
             return
         self._active_profile = str(val)
         # Store on app for other screens to read
         if hasattr(self, "app"):
             self.app._active_device_profile = self._active_profile  # type: ignore[attr-defined]
+            profile = next((item for item in self._profiles if item["stem"] == self._active_profile), None)
+            if profile and hasattr(self.app, "_report_gen"):
+                self.app._report_gen.add_results(
+                    "device_profile",
+                    {
+                        "metadata": {"section": "device_profile"},
+                        "summary": {"field_count": len(profile)},
+                        "findings": profile,
+                        "risk_indicators": [],
+                        "artifacts": [],
+                    },
+                    mode="replace",
+                )
         self.query_one(LogViewer).append(f"[green]Active profile set:[/] {self._active_profile}")
 
     def action_toggle_help(self) -> None:

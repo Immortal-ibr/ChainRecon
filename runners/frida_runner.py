@@ -74,7 +74,15 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
         "description": "Iterate matching device processes explicitly and run a census-style class dump for each one so the result is device-scoped rather than a single attached-process snapshot.",
         "file": _script_filename_from_label("Device-Wide Class Census"),
         "target_type": "package",
-        "params": [],
+        "params": [
+            {
+                "name": "class_filter",
+                "label": "Class filter",
+                "placeholder": "com.nooie.home, mqtt, token",
+                "default": "*",
+                "required": False,
+            }
+        ],
         "runtime": {"launch_if_needed": True, "expect_long_running_output": False},
     },
     "hook_all_methods": {
@@ -829,7 +837,21 @@ class FridaRunner:
         rendered_path = artifact_path(_runtime_script_dir(), f"frida_script_{safe_token(script_key)}", ".js")
         rendered_payload = self._normalize_script_parameters(script_key, parameters)
         prelude = "const CHAINRECON_CONFIG = Object.freeze(" + json.dumps(rendered_payload, indent=2) + ");\n\n"
-        rendered = prelude + script_path.read_text(encoding="utf-8")
+        source = script_path.read_text(encoding="utf-8")
+        rendered = (
+            prelude
+            + "(function () {\n"
+            + "  if (typeof Java === \"undefined\" || !Java.available) {\n"
+            + "    console.log(\"[WARN] Java runtime unavailable in this process; hook skipped.\");\n"
+            + "    return;\n"
+            + "  }\n"
+            + "  try {\n"
+            + source.replace("\n", "\n    ")
+            + "\n  } catch (chainreconError) {\n"
+            + "    console.log(\"[ERROR] Frida script failed: \" + chainreconError);\n"
+            + "  }\n"
+            + "}());\n"
+        )
         if _expected_long_running(script_key):
             rendered += "\n\nsetInterval(function () {}, 1000);\n"
         rendered_path.write_text(rendered, encoding="utf-8")
@@ -865,6 +887,8 @@ class FridaRunner:
             if not has_server_hint and not self.is_frida_server_running(serial=serial):
                 raise FridaDeviceError(device.get("frida_note") or "Selected device is not managed-compatible for Frida.")
 
+        server_status = self.start_frida_server_if_needed(serial=serial, frida_server_path=frida_server_path)
+
         if script_key == "device_class_census" and not custom_script_path:
             census = self._run_device_class_census(
                 target,
@@ -890,7 +914,6 @@ class FridaRunner:
                 "launch_performed": False,
             }
 
-        server_status = self.start_frida_server_if_needed(serial=serial, frida_server_path=frida_server_path)
         resolution = self.resolve_attach_target(target, serial=serial)
 
         if custom_script_path:
@@ -913,6 +936,7 @@ class FridaRunner:
             attach_flag=str(resolution["attach_flag"]),
             attach_target=str(resolution["attach_target"]),
             rendered_script_path=rendered_script_path,
+            long_running=_expected_long_running(chosen_script_key),
         )
 
         session_backend = self._choose_session_backend(chosen_script_key)
@@ -991,7 +1015,7 @@ class FridaRunner:
             "serial": serial,
             "target": target,
             "mode": session.mode,
-            "command": session.command,
+            "command": cmd,
             "log_path": str(log_path),
             "summary_path": str(summary_path),
             "rendered_script_path": str(rendered_script_path),
@@ -1008,8 +1032,9 @@ class FridaRunner:
         attach_flag: str,
         attach_target: str,
         rendered_script_path: Path,
+        long_running: bool,
     ) -> List[str]:
-        return [
+        command = [
             "frida",
             "-D",
             serial,
@@ -1023,6 +1048,9 @@ class FridaRunner:
             "pipe",
             "-q",
         ]
+        if long_running:
+            command.extend(["-t", "inf"])
+        return command
 
     @staticmethod
     def _build_api_command(
@@ -1043,8 +1071,6 @@ class FridaRunner:
         ]
 
     def _choose_session_backend(self, script_key: str) -> str:
-        if _expected_long_running(script_key) and self._python_frida_available():
-            return "frida_python_api"
         return "frida_cli_managed"
 
     def _python_frida_available(self) -> bool:
@@ -1090,6 +1116,10 @@ class FridaRunner:
         frida_mod = self._import_frida()
         device = frida_mod.get_device(session.serial, timeout=5)
         attach_target: Any = session.attach_target
+        if session.attach_flag == "-N" and "." in session.target:
+            pid = self._pidof(session.serial, session.target)
+            if pid is not None:
+                attach_target = pid
         try:
             api_session = device.attach(attach_target)
         except Exception:
@@ -1296,7 +1326,10 @@ class FridaRunner:
             }
         selector = self._frida_selector()
         self.ensure_online_device()
-        script_path = custom_script_path or str(self.get_script_path(script_key))
+        if custom_script_path:
+            script_path = custom_script_path
+        else:
+            script_path = str(self.render_script(script_key, {}, None))
         attach_flag = "-N" if "." in process_name else "-n"
         cmd = ["frida", *selector, attach_flag, process_name, "-l", script_path, "-q", "-t", "120", "--exit-on-error"]
         result = self._executor(cmd, timeout=120)
@@ -1319,7 +1352,10 @@ class FridaRunner:
             return self.run_script(package_name, script_key)
         selector = self._frida_selector()
         self.ensure_online_device()
-        script_path = custom_script_path or str(self.get_script_path(script_key))
+        if custom_script_path:
+            script_path = custom_script_path
+        else:
+            script_path = str(self.render_script(script_key, {}, None))
         cmd = ["frida", *selector, "-f", package_name, "-l", script_path, "-q", "-t", "120", "--exit-on-error"]
         result = self._executor(cmd, timeout=120)
         return {
@@ -1579,6 +1615,11 @@ class FridaRunner:
     ) -> Dict[str, Any]:
         state = self.ensure_online_device()
         selected_serial = serial or str(state.get("serial"))
+        try:
+            if "." in target_filter and self._package_installed(selected_serial, target_filter):
+                self.launch_target_if_needed(target_filter, serial=selected_serial)
+        except Exception:
+            pass
         processes = self.list_processes_structured(serial=selected_serial)
         filters = _split_parameter_values(target_filter) or [target_filter.strip()]
         filters = [item.lower() for item in filters if item.strip()]
@@ -1602,11 +1643,18 @@ class FridaRunner:
                 "identifier": identifier,
                 "name": name,
             })
+        if not candidates and "." in target_filter:
+            candidates.append({
+                "attach_target": target_filter,
+                "attach_flag": "-N",
+                "identifier": target_filter,
+                "name": target_filter,
+            })
         if not candidates:
             raise FridaDeviceError(f"No matching processes found for device-wide class census filter: {target_filter}")
 
         selector = ["-D", selected_serial]
-        script_path = str(self.get_script_path("device_class_census"))
+        script_path = str(self.render_script("device_class_census", parameters or {}, output_dir))
         output_lines = [f"[STATUS] Starting device-wide class census across {len(candidates)} process(es)."]
         error_lines: List[str] = []
         process_results: List[Dict[str, Any]] = []
@@ -1624,8 +1672,6 @@ class FridaRunner:
                 "-l",
                 script_path,
                 "-q",
-                "-t",
-                "30",
                 "--exit-on-error",
             ]
             try:
@@ -1951,6 +1997,9 @@ class FridaRunner:
                     session.error_line_count += 1
                 else:
                     session.output_line_count += 1
+                event_tag = _event_tag(line)
+                if event_tag:
+                    session.events_by_tag[event_tag] = session.events_by_tag.get(event_tag, 0) + 1
                 if on_output is not None:
                     on_output(formatted)
         try:
@@ -1993,20 +2042,6 @@ class FridaRunner:
                 session.status_reason = "stopped_by_user"
                 exit_code = 0
                 break
-            if session.target_alive_at_exit and session.reattach_count < 1:
-                session.reattach_count += 1
-                self._append_session_line(
-                    session,
-                    "[STATUS] Frida session exited unexpectedly; attempting one automatic reattach",
-                    "stderr",
-                    on_output,
-                )
-                try:
-                    self._start_cli_process(session, on_output)
-                    continue
-                except Exception as exc:
-                    session.status_reason = f"reattach_failed: {exc}"
-                    break
             if not session.target_alive_at_exit:
                 session.status_reason = "target_died"
             elif _expected_long_running(session.script_key):
@@ -2043,6 +2078,9 @@ class FridaRunner:
             session.error_line_count += 1
         else:
             session.output_line_count += 1
+        event_tag = _event_tag(cleaned)
+        if event_tag:
+            session.events_by_tag[event_tag] = session.events_by_tag.get(event_tag, 0) + 1
         if on_output is not None:
             on_output(formatted)
 

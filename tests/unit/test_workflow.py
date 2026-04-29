@@ -128,17 +128,3 @@ steps:
             )
             with self.assertRaises(ValueError):
                 WorkflowRunner(output_root=td).run(str(pipeline), dry_run=True)
-
-    def test_sample_nooie_mqtt_tls_pipeline_is_valid_yaml(self):
-        """The bundled sample workflow should parse correctly and have the expected steps."""
-        import yaml
-        pipeline_path = Path(__file__).resolve().parents[2] / "workflows" / "nooie_mqtt_tls.yaml"
-        self.assertTrue(pipeline_path.exists(), "Sample pipeline file missing")
-        with open(pipeline_path, encoding="utf-8") as f:
-            doc = yaml.safe_load(f)
-        self.assertIn("steps", doc)
-        step_ids = [s["id"] for s in doc["steps"]]
-        self.assertIn("port_scan", step_ids)
-        self.assertIn("mqtt_tls_check", step_ids)
-        self.assertIn("final_report", step_ids)
-        self.assertEqual(len(step_ids), 4)

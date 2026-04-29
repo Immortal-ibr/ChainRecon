@@ -76,12 +76,12 @@ class ReportsScreen(Screen):
             yield Label("Format:")
             yield Select(
                 [
+                    ("XLSX (multi-sheet workbook)", "xlsx"),
                     ("HTML (browser-readable)", "html"),
                     ("JSON (machine-readable)", "json"),
                     ("CSV (spreadsheet)", "csv"),
-                    ("XLSX (multi-sheet workbook)", "xlsx"),
                 ],
-                value="html",
+                value="xlsx",
                 id="format",
             )
             yield Label("Source:")

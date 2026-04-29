@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
@@ -12,18 +13,6 @@ from utils.logging_config import get_logger
 from utils.platform_info import find_tool
 
 logger = get_logger("firmware")
-
-
-class BinwalkNotFoundError(Exception):
-    """Raised when binwalk is not installed or not on PATH."""
-
-    INSTALL_GUIDANCE = (
-        "binwalk is required for firmware extraction.\n"
-        "  pip install binwalk          (Python wrapper)\n"
-        "  sudo apt install binwalk     (Debian/Ubuntu)\n"
-        "  brew install binwalk         (macOS)\n"
-        "Then ensure binwalk is on your PATH and try again."
-    )
 
 
 class FirmwareAnalyzer:
@@ -54,8 +43,14 @@ class FirmwareAnalyzer:
         extract_root = Path(output_dir) if output_dir else Path(tempfile.mkdtemp(prefix="chainrecon_firmware_"))
         extract_root.mkdir(parents=True, exist_ok=True)
 
-        self._run_binwalk(image, extract_root)
-        extracted_paths = self._collect_extracted_paths(extract_root)
+        extraction_warning = None
+        try:
+            self._run_binwalk(image, extract_root)
+            extracted_paths = self._collect_extracted_paths(extract_root)
+        except RuntimeError as exc:
+            extraction_warning = str(exc)
+            logger.warning("Firmware extraction failed; continuing with direct image scan: %s", exc)
+            extracted_paths = [image]
         file_inventory = self._inventory_files(extracted_paths)
         credential_hits = self._scan_text_hits(extracted_paths)
         config_findings = self._scan_config_paths(file_inventory)
@@ -94,6 +89,7 @@ class FirmwareAnalyzer:
                 "extract_root": str(extract_root.resolve()),
                 "analyzer": self.__class__.__name__,
                 "binwalk_path": self._binwalk,
+                "extraction_warning": extraction_warning,
             },
             "findings": {
                 "extracted_paths": [str(path) for path in extracted_paths],
@@ -122,15 +118,25 @@ class FirmwareAnalyzer:
         }
 
     def _run_binwalk(self, image: Path, extract_root: Path) -> None:
-        # Fail early with installation guidance if binwalk is not on PATH.
-        if not find_tool(self._binwalk):
-            raise BinwalkNotFoundError(BinwalkNotFoundError.INSTALL_GUIDANCE)
-        cmd = [self._binwalk, "--extract", "--matryoshka", "--directory", str(extract_root), str(image)]
+        args = ["--extract", "--matryoshka", "--directory", str(extract_root), str(image)]
+        commands = [[self._binwalk, *args]]
+        if sys.platform == "win32":
+            commands.append([sys.executable, "-m", "binwalk", *args])
         logger.info("Running binwalk extraction on %s", image)
-        try:
-            self._executor(cmd, timeout=900)
-        except FileNotFoundError:
-            raise BinwalkNotFoundError(BinwalkNotFoundError.INSTALL_GUIDANCE) from None
+        errors: List[str] = []
+        for cmd in commands:
+            try:
+                result = self._executor(cmd, timeout=900)
+            except OSError as exc:
+                errors.append(f"{cmd[0]}: {exc}")
+                continue
+            returncode = getattr(result, "returncode", 0) if result is not None else 0
+            if returncode in (0, None):
+                return
+            stderr = getattr(result, "stderr", "") or getattr(result, "stdout", "") or ""
+            errors.append(f"{cmd[0]} exited {returncode}: {str(stderr).strip()}")
+        details = "; ".join(errors) or "unknown error"
+        raise RuntimeError(f"binwalk extraction failed. Tried native executable and Python module fallback where applicable: {details}")
 
     def _collect_extracted_paths(self, extract_root: Path) -> List[Path]:
         paths = [path for path in extract_root.iterdir() if path.exists()]
@@ -139,6 +145,14 @@ class FirmwareAnalyzer:
     def _inventory_files(self, roots: Iterable[Path]) -> List[Dict[str, Any]]:
         inventory: List[Dict[str, Any]] = []
         for root in roots:
+            if root.is_file():
+                inventory.append({
+                    "path": str(root),
+                    "name": root.name,
+                    "suffix": root.suffix.lower(),
+                    "size": root.stat().st_size,
+                })
+                continue
             for path in root.rglob("*"):
                 if not path.is_file():
                     continue
@@ -259,6 +273,10 @@ class FirmwareAnalyzer:
 
     def _iter_small_text_files(self, roots: Iterable[Path]) -> Iterable[Path]:
         for root in roots:
+            if root.is_file():
+                if root.suffix.lower() in self._TEXT_EXTENSIONS or root.stat().st_size <= 2_000_000:
+                    yield root
+                continue
             for path in root.rglob("*"):
                 if not path.is_file():
                     continue

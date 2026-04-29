@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Header, Label, Select
 
@@ -28,12 +28,13 @@ databases, and embedded network endpoints.
                    domains/URLs/keywords) are matched against extracted files.
   Output Format  -- json / html / csv / xlsx for the firmware report.
 
-[bold]Requires binwalk[/]
-  binwalk must be installed and on PATH.  Install it with:
+[bold]Optional binwalk extraction[/]
+  binwalk should be installed and on PATH for full filesystem extraction:
     pip install binwalk       (Python wrapper)
     sudo apt install binwalk  (Debian/Ubuntu)
     brew install binwalk      (macOS)
-  Without binwalk the analyzer will fail with a clear error message.
+  If binwalk cannot run, ChainRecon still scans the firmware image directly
+  and records the extraction warning in the report metadata.
 
 [bold]What the analyzer finds[/]
   - Files with credential keywords: admin, password, token, secret, mqtt, webrtc
@@ -64,37 +65,39 @@ class FirmwareScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with VerticalScroll():
-            with Vertical(id="firmware-form"):
-                yield Label("[bold]Firmware Analysis[/]", id="title")
-                yield Label("Firmware Image Path")
-                yield Input(placeholder="/path/to/firmware.bin", id="firmware-path")
-                yield Label("Extract Directory (optional)")
-                yield Input(placeholder="leave empty for auto temp dir", id="extract-dir")
-                yield Label("Device Profile (optional)")
-                yield Select([], id="firmware-device-profile", allow_blank=True)
-                yield Label("Output Format")
-                yield Select(
-                    [("JSON", "json"), ("HTML", "html"), ("CSV", "csv"), ("XLSX", "xlsx")],
-                    id="firmware-format",
-                    value="json",
-                )
-                with Horizontal():
-                    yield Button("Analyze Firmware", id="run-firmware", variant="primary")
-                    yield Button("Back", id="back-btn")
-                yield LogActionBar()
-                yield LogViewer(id="firmware-log")
+        with VerticalScroll(id="firmware-form"):
+            yield Label("[bold]Firmware Analysis[/]", id="title")
+            yield Label("Firmware Image Path")
+            yield Input(placeholder="/path/to/firmware.bin", id="firmware-path")
+            yield Label("Extract Directory (optional)")
+            yield Input(placeholder="leave empty for auto temp dir", id="extract-dir")
+            yield Label("Device Profile (optional)")
+            yield Select([("(none)", "__none__")], id="firmware-device-profile", value="__none__")
+            yield Label("Output Format")
+            yield Select(
+                [("XLSX", "xlsx"), ("HTML", "html"), ("JSON", "json"), ("CSV", "csv")],
+                id="firmware-format",
+                value="xlsx",
+            )
+            with Horizontal():
+                yield Button("Analyze Firmware", id="run-firmware", variant="primary")
+                yield Button("Back", id="back-btn")
+            yield LogActionBar()
+            yield LogViewer(id="firmware-log")
         yield Footer()
 
     def on_mount(self) -> None:
-        self._running = False
-        self._populate_device_profiles()
+        self._firmware_running = False
+        self.call_after_refresh(self._populate_device_profiles)
 
     def _populate_device_profiles(self) -> None:
         try:
             profiles = list_device_profiles()
-            options = [("(none)", "__none__")] + [(p["name"], p.get("stem") or p["name"]) for p in profiles]
-            self.query_one("#firmware-device-profile", Select).set_options(options)
+            options = [("(none)", "__none__")] + [(p["name"], p["stem"]) for p in profiles]
+            select = self.query_one("#firmware-device-profile", Select)
+            select.set_options(options)
+            active_profile = getattr(self.app, "_active_device_profile", None)
+            select.value = active_profile if active_profile in {value for _, value in options} else "__none__"
         except Exception:
             pass
 
@@ -105,7 +108,7 @@ class FirmwareScreen(Screen):
             self._start_analysis()
 
     def _start_analysis(self) -> None:
-        if self._running:
+        if self._firmware_running:
             return
         firmware_path = self.query_one("#firmware-path", Input).value.strip()
         if not firmware_path:
@@ -120,7 +123,7 @@ class FirmwareScreen(Screen):
         log.clear_log()
         log.append(f"[cyan]Analyzing firmware:[/] {firmware_path}")
 
-        self._running = True
+        self._firmware_running = True
         threading.Thread(
             target=self._run_firmware,
             args=(firmware_path, extract_dir, device_profile_name, str(fmt)),
@@ -129,52 +132,49 @@ class FirmwareScreen(Screen):
 
     def _run_firmware(self, firmware_path: str, extract_dir, device_profile_name, fmt: str) -> None:
         log = self.query_one(LogViewer)
+        emit = self.app.call_from_thread
         try:
             from analysis.firmware_analyzer import FirmwareAnalyzer
             from utils.config import load_device_profile
-            from utils.platform_info import find_tool
-
-            if not find_tool("binwalk"):
-                log.append(
-                    "[red]binwalk not found.[/]\n"
-                    "Install it with:  pip install binwalk  (Python wrapper)\n"
-                    "                  sudo apt install binwalk  (Debian/Ubuntu)\n"
-                    "                  brew install binwalk  (macOS)"
-                )
-                return
 
             rules = {}
             if device_profile_name:
                 try:
                     profile = load_device_profile(device_profile_name)
                     rules = profile.get("firmware_rules") or {}
-                    log.append(f"Using device profile: {profile.get('name', device_profile_name)}")
+                    emit(log.append, f"Using device profile: {profile.get('name', device_profile_name)}")
                 except Exception as exc:
-                    log.append(f"[yellow]Device profile not loaded:[/] {exc}")
+                    emit(log.append, f"[yellow]Device profile not loaded:[/] {exc}")
 
-            output_dir = extract_dir or str(get_output_dir() / "firmware")
+            if extract_dir:
+                output_dir = extract_dir
+            else:
+                from utils.artifacts import timestamped_dir
+                output_dir = str(timestamped_dir(get_output_dir(), "firmware_extract"))
             analyzer = FirmwareAnalyzer()
             result = analyzer.analyze(firmware_path, output_dir=output_dir, rules=rules)
 
             summary = result.get("summary", {})
             risk = result.get("risk_indicators", [])
-            log.append(f"[green]Analysis complete.[/]")
-            log.append(
+            emit(log.append, f"[green]Analysis complete.[/]")
+            emit(
+                log.append,
                 f"Files extracted: {summary.get('file_count', 0)}  "
                 f"Credential hits: {summary.get('credential_hit_count', 0)}  "
                 f"Private keys: {summary.get('private_key_count', 0)}  "
-                f"Shadow files: {summary.get('shadow_file_count', 0)}"
+                f"Shadow files: {summary.get('shadow_file_count', 0)}",
             )
-            log.append(
+            emit(
+                log.append,
                 f"URLs: {summary.get('url_count', 0)}  "
                 f"IPs: {summary.get('ip_count', 0)}  "
                 f"Domains: {summary.get('domain_count', 0)}  "
-                f"Rule hits: {summary.get('firmware_rule_hit_count', 0)}"
+                f"Rule hits: {summary.get('firmware_rule_hit_count', 0)}",
             )
             for ri in risk:
                 sev = ri.get("severity", "info").upper()
                 sev_color = "red" if sev == "HIGH" else ("yellow" if sev == "MEDIUM" else "cyan")
-                log.append(f"  [{sev_color}][{sev}][/] {ri.get('title', '')}")
+                emit(log.append, f"  [{sev_color}][{sev}][/] {ri.get('title', '')}")
 
             # Save report in requested format
             try:
@@ -185,18 +185,31 @@ class FirmwareScreen(Screen):
                 rg.add_results("firmware", result)
                 out_path = artifact_path(Path(output_dir), "firmware_report", f".{fmt}")
                 rg.generate(fmt, str(out_path))
-                log.append(f"Report saved: {out_path}")
+                emit(log.append, f"Report saved: {out_path}")
                 if hasattr(self, "app") and hasattr(self.app, "_report_gen"):
                     self.app._report_gen.add_results("firmware", result, mode="append")
+                    if device_profile_name:
+                        profile = load_device_profile(device_profile_name)
+                        self.app._report_gen.add_results(
+                            "device_profile",
+                            {
+                                "metadata": {"section": "device_profile"},
+                                "summary": {"field_count": len(profile)},
+                                "findings": profile,
+                                "risk_indicators": [],
+                                "artifacts": [],
+                            },
+                            mode="replace",
+                        )
             except Exception as exc:
-                log.append(f"[yellow]Report not saved:[/] {exc}")
+                emit(log.append, f"[yellow]Report not saved:[/] {exc}")
 
         except FileNotFoundError as exc:
-            log.append(f"[red]File not found:[/] {exc}")
+            emit(log.append, f"[red]File not found:[/] {exc}")
         except Exception as exc:
-            log.append(f"[red]Firmware analysis error:[/] {exc}")
+            emit(log.append, f"[red]Firmware analysis error:[/] {exc}")
         finally:
-            self._running = False
+            self._firmware_running = False
 
     def action_toggle_help(self) -> None:
         self.app.push_screen(HelpScreen(HELP_TEXT, title="Firmware Analysis"))

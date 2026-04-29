@@ -65,7 +65,7 @@ class WorkflowRunner:
                 continue
             try:
                 result = self._execute_step(step_id, rendered, run_dir, context, results)
-                results[step_id] = {"id": step_id, **result}
+                results[step_id] = self._normalize_step_record(step_id, result)
             except Exception as exc:
                 results[step_id] = {"id": step_id, "type": rendered.get("type"), "status": "failed", "error": str(exc)}
                 if rendered.get("critical", False):
@@ -162,7 +162,20 @@ class WorkflowRunner:
             return self._step_report(step_id, step, run_dir, results)
         if step_type == "community":
             return self._step_community(step_id, step, run_dir)
+        if step_type == "assert":
+            return self._step_assert(step_id, step, context, results)
         raise ValueError(f"Unsupported workflow step type: {step_type}")
+
+    def _normalize_step_record(self, step_id: str, result: Dict[str, Any]) -> Dict[str, Any]:
+        record = {"id": step_id, **result}
+        payload = result.get("result") if isinstance(result.get("result"), dict) else {}
+        if isinstance(payload, dict):
+            for key in ("metadata", "findings", "summary", "risk_indicators", "artifacts"):
+                if key in payload and key not in record:
+                    record[key] = payload[key]
+        record.setdefault("summary", {})
+        record.setdefault("findings", {})
+        return record
 
     def _step_scan(self, step_id: str, step: Dict[str, Any], run_dir: Path) -> Dict[str, Any]:
         import chainrecon
@@ -184,6 +197,8 @@ class WorkflowRunner:
             if Path(path).exists() and Path(path).suffix.lower() == ".txt"
         ]
         result = chainrecon.combine_scan_results(scan_result, parsed) if parsed else {"metadata": scan_result, "findings": {}, "summary": {}, "risk_indicators": []}
+        summary = result.setdefault("summary", {})
+        summary.setdefault("open_ports", _extract_open_ports(result))
         output_path = artifact_path(run_dir, f"workflow_{safe_token(step_id)}", ".json")
         write_json_artifact(output_path, result)
         return {"type": "scan", "status": "completed", "output_path": str(output_path), "result": result}
@@ -206,6 +221,7 @@ class WorkflowRunner:
             },
             "summary": {
                 "certificate_count": certificates.get("summary", {}).get("certificate_count", 0),
+                "reachable_port_count": certificates.get("summary", {}).get("reachable_ports", 0),
                 "weak_cipher_count": ciphers.get("summary", {}).get("weak_cipher_count", 0),
                 "risk_rating": security.get("summary", {}).get("risk_rating", "low"),
             },
@@ -311,7 +327,7 @@ class WorkflowRunner:
         generator = ReportGenerator()
         for section, payload in merged.items():
             generator.add_results(section, payload, mode="append" if section == "frida" else "replace")
-        formats = step.get("formats") or [step.get("format") or "json"]
+        formats = step.get("formats") or [step.get("format") or "xlsx"]
         outputs = []
         for format_name in formats:
             output_path = run_dir / f"{safe_token(step_id)}.{format_name}"
@@ -330,6 +346,20 @@ class WorkflowRunner:
         output_path = artifact_path(run_dir, f"workflow_{safe_token(step_id)}", ".json")
         write_json_artifact(output_path, result)
         return {"type": "community", "status": "completed", "output_path": str(output_path), "result": result}
+
+    def _step_assert(self, step_id: str, step: Dict[str, Any], context: Dict[str, Any], results: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        condition = str(step.get("condition") or "").strip()
+        if not condition:
+            raise ValueError(f"Assert step '{step_id}' requires a condition.")
+        if not self._evaluate_when(condition, context, results):
+            raise AssertionError(str(step.get("message") or f"Assertion failed for workflow step '{step_id}'."))
+        result = {
+            "metadata": {"section": "workflow_assert", "step_id": step_id},
+            "findings": {"condition": condition, "message": step.get("message")},
+            "summary": {"assertion_passed": True},
+            "risk_indicators": [],
+        }
+        return {"type": "assert", "status": "completed", "result": result}
 
     def _render_context(self, context: Dict[str, Any], results: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         return {**context, "steps": results}
@@ -365,3 +395,22 @@ class WorkflowRunner:
         if isinstance(value, list):
             return [self._to_namespace(item) for item in value]
         return value
+
+
+def _extract_open_ports(result: Dict[str, Any]) -> List[int]:
+    ports: set[int] = set()
+    findings = result.get("findings") if isinstance(result.get("findings"), dict) else {}
+    for host in findings.get("hosts", []) if isinstance(findings.get("hosts"), list) else []:
+        if not isinstance(host, dict):
+            continue
+        for item in [*(host.get("services") or []), *(host.get("ports") or [])]:
+            if not isinstance(item, dict):
+                continue
+            state = str(item.get("state") or "open").lower()
+            if state != "open":
+                continue
+            try:
+                ports.add(int(item.get("port")))
+            except (TypeError, ValueError):
+                continue
+    return sorted(ports)

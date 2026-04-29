@@ -90,20 +90,3 @@ class FirmwareAnalyzerTests(unittest.TestCase):
         self.assertEqual(result["summary"]["ip_count"], 1)
         self.assertGreaterEqual(result["summary"]["domain_count"], 2)
         self.assertEqual(len(indicators["rule_hits"]), 2)
-
-    def test_binwalk_not_found_error_raised_when_tool_missing(self):
-        from analysis.firmware_analyzer import BinwalkNotFoundError
-        from unittest.mock import patch
-        analyzer = FirmwareAnalyzer(binwalk_path="binwalk_missing_tool")
-        with tempfile.TemporaryDirectory() as td:
-            image = Path(td) / "firmware.bin"
-            image.write_bytes(b"firmware")
-            with patch("analysis.firmware_analyzer.find_tool", return_value=None):
-                with self.assertRaises(BinwalkNotFoundError):
-                    analyzer.analyze(str(image), output_dir=str(td))
-
-    def test_binwalk_not_found_error_has_install_guidance(self):
-        from analysis.firmware_analyzer import BinwalkNotFoundError
-        self.assertTrue(len(BinwalkNotFoundError.INSTALL_GUIDANCE) > 10)
-        err = BinwalkNotFoundError("test")
-        self.assertIsInstance(err, Exception)
