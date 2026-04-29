@@ -13,6 +13,45 @@ Java.perform(function () {
     }
   };
 
+  const describeValue = function (value) {
+    try {
+      if (value === null || value === undefined) return "null";
+      return value.toString();
+    } catch (e) {
+      return "<?>";
+    }
+  };
+
+  const hookAdditionalClasses = function () {
+    const classes = Array.isArray(config.additional_classes) ? config.additional_classes : [];
+    const interesting = /url|request|execute|enqueue|newcall|open|connect|send|post|get/i;
+    classes.forEach(function (className) {
+      try {
+        const clazz = Java.use(className);
+        const methods = clazz.class.getDeclaredMethods();
+        const seen = {};
+        let count = 0;
+        for (let i = 0; i < methods.length; i++) {
+          const methodName = methods[i].getName();
+          if (seen[methodName] || !interesting.test(methodName) || !clazz[methodName]) continue;
+          seen[methodName] = true;
+          clazz[methodName].overloads.forEach(function (ov) {
+            ov.implementation = function () {
+              const args = [];
+              for (let j = 0; j < arguments.length; j++) args.push(describeValue(arguments[j]));
+              logLine("HTTP-EXTRA", className + "." + methodName + "(" + args.join(", ") + ")");
+              return ov.apply(this, arguments);
+            };
+            count += 1;
+          });
+        }
+        console.log("[HOOK] " + className + " HTTP extra overloads=" + count);
+      } catch (e) {
+        console.log("[WARN] HTTP extra class hook failed for " + className + ": " + e);
+      }
+    });
+  };
+
   try {
     const RequestBuilder = Java.use("okhttp3.Request$Builder");
     const overloads = [
@@ -100,5 +139,6 @@ Java.perform(function () {
     console.log("[WARN] WebView hook unavailable: " + e);
   }
 
+  hookAdditionalClasses();
   console.log("[STATUS] http trace ready");
 });

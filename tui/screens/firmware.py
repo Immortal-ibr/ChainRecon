@@ -20,6 +20,9 @@ Extracts and inspects a firmware image using binwalk, then scans the
 extracted filesystem for credentials, private keys, certificates, password
 databases, and embedded network endpoints.
 
+This module is in its beginnings and will be expanded later with deeper
+filesystem, architecture, and vendor-specific firmware analysis.
+
 [bold]What to provide[/]
   Firmware Image -- path to the firmware binary (.bin, .img, .tar.gz, etc.)
   Extract Dir    -- where to write extracted files.  Leave empty to use a
@@ -67,6 +70,9 @@ class FirmwareScreen(Screen):
         yield Header()
         with VerticalScroll(id="firmware-form"):
             yield Label("[bold]Firmware Analysis[/]", id="title")
+            yield Label(
+                "[dim]Firmware analysis is in its beginnings and will be expanded later with deeper firmware coverage.[/]"
+            )
             yield Label("Firmware Image Path")
             yield Input(placeholder="/path/to/firmware.bin", id="firmware-path")
             yield Label("Extract Directory (optional)")

@@ -31,6 +31,20 @@ def strip_rich_markup(text: str) -> str:
     return re.sub(r"\[/?[^\]]*\]", "", text)
 
 
+_ANSI_CONTROL_RE = re.compile(
+    r"(?:\x1b\[[0-?]*[ -/]*[@-~])"
+    r"|(?:\x1b\][^\x07]*(?:\x07|\x1b\\))"
+    r"|(?:\x1b[@-Z\\-_])"
+)
+
+
+def sanitize_terminal_controls(text: str) -> str:
+    """Strip terminal control sequences that can leak into captured TUI output."""
+    if not text:
+        return text
+    return _ANSI_CONTROL_RE.sub("", text).replace("\x1b", "")
+
+
 class LogActionBar(Horizontal):
     """Small control row for the output box on each screen."""
 
@@ -127,6 +141,7 @@ class LogViewer(RichLog):
 
     def append(self, text: str) -> None:
         """Append text to the log, retaining only the newest configured lines."""
+        text = sanitize_terminal_controls(text)
         self._record_path_from_text(text)
         lines = text.splitlines() or [text]
         for line in lines:

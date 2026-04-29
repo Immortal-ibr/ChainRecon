@@ -690,53 +690,39 @@ class RunScriptTests(unittest.TestCase):
         self.assertIsNone(self.runner.stop_session())
 
     @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
-    def test_start_session_uses_python_api_backend_for_long_running_scripts(self, _):
+    def test_start_session_uses_managed_cli_backend_for_long_running_scripts(self, _):
         import tempfile
 
-        class FakeScript:
+        class FakeProcess:
             def __init__(self):
-                self._handler = None
+                self.stdout = tempfile.SpooledTemporaryFile(mode="w+t")
+                self.stdout.write("[STATUS] cli ready\n")
+                self.stdout.seek(0)
+                self.stderr = tempfile.SpooledTemporaryFile(mode="w+t")
+                self.stdin = tempfile.SpooledTemporaryFile(mode="w+t")
+                self.returncode = None
 
-            def on(self, _event, handler):
-                self._handler = handler
+            def poll(self):
+                return self.returncode
 
-            def load(self):
-                if self._handler is not None:
-                    self._handler({"type": "log", "payload": "[STATUS] python api ready"}, None)
+            def wait(self, timeout=None):
+                if self.returncode is None:
+                    self.returncode = 0
+                return self.returncode
 
-            def unload(self):
-                return None
+            def terminate(self):
+                self.returncode = 0
 
-        class FakeApiSession:
-            def __init__(self):
-                self._detached = None
-
-            def on(self, _event, handler):
-                self._detached = handler
-
-            def create_script(self, _source):
-                return FakeScript()
-
-            def detach(self):
-                return None
-
-        class FakeDevice:
-            def attach(self, _target):
-                return FakeApiSession()
-
-        class FakeFrida:
-            @staticmethod
-            def get_device(_serial, timeout=5):
-                return FakeDevice()
+            def kill(self):
+                self.returncode = 1
 
         with tempfile.TemporaryDirectory() as td, \
-             patch.object(self.runner, "_python_frida_available", return_value=True), \
-             patch.object(self.runner, "_import_frida", return_value=FakeFrida()), \
              patch.object(self.runner, "is_target_running", return_value=True), \
              patch.object(self.runner, "ensure_online_device", return_value={"serial": "emulator-5554", "online": True}), \
              patch.object(self.runner, "list_device_inventory", return_value={"connected_devices": [{"serial": "emulator-5554", "frida_compatible": True}], "local_avds": []}), \
              patch.object(self.runner, "start_frida_server_if_needed", return_value={"running": True, "started": False, "frida_server": "/tmp/frida-server"}), \
-             patch.object(self.runner, "resolve_attach_target", return_value={"mode": "attach", "attach_flag": "-N", "attach_target": "com.nooie.home", "target_running_before": True, "launch_performed": False}):
+             patch.object(self.runner, "resolve_attach_target", return_value={"mode": "attach", "attach_flag": "-N", "attach_target": "com.nooie.home", "target_running_before": True, "launch_performed": False}), \
+             patch("runners.frida_runner.subprocess.Popen", return_value=FakeProcess()):
             result = self.runner.start_session(
                 target="com.nooie.home",
                 script_key="network_traffic_monitor",
@@ -744,8 +730,9 @@ class RunScriptTests(unittest.TestCase):
             )
             active = self.runner.active_session()
             self.assertIsNotNone(active)
-            self.assertEqual(self.runner._active_session.session_backend, "frida_python_api")
-            self.assertEqual(result["command"][0], "python-frida-api")
+            self.assertEqual(self.runner._active_session.session_backend, "frida_cli_managed")
+            self.assertEqual(result["command"][0], "frida")
+            self.assertNotIn("--auto-perform", result["command"])
             summary = self.runner.stop_session(timeout=2)
         self.assertEqual(summary["status"], "stopped_by_user")
 

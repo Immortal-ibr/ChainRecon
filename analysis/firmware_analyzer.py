@@ -128,15 +128,24 @@ class FirmwareAnalyzer:
             try:
                 result = self._executor(cmd, timeout=900)
             except OSError as exc:
-                errors.append(f"{cmd[0]}: {exc}")
+                errors.append(f"{cmd[0]}: {self._friendly_extraction_error(exc)}")
                 continue
             returncode = getattr(result, "returncode", 0) if result is not None else 0
             if returncode in (0, None):
                 return
             stderr = getattr(result, "stderr", "") or getattr(result, "stdout", "") or ""
-            errors.append(f"{cmd[0]} exited {returncode}: {str(stderr).strip()}")
+            errors.append(f"{cmd[0]} exited {returncode}: {self._friendly_extraction_error(stderr)}")
         details = "; ".join(errors) or "unknown error"
-        raise RuntimeError(f"binwalk extraction failed. Tried native executable and Python module fallback where applicable: {details}")
+        raise RuntimeError(f"binwalk extraction unavailable; direct firmware image scan continued. Attempts: {details}")
+
+    @staticmethod
+    def _friendly_extraction_error(error: Any) -> str:
+        text = str(error).strip()
+        if "%1 is not a valid Win32 application" in text or "WinError 193" in text:
+            return "configured binwalk path is not a runnable executable on this host"
+        if "ModuleNotFoundError" in text and "binwalk.core" in text:
+            return "Python binwalk package is incomplete or incompatible; install a working binwalk CLI for extraction"
+        return text
 
     def _collect_extracted_paths(self, extract_root: Path) -> List[Path]:
         paths = [path for path in extract_root.iterdir() if path.exists()]

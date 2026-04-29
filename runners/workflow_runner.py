@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Dict, Iterable, List, Optional
 
 import yaml
@@ -17,6 +16,22 @@ from runners.nmap_runner import NmapRunner
 from utils.artifacts import artifact_path, safe_token, timestamped_dir, write_json_artifact
 from utils.community_plugins import load_community_plugin
 from utils.config import get_output_dir, load_device_profile
+
+
+class _SafeNamespace:
+    """Namespace used by workflow expressions; missing attributes resolve empty."""
+
+    def __init__(self, **values: Any) -> None:
+        self.__dict__.update(values)
+
+    def __getattr__(self, _name: str) -> Any:
+        return _SafeNamespace()
+
+    def __bool__(self) -> bool:
+        return False
+
+    def __contains__(self, _item: Any) -> bool:
+        return False
 
 
 class WorkflowRunner:
@@ -391,7 +406,7 @@ class WorkflowRunner:
 
     def _to_namespace(self, value: Any) -> Any:
         if isinstance(value, dict):
-            return SimpleNamespace(**{key: self._to_namespace(item) for key, item in value.items()})
+            return _SafeNamespace(**{key: self._to_namespace(item) for key, item in value.items()})
         if isinstance(value, list):
             return [self._to_namespace(item) for item in value]
         return value

@@ -19,7 +19,7 @@ from tui.screens.scan import _displayable_output_files
 from tui.screens.scan import _interface_options
 from tui.screens.dashboard import _format_tool_status
 from tui.widgets.findings_table import FindingsTable
-from tui.widgets.log_viewer import LogViewer, _wrap_display_text
+from tui.widgets.log_viewer import LogViewer, _wrap_display_text, sanitize_terminal_controls
 from tui.widgets.pasteable_input import PasteableInput
 from tui.screens.reports import _has_report_data, _report_output_path
 from textual.widgets import Select
@@ -88,6 +88,10 @@ class WidgetImportTests(unittest.TestCase):
         self.assertNotIn("one\n", plain)
         self.assertIn("two", plain)
         self.assertIn("three", plain)
+
+    def test_sanitizes_leaked_mouse_terminal_sequence(self):
+        text = sanitize_terminal_controls("\x1b[<35;28;21Mcom.nooie.home")
+        self.assertEqual(text, "com.nooie.home")
 
     def test_wrap_display_text_breaks_long_paths(self):
         wrapped = _wrap_display_text("Result saved: C:\\Users\\me\\some\\very\\long\\path\\to\\an\\artifact\\that\\should\\wrap\\output.json", width=40)
@@ -191,7 +195,7 @@ class TuiRequirementTests(unittest.TestCase):
                     screen = app.screen
                     screen._refresh_script_inputs()
                     await pilot.pause()
-                    widget = screen.query_one("#param-nooie_mqtt_trace-class_filter", PasteableInput)
+                    widget = screen.query_one("#param-list_classes-class_filter", PasteableInput)
                     self.assertIsNotNone(widget)
 
         asyncio.run(_run())
@@ -207,11 +211,35 @@ class TuiRequirementTests(unittest.TestCase):
                     await pilot.pause()
                     screen = app.screen
                     select = screen.query_one("#script", Select)
-                    select.value = "network_traffic_monitor"
+                    self.assertEqual(select.value, "list_classes")
                     screen._refresh_script_inputs()
                     await pilot.pause()
-                    widget = screen.query_one("#param-network_traffic_monitor-host_filter", PasteableInput)
-                    self.assertEqual(widget.value, "*")
+
+        asyncio.run(_run())
+
+    def test_frida_extra_class_inputs_are_visible_for_network_hooks(self):
+        async def _run() -> None:
+            app = ChainReconApp()
+            app.add_class("ascii-mode")
+            async with app.run_test(size=(100, 28)) as pilot:
+                await pilot.pause()
+                with patch("tui.screens.frida.FridaScreen.on_mount", return_value=None):
+                    app.push_screen("frida")
+                    await pilot.pause()
+                    screen = app.screen
+                    select = screen.query_one("#script", Select)
+                    for script in [
+                        "http_intercept",
+                        "network_traffic_monitor",
+                        "crypto_monitor",
+                        "shared_preferences_dump",
+                        "nooie_mqtt_trace",
+                    ]:
+                        select.value = script
+                        screen._refresh_script_inputs()
+                        await pilot.pause()
+                        widget = screen.query_one(f"#param-{script}-additional_classes", PasteableInput)
+                        self.assertEqual(widget.value, "")
 
         asyncio.run(_run())
 
@@ -244,6 +272,10 @@ class TuiRequirementTests(unittest.TestCase):
                     self.assertIn("name", param)
                     self.assertIn("label", param)
                     self.assertIn("required", param)
+
+    def test_live_class_monitor_registered_as_long_running(self):
+        self.assertIn("live_class_monitor", FRIDA_SCRIPTS)
+        self.assertTrue(FRIDA_SCRIPTS["live_class_monitor"]["runtime"]["expect_long_running_output"])
 
     def test_reports_screen_includes_xlsx_format(self):
         async def _run() -> None:
@@ -317,7 +349,21 @@ class TuiRequirementTests(unittest.TestCase):
             app.add_class("ascii-mode")
             async with app.run_test(size=(100, 28)) as pilot:
                 await pilot.pause()
-                for name in ["scan", "capture", "analyze", "frida", "apk", "reports", "settings", "network_setup", "custom_script"]:
+                for name in [
+                    "scan",
+                    "capture",
+                    "analyze",
+                    "frida",
+                    "apk",
+                    "reports",
+                    "settings",
+                    "network_setup",
+                    "custom_script",
+                    "workflow",
+                    "firmware",
+                    "plugins",
+                    "profiles",
+                ]:
                     app.push_screen(name)
                     await pilot.pause()
                     app.pop_screen()

@@ -8,7 +8,7 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Header, Static
+from textual.widgets import Button, Static, TextArea
 
 
 class HelpScreen(ModalScreen):
@@ -53,6 +53,11 @@ class HelpScreen(ModalScreen):
         height: 1fr;
     }
 
+    #help-text {
+        height: 1fr;
+        border: none;
+    }
+
     #help-close-bar {
         height: 3;
         align: right middle;
@@ -71,7 +76,7 @@ class HelpScreen(ModalScreen):
         with Vertical(id="help-dialog"):
             yield Static(f"{self._title} -- Help", id="help-title")
             with VerticalScroll(id="help-body"):
-                yield Static(self._help_text)
+                yield TextArea(_plain_help_text(self._help_text), id="help-text", read_only=True)
             with Horizontal(id="help-close-bar"):
                 yield Button("Close  [dim]Esc / Q[/]", id="btn-close", variant="default")
 
@@ -80,3 +85,9 @@ class HelpScreen(ModalScreen):
 
     def action_dismiss(self) -> None:
         self.dismiss()
+
+
+def _plain_help_text(text: str) -> str:
+    import re
+
+    return re.sub(r"\[/?[^\]]*\]", "", text)

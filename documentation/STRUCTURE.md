@@ -25,6 +25,7 @@ The core analysis modules. Each one takes either a file path or a network target
 - `rtp_analyzer.py` -- RTP/SRTP stream identification from UDP payloads. Protocol classification by first-byte heuristics (STUN, DTLS, RTP, TURN). H.264 NAL unit detection. Codec identification and packet loss estimation.
 - `cert_analyzer.py` -- Extracts DER-encoded X.509 certificates from TLS/DTLS handshakes in pcap. Checks RSA key size, signature algorithm, expiry, self-signed status, and Fermat factorisation vulnerability.
 - `mqtt_analyzer.py` -- MQTT traffic analysis including deep byte-level parsing of CONNECT/PUBLISH/SUBSCRIBE from raw TCP, and XOR key detection on opaque payloads.
+- `firmware_analyzer.py` -- Early-stage firmware triage. Uses binwalk when available, falls back to direct image scanning when extraction is unavailable, and looks for credentials, keys, certificates, endpoints, and profile rule hits. This module is expected to expand later.
 
 ## runners/
 
@@ -33,9 +34,9 @@ Subprocess wrappers. The goal is one consistent place that handles timeouts, enc
 - `base.py` -- `run_subprocess()` with UTF-8 encoding and error replacement, `check_tool()` for verifying tool availability, and `make_output_dir()` for timestamped output directories.
 - `nmap_runner.py` -- Builds nmap command lines for the different scan profiles and invokes them. Now outputs both .txt and .xml for every scan.
 - `extended_scanner.py` -- Active service fingerprinting helpers for already-identified ports. Retired Python TCP connect and ARP discovery helpers now live under `legacy/` compatibility wrappers.
-- `frida_runner.py` -- Manages frida-server connections and script injection.
+- `frida_runner.py` -- Manages frida-server connections, app launch/wake-up, script rendering, long-running sessions, stoppable device-wide class census, and Frida summary artifacts.
 - `capture_runner.py` -- Handles tshark/tcpdump captures with duration limits and file rotation.
-- `frida_scripts/` -- JavaScript snippets loaded by the frida runner: SSL pinning bypass, crypto monitor, method hooks, class listing.
+- `frida_scripts/` -- JavaScript snippets loaded by the Frida runner: class listing, live loaded-class monitoring, device-wide census, SSL pinning bypass, HTTP/socket/crypto/preference/MQTT monitoring, and targeted method hooks.
 
 ## tui/
 
@@ -54,7 +55,7 @@ The Textual TUI application.
   - `settings.py` -- Tool status and config viewer, includes setup instructions for jadx and apktool
   - `reports.py` -- Report generation with current-session or all-output-file source modes
   - `custom_script.py` -- Run user-supplied analysis scripts against a target
-  - `help_screen.py` -- Generic scrollable help modal
+  - `help_screen.py` -- Generic scrollable help modal. Long help text is rendered through a read-only text area so detailed Frida help remains responsive.
 - `widgets/` -- Reusable widgets:
   - `log_viewer.py` -- Bounded output panel with clear, copy, save, and open controls
   - `pasteable_input.py` -- Input subclass that normalizes Ctrl+V, Ctrl+Shift+V, Shift+Insert, quoted paths, and file URLs
@@ -74,9 +75,16 @@ Report output plugins. The `ReportGenerator` takes structured analyzer output an
 - `local.yaml` -- Your overrides (tool paths, interface names, API keys). Create this if it doesn't exist.
 - `apk_patterns.yaml` -- Regex patterns for credential detection and dangerous permissions in APK analysis.
 
+## profiles/
+
+- `devices/nooie.yaml` -- Authoritative Nooie device profile. The Profiles, Workflow, and Firmware screens use this profile when `nooie` is selected.
+- `devices/*.yaml` -- Other shareable device profiles. These are device facts and defaults, not local runtime settings.
+
+Runtime config under `config/` does not override the Nooie profile. Use `config/local.yaml` for machine-specific values such as tool paths, output directory, network interfaces, and preferred Frida device.
+
 ## tests/
 
-484 tests covering the analysis layer, runners, CLI, TUI screens, and plugins. All offline -- no real network or tools needed.
+Tests cover the analysis layer, runners, CLI, TUI screens, workflows, reports, and plugins. The default suite is offline; emulator and Nooie hardware checks are manual validation steps documented in `documentation/testing.md`.
 
 - `test_analysis.py` -- Analyzer unit tests
 - `test_apk.py` -- APK analyzer tests

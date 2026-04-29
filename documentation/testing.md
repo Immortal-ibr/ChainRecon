@@ -12,10 +12,10 @@ python -m pytest --tb=short -q
 
 The offline suite must not require real network access, Android devices, Nmap, tshark, jadx, or Frida. External tools are mocked at the runner boundary.
 
-Current baseline after the stabilization pass:
+Current baseline after the senior-project stabilization pass:
 
 ```text
-484 passed
+566 passed, 9 skipped
 ```
 
 Coverage command:
@@ -24,7 +24,7 @@ Coverage command:
 python -m pytest --cov=analysis --cov=runners --cov=tui --cov=plugins --cov=utils --cov-report=term-missing -q
 ```
 
-Latest measured coverage after the stabilization pass is 49%. The strongest covered areas are report generation, Frida device validation, traffic parsing helpers, platform/config utilities, and scanner parsing. Remaining low-coverage areas are older specialty analyzers and TUI event-heavy screen methods.
+The strongest covered areas are report generation, Frida device validation, traffic parsing helpers, platform/config utilities, workflow condition handling, and scanner parsing. Remaining low-coverage areas are older specialty analyzers and TUI event-heavy screen methods.
 
 ## Test Categories
 
@@ -62,9 +62,35 @@ python chainrecon.py capture Ethernet --mode basic --duration 10 --target-ip 192
 python chainrecon.py apk "nooie_analysis/The APKs/nooie_base_apk.apk" --format json --output nooie_analysis/live_apk.json
 adb devices
 frida-ps -U
-adb shell monkey -p com.android.settings 1
-frida -U -N com.android.settings -l runners/frida_scripts/network_traffic_monitor.js -q -t 10 --exit-on-error
-python chainrecon.py report nooie_analysis --format html --output nooie_analysis/live_report.html
+python - <<'PY'
+import time
+from runners.frida_runner import FridaRunner
+from utils.config import get_output_dir
+runner = FridaRunner()
+result = runner.start_session(
+    target='com.nooie.home',
+    script_key='device_class_census',
+    parameters={'class_filter': 'com.nooie.home'},
+    output_dir=get_output_dir(),
+)
+time.sleep(3)
+print(runner.stop_session())
+PY
+python - <<'PY'
+import time
+from runners.frida_runner import FridaRunner
+from utils.config import get_output_dir
+runner = FridaRunner()
+result = runner.start_session(
+    target='com.nooie.home',
+    script_key='live_class_monitor',
+    parameters={'class_filter': 'com.nooie.home', 'max_events_per_second': '25'},
+    output_dir=get_output_dir(),
+)
+time.sleep(4)
+print(runner.stop_session())
+PY
+python chainrecon.py report nooie_analysis --format xlsx --output nooie_analysis/live_report.xlsx
 python chainrecon.py report nooie_analysis --format json --output nooie_analysis/live_report.json
 python chainrecon.py report nooie_analysis --format csv --output nooie_analysis/live_report.csv
 ```
@@ -115,8 +141,9 @@ Frida validation:
 - `adb devices`: `emulator-5554 device`.
 - `frida-ps -U`: listed live emulator processes.
 - `FridaRunner().get_device_state()`: `online: True`, serial `emulator-5554`.
-- `adb shell monkey -p com.android.settings 1`: launched Settings successfully.
-- `frida -U -N com.android.settings -l runners/frida_scripts/network_traffic_monitor.js -q -t 10 --exit-on-error`: loaded hooks for `URL.openConnection` and `Socket.connect`; OkHttp was not present in Settings, which is expected.
+- Device-wide class census on `com.nooie.home` should wake the app if it was force-stopped, start as a managed session, and return `stopped_by_user: true` when Stop Hook is pressed.
+- Live Loaded Class Monitor should attach to `com.nooie.home`, seed current classes, hook `ClassLoader.loadClass` and `Class.forName`, and stop cleanly.
+- HTTP trace, socket/URL monitor, crypto monitor, shared preferences watch, and Nooie MQTT/token trace should all start with default hooks and accept additional class names. Missing extra classes should warn, not crash.
 
 Report validation:
 
@@ -130,6 +157,17 @@ Report validation:
   - `nooie_analysis/live_report_all.csv`
 - `live_report_current.json` included 1 APK source with 6 risk indicators, 4 scan sources, 1 SSL source, and 2 traffic sources.
 - `live_report_all.json` included top-level saved analysis artifacts only; generated multi-section reports and decompiled APK asset JSON files were skipped to avoid recursive or irrelevant report data.
+
+Firmware validation:
+
+- Firmware analysis is early-stage and should be treated as a first-pass triage module.
+- If `binwalk` is unavailable or the configured path is not runnable on the host, ChainRecon should continue with direct image scanning and record a clear extraction warning.
+- The README must continue to state that this module will be expanded later.
+
+Report and logging notes:
+
+- Reports are still an area to improve. Treat current report output as evidence packaging, not the final polished review surface.
+- Saved log files are important. For Frida, workflows, APK decompilation, and firmware extraction, the saved logs are the authoritative execution record when the bounded TUI log drops older lines.
 
 Environmental notes:
 

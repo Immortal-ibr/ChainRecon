@@ -86,6 +86,7 @@ class FridaLifecycleRequirementTests(unittest.TestCase):
             attach_flag="-N",
             attach_target="com.nooie.home",
             rendered_script_path=Path("session.js"),
+            long_running=True,
         )
         self.assertNotIn("--auto-perform", cmd)
 

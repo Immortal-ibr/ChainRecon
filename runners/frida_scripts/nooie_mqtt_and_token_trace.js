@@ -69,6 +69,7 @@ Java.perform(function () {
     return count;
   };
 
+  const extraClasses = Array.isArray(config.additional_classes) ? config.additional_classes : [];
   const candidates = [
     ["com.thingclips.smart.mqtt.MqttAndroidClient", "getMqttToken", "MQTT-TOKEN"],
     ["com.thingclips.smart.mqtt.MqttAndroidClient", "connect", "MQTT-CONNECT"],
@@ -96,7 +97,10 @@ Java.perform(function () {
       }
     },
     onComplete() {
-      loaded.slice(0, 40).forEach(function (name) {
+  loaded.slice(0, 40).forEach(function (name) {
+        hooked += hookInterestingMethods(name);
+      });
+      extraClasses.forEach(function (name) {
         hooked += hookInterestingMethods(name);
       });
       console.log("[STATUS] nooie mqtt trace ready hooks=" + hooked + " scanned_classes=" + loaded.length);

@@ -21,6 +21,45 @@ Java.perform(function () {
     return hex;
   };
 
+  const describeValue = function (value) {
+    try {
+      if (value === null || value === undefined) return "null";
+      return value.toString();
+    } catch (e) {
+      return "<?>";
+    }
+  };
+
+  const hookAdditionalClasses = function () {
+    const classes = Array.isArray(config.additional_classes) ? config.additional_classes : [];
+    const interesting = /encrypt|decrypt|sign|verify|hash|digest|mac|dofinal|update/i;
+    classes.forEach(function (className) {
+      try {
+        const clazz = Java.use(className);
+        const methods = clazz.class.getDeclaredMethods();
+        const seen = {};
+        let count = 0;
+        for (let i = 0; i < methods.length; i++) {
+          const methodName = methods[i].getName();
+          if (seen[methodName] || !interesting.test(methodName) || !clazz[methodName]) continue;
+          seen[methodName] = true;
+          clazz[methodName].overloads.forEach(function (ov) {
+            ov.implementation = function () {
+              const args = [];
+              for (let j = 0; j < arguments.length; j++) args.push(describeValue(arguments[j]));
+              console.log("[CRYPTO-EXTRA] " + className + "." + methodName + "(" + args.join(", ") + ")");
+              return ov.apply(this, arguments);
+            };
+            count += 1;
+          });
+        }
+        console.log("[HOOK] " + className + " crypto extra overloads=" + count);
+      } catch (e) {
+        console.log("[WARN] Crypto extra class hook failed for " + className + ": " + e);
+      }
+    });
+  };
+
   try {
     const Cipher = Java.use("javax.crypto.Cipher");
     const cipherInit = Cipher.init.overload("int", "java.security.Key");
@@ -97,5 +136,6 @@ Java.perform(function () {
     console.log("[WARN] Mac.doFinal hook failed: " + e);
   }
 
+  hookAdditionalClasses();
   console.log("[STATUS] crypto monitor ready");
 });

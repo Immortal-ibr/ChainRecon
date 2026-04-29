@@ -33,6 +33,22 @@ from tui.widgets.log_viewer import (
     LogViewer,
 )
 
+_DISABLE_MOUSE_REPORTING = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l"
+
+
+def disable_terminal_mouse_reporting() -> None:
+    """Clear leaked mouse tracking modes before raw events can echo as text."""
+    try:
+        import sys
+
+        if not getattr(sys.stdout, "isatty", lambda: False)():
+            return
+        sys.stdout.write(_DISABLE_MOUSE_REPORTING)
+        sys.stdout.flush()
+    except Exception:
+        pass
+
+
 CSS = """
 Screen {
     background: $surface;
@@ -240,6 +256,7 @@ class ChainReconApp(App):
         import os
         import sys
 
+        disable_terminal_mouse_reporting()
         if sys.platform == "win32" and not os.environ.get("WT_SESSION"):
             self.add_class("ascii-mode")
         self.push_screen("dashboard")
@@ -335,4 +352,6 @@ def run_tui() -> None:
         except Exception:
             pass
         os.system("cls")
+    disable_terminal_mouse_reporting()
     ChainReconApp().run()
+    disable_terminal_mouse_reporting()

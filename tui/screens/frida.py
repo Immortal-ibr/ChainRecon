@@ -31,8 +31,8 @@ def _build_help_text() -> str:
         "  5. attach, spawn, or run process census automatically",
         "  6. stream or summarize hook output and write session artifacts",
         "",
-        "[bold]Per-Script Quick Reference[/]",
     ]
+    sections.append("[bold]Per-Script Quick Reference[/]")
     for script_key, metadata in FRIDA_SCRIPTS.items():
         guide = FRIDA_SCRIPT_GUIDE.get(script_key, {})
         params = metadata.get("params", [])
@@ -146,7 +146,7 @@ class FridaScreen(Screen):
             yield Input(placeholder="com.nooie.home", value="com.nooie.home", id="target")
             yield Label("Script:")
             frida_opts = [(v["label"], k) for k, v in FRIDA_SCRIPTS.items()] + [("Custom Frida JS...", "custom")]
-            yield Select(frida_opts, value="nooie_mqtt_trace", id="script")
+            yield Select(frida_opts, value="list_classes", id="script")
             with Vertical(id="param-section"):
                 pass
             with Vertical(id="custom-section"):
@@ -218,6 +218,9 @@ class FridaScreen(Screen):
         description = metadata.get("description")
         if description:
             container.mount(Label(f"[dim]{description}[/]"))
+        guide = FRIDA_SCRIPT_GUIDE.get(script_key_text, {})
+        if guide:
+            container.mount(Label(f"[dim]When to use: {guide.get('when_to_use', '')}[/]"))
         if not params:
             container.mount(Label("[dim]Selected script has no extra parameters.[/]"))
             self._param_signature = signature

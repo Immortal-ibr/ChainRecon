@@ -14,3 +14,4 @@ Still already in legacy:
 Current active note:
 
 - `scripts/network_setup.ps1`: still active on Windows; not moved.
+- Active Frida scripts are under `runners/frida_scripts/`. The current set includes managed class discovery, device-wide class census, live loaded-class monitoring, Android networking hooks, crypto monitoring, SharedPreferences monitoring, and Nooie MQTT/token tracing. Older manual snippets should stay in `legacy/manual_frida_scripts/` unless they are converted to the managed runner contract.

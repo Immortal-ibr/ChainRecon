@@ -21,12 +21,14 @@ python chainrecon.py tui
 Or use the CLI directly:
 
 ```bash
-python chainrecon.py analyze-traffic captures/device.pcap --format html
+python chainrecon.py analyze-traffic captures/device.pcap --format xlsx
 python chainrecon.py scan 192.168.1.50 --profile ssl
-python chainrecon.py report output --format html --output output/report.html
-python chainrecon.py firmware firmware.bin --format json --output output/firmware.json
-python chainrecon.py workflow run workflows/nooie.yaml --target 192.168.123.99 --dry-run
+python chainrecon.py report output --format xlsx --output output/report.xlsx
+python chainrecon.py firmware firmware.bin --format xlsx --output output/firmware.xlsx
+python chainrecon.py workflow run workflows/nooie_mqtt_tls.yaml --target 192.168.123.99 --device-profile nooie --dry-run
 ```
+
+XLSX is the default user-facing report format in the TUI because it keeps each analysis section on its own sheet and is easier to review during demos than a long JSON file. The report layer is usable now, but it is still an area that needs improvement in structure, polish, and cross-run comparison.
 
 ## How the network setup works
 
@@ -84,6 +86,22 @@ Decodes MQTT from raw TCP payloads:
 - Extracts images with `binwalk`
 - Inventories extracted filesystems for web UI assets, SSH/web configs, passwd/shadow files, and embedded certificates or private keys
 - Scans extracted text files for credential-like strings and protocol configuration hints
+- If extraction tooling is not available, scans the firmware image directly and records the extraction warning instead of failing the whole run
+
+The firmware module is still in its beginnings. It is useful for a first pass over strings, keys, certificates, endpoints, and extracted filesystems, but it is not a full firmware reverse-engineering framework yet. The next expansion point is deeper filesystem unpacking, CPU/architecture detection, vendor-specific config parsers, and better binary triage.
+
+### Frida runtime instrumentation
+
+The Frida screen manages the Android side of the workflow instead of expecting every command to be typed by hand:
+
+- Selects the configured emulator/device and starts `frida-server` when possible
+- Launches or wakes a target package before attaching, including `com.nooie.home`
+- Defaults to `List App Loaded Classes` when the Frida page opens
+- Supports `Device-Wide Class Census` as a managed session that can be stopped from the TUI
+- Adds `Live Loaded Class Monitor` for newly loaded classes and `Class.forName(...)` calls from the moment the hook starts
+- Streams logs to the TUI and writes a JSON session summary with `stopped_by_user` when Stop Hook is used
+
+The HTTP trace, socket/URL monitor, crypto monitor, shared preferences watch, and Nooie MQTT/token trace keep their built-in hooks and also accept additional class names. That lets you add app-specific classes after class discovery without editing the JavaScript files.
 
 ### SSL/TLS (live probing)
 
@@ -111,7 +129,7 @@ Decodes MQTT from raw TCP payloads:
 - `python chainrecon.py workflow run <pipeline.yaml>` executes scan, TLS, PCAP, Frida, firmware, report, and community-plugin steps from YAML
 - `when:` expressions provide conditional branching between steps
 - `critical: true` marks steps that should stop the pipeline on failure
-- Shared device profiles live under `profiles/devices/*.yaml`
+- Shared device profiles live under `profiles/devices/*.yaml`; `profiles/devices/nooie.yaml` is the authoritative Nooie device profile
 - Community analyzers are discovered from `community_plugins/*/plugin.yaml`
 
 ## External tools
@@ -274,13 +292,13 @@ adb shell monkey -p com.android.settings 1
 frida -U -N com.android.settings -l runners/frida_scripts/network_traffic_monitor.js -q -t 10 --exit-on-error
 ```
 
-Verify ChainRecon can build every built-in Frida command:
+Verify ChainRecon can build and render Frida scripts:
 
 ```bash
-python -m pytest tests/test_frida.py -q
+python -m pytest tests/unit tests/e2e -q
 ```
 
-To run a built-in script from the TUI, open `Frida`, choose or boot a device from the device selector, check the Frida compatibility note, enter the package/process name such as `com.nooie.home`, choose a built-in script, choose `Attach` or `Spawn`, and press `Run`. If `adb`, the Android emulator tools, or Frida host tools are missing, the screen now shows a short install message with the required commands.
+To run a built-in script from the TUI, open `Frida`, choose or boot a device from the device selector, check the Frida compatibility note, enter a package/process name such as `com.nooie.home`, choose a built-in script, and press `Run`. ChainRecon decides whether to attach, spawn, or run the device-wide census path. If `adb`, the Android emulator tools, or Frida host tools are missing, the screen shows the required setup message instead of failing silently.
 
 ## Configuration
 
@@ -308,7 +326,7 @@ Environment variables also work: `CHAINRECON_JADX_PATH`, `CHAINRECON_APKTOOL_PAT
 python -m pytest --tb=short -q
 ```
 
-484 tests covering analyzers, runners, CLI, TUI screens, and plugins. All offline by default.
+The suite covers analyzers, runners, CLI, TUI screens, workflows, reports, and plugins. Most tests are offline by default; live emulator checks are documented separately because they depend on local Android and Frida state.
 See `documentation/testing.md` for the unit, integration, end-to-end, requirement, and live Nooie verification workflow.
 
 ## TUI reliability notes
@@ -317,7 +335,7 @@ Admin PowerShell uses the older conhost terminal host. ChainRecon now keeps TUI-
 
 All single-line input fields use the same paste handling. `Ctrl+V`, `Ctrl+Shift+V`, and `Shift+Insert` normalize quoted Windows paths, multiline clipboard text, and `file://` URLs before inserting them.
 
-Output boxes are bounded to the last 1000 retained lines. When older lines are dropped, the log says so. Analyzer and tool artifacts are still written to the configured output directory, and each output box has controls for Clear, Copy, Save Log, Open File, and Open Folder.
+Output boxes are bounded to the last 1000 retained lines. When older lines are dropped, the log says so. Analyzer and tool artifacts are still written to the configured output directory, and each output box has controls for Clear, Copy, Save Log, Open File, and Open Folder. The log files are important. If a long Frida session, workflow, or tool run behaves strangely, the saved logs are the first place to look because they preserve the full stream even when the visible TUI log is bounded.
 
 Long saved paths are wrapped in the output widgets so the scrollbar does not hide the actual filename, and the main scroll containers reserve space for the scrollbar instead of drawing it over controls.
 
@@ -338,7 +356,9 @@ The report screen has two source modes:
 - `Current session only`: includes results produced in the current TUI session and avoids stale files.
 - `All JSON files in configured output directory`: imports top-level ChainRecon `*.json` analysis artifacts from the configured output directory and annotates each section with its source filename. Generated multi-section reports and decompiled APK asset JSON files are skipped so reports do not recursively include themselves.
 
-The default report path is based on `output.directory` from configuration, which is `./nooie_analysis` in this repo.
+The default report path is based on `output.directory` from configuration, which is `./nooie_analysis` in this repo. XLSX is the default format shown to the user; HTML, JSON, and CSV are still available.
+
+Reports are still not a finished surface. They are good enough for evidence capture and review, but they still need more work around presentation consistency, consolidation across sessions, and better handling of large result sets.
 
 HTML reports are now organized into collapsible sections so long reports stay navigable. CSV exports now include a `page` column so spreadsheet filters can group rows by section like separate pages.
 
@@ -361,6 +381,8 @@ legacy/              Manual legacy assets not used by active runners
 
 **Question marks (?) in TUI borders** -- Happens in admin PowerShell / conhost.exe. ChainRecon detects this and switches to ASCII borders. If you still see garbled output, use Windows Terminal.
 
+**Escape text like `^[[<35;28;21M` appears in the TUI** -- That is leaked terminal mouse reporting. ChainRecon disables the relevant terminal modes on startup and strips control sequences from tool output before rendering logs.
+
 **jadx not found** -- Set the path in `config/local.yaml` as shown above.
 
 **APK analysis seems stuck** -- Large APKs take 3-5 minutes to decompile. The TUI shows jadx progress as it runs.
@@ -368,3 +390,5 @@ legacy/              Manual legacy assets not used by active runners
 **Full nmap scan times out** -- Scanning all 65535 ports with `-A` can take over an hour. The timeout is 2 hours but on slow networks it may not be enough. Run nmap from the command line directly if the TUI times out.
 
 **No traffic captured** -- Check the interface name in config matches your Ethernet adapter. Run `ipconfig` (Windows) or `ip link` (Linux) to check.
+
+**Which Nooie profile is used?** -- The device profile used by the Profiles, Workflow, and Firmware screens is `profiles/devices/nooie.yaml`. Values in `config/default.yaml` or `config/local.yaml` are runtime configuration defaults, not the authoritative Nooie device profile.

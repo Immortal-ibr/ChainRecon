@@ -19,6 +19,11 @@ from utils.logging_config import get_logger
 logger = get_logger("frida")
 
 _SCRIPTS_DIR = Path(__file__).parent / "frida_scripts"
+_ANSI_CONTROL_RE = re.compile(
+    r"(?:\x1b\[[0-?]*[ -/]*[@-~])"
+    r"|(?:\x1b\][^\x07]*(?:\x07|\x1b\\))"
+    r"|(?:\x1b[@-Z\\-_])"
+)
 
 
 def _runtime_script_dir() -> Path:
@@ -83,7 +88,30 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
                 "required": False,
             }
         ],
-        "runtime": {"launch_if_needed": True, "expect_long_running_output": False},
+        "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
+    },
+    "live_class_monitor": {
+        "label": "Live Loaded Class Monitor",
+        "description": "Continuously log newly loaded Java classes and Class.forName requests after the hook starts. Use a package/class filter to keep output manageable.",
+        "file": _script_filename_from_label("Live Loaded Class Monitor"),
+        "target_type": "package",
+        "params": [
+            {
+                "name": "class_filter",
+                "label": "Class filter",
+                "placeholder": "com.nooie; com.thingclips; mqtt",
+                "default": "*",
+                "required": False,
+            },
+            {
+                "name": "max_events_per_second",
+                "label": "Max events/sec",
+                "placeholder": "50",
+                "default": "50",
+                "required": False,
+            },
+        ],
+        "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
     },
     "hook_all_methods": {
         "label": "Hook Selected Class Methods",
@@ -148,6 +176,13 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
                 "placeholder": "api.nooie.com",
                 "default": "*",
                 "required": False,
+            },
+            {
+                "name": "additional_classes",
+                "label": "Additional classes",
+                "placeholder": "One class per line, or comma / semicolon separated",
+                "default": "",
+                "required": False,
             }
         ],
         "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
@@ -163,6 +198,13 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
                 "label": "Host filter",
                 "placeholder": "mqtt, nooie, or leave blank",
                 "default": "*",
+                "required": False,
+            },
+            {
+                "name": "additional_classes",
+                "label": "Additional classes",
+                "placeholder": "One class per line, or comma / semicolon separated",
+                "default": "",
                 "required": False,
             }
         ],
@@ -187,6 +229,13 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
                 "placeholder": "64",
                 "default": "64",
                 "required": False,
+            },
+            {
+                "name": "additional_classes",
+                "label": "Additional classes",
+                "placeholder": "One class per line, or comma / semicolon separated",
+                "default": "",
+                "required": False,
             }
         ],
         "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
@@ -202,6 +251,13 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
                 "label": "Key filter",
                 "placeholder": "token, mqtt, user",
                 "default": "*",
+                "required": False,
+            },
+            {
+                "name": "additional_classes",
+                "label": "Additional classes",
+                "placeholder": "One class per line, or comma / semicolon separated",
+                "default": "",
                 "required": False,
             }
         ],
@@ -242,6 +298,13 @@ FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
                 "label": "Class filter",
                 "placeholder": "com.thingclips or com.nooie",
                 "default": "*",
+                "required": False,
+            },
+            {
+                "name": "additional_classes",
+                "label": "Additional classes",
+                "placeholder": "One class per line, or comma / semicolon separated",
+                "default": "",
                 "required": False,
             }
         ],
@@ -292,6 +355,11 @@ FRIDA_SCRIPT_GUIDE: Dict[str, Dict[str, Any]] = {
         "when_to_use": "Use when you want a broader census across matching device processes, not just one app attachment.",
         "expected_tags": ["[PROCESS]", "[STATUS]", "[CLASS]"],
         "limitations": "Runs each matching process sequentially, so large filters take longer and system processes can still be missed if Frida cannot attach.",
+    },
+    "live_class_monitor": {
+        "when_to_use": "Use when you want to watch class loading activity from the moment the hook starts until you stop it.",
+        "expected_tags": ["[STATUS]", "[CLASS-SEED]", "[CLASS-LOAD]", "[CLASS-FORNAME]", "[HOOK]", "[WARN]"],
+        "limitations": "Safe mode logs class load and Class.forName activity; it does not auto-hook every method on every class.",
     },
     "hook_all_methods": {
         "when_to_use": "Use after class discovery when you need broad call tracing for a short list of exact classes.",
@@ -616,18 +684,27 @@ class FridaRunner:
                 f"Target package '{target}' is not installed on {serial}.",
                 state={"serial": serial, "target": target},
             )
+        launch_outputs: List[str] = []
+        activity = self._resolve_launcher_activity(serial, target)
+        if activity:
+            try:
+                am_result = self._executor(self._adb_cmd(serial, "shell", "am", "start", "-n", activity), timeout=30)
+                launch_outputs.append((am_result.stdout or am_result.stderr or "").strip())
+            except Exception as exc:
+                launch_outputs.append(f"am start failed: {exc}")
         result = self._executor(self._adb_cmd(serial, "shell", "monkey", "-p", target, "1"), timeout=30)
+        launch_outputs.append((result.stdout or result.stderr or "").strip())
         deadline = time.time() + 15
         while time.time() < deadline:
             if self.is_target_running(target, serial=serial):
                 return {
                     "launched": True,
-                    "details": (result.stdout or result.stderr or f"Launched {target} with monkey.").strip(),
+                    "details": "\n".join(item for item in launch_outputs if item) or f"Launched {target}.",
                 }
             time.sleep(1)
         return {
             "launched": False,
-            "details": (result.stdout or result.stderr or f"Launch attempt for {target} did not yield a running process.").strip(),
+            "details": "\n".join(item for item in launch_outputs if item) or f"Launch attempt for {target} did not yield a running process.",
         }
 
     def resolve_attach_target(self, target: str, *, serial: Optional[str] = None) -> Dict[str, Any]:
@@ -890,29 +967,15 @@ class FridaRunner:
         server_status = self.start_frida_server_if_needed(serial=serial, frida_server_path=frida_server_path)
 
         if script_key == "device_class_census" and not custom_script_path:
-            census = self._run_device_class_census(
+            return self._start_device_class_census_session(
                 target,
                 output_dir=output_dir,
                 on_output=on_output,
                 parameters=parameters or {},
                 serial=serial,
+                server_status=server_status,
+                on_exit=on_exit,
             )
-            if on_exit is not None:
-                on_exit(census["summary"])
-            return {
-                "session_id": census["summary"]["session_id"],
-                "serial": serial,
-                "target": target,
-                "mode": "census",
-                "command": census["summary"]["command"],
-                "log_path": census["summary"]["log_path"],
-                "summary_path": census["summary"]["summary_path"],
-                "rendered_script_path": census["summary"]["rendered_script_path"],
-                "attach_target": target,
-                "frida_server_started": False,
-                "frida_server_path": None,
-                "launch_performed": False,
-            }
 
         resolution = self.resolve_attach_target(target, serial=serial)
 
@@ -1019,6 +1082,87 @@ class FridaRunner:
             "log_path": str(log_path),
             "summary_path": str(summary_path),
             "rendered_script_path": str(rendered_script_path),
+            "attach_target": session.attach_target,
+            "frida_server_started": session.frida_server_started,
+            "frida_server_path": session.frida_server_path,
+            "launch_performed": session.launch_performed,
+        }
+
+    def _start_device_class_census_session(
+        self,
+        target: str,
+        *,
+        output_dir: str | Path,
+        on_output: Optional[Callable[[str], None]],
+        parameters: Dict[str, Any],
+        serial: str,
+        server_status: Dict[str, Any],
+        on_exit: Optional[Callable[[Dict[str, Any]], None]],
+    ) -> Dict[str, Any]:
+        rendered_script_path = self.render_script("device_class_census", parameters, output_dir)
+        session_id = safe_token(f"{serial}_{target}_device_class_census_{int(time.time())}", "frida_session")
+        log_path = artifact_path(output_dir, f"frida_session_{session_id}", ".log").resolve()
+        summary_path = artifact_path(output_dir, f"frida_session_{session_id}", ".json").resolve()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("", encoding="utf-8")
+        target_running_before = self.is_target_running(target, serial=serial) if "." in target else False
+        launch_performed = False
+        launch_details = ""
+        if "." in target and not target_running_before:
+            try:
+                launch_info = self.launch_target_if_needed(target, serial=serial)
+                launch_performed = bool(launch_info.get("launched"))
+                launch_details = str(launch_info.get("details") or "")
+            except Exception as exc:
+                launch_details = f"Target launch check failed: {exc}"
+        session = FridaSession(
+            session_id=session_id,
+            serial=serial,
+            target=target,
+            attach_target=target,
+            attach_flag="multi",
+            script_key="device_class_census",
+            parameters=self._normalize_script_parameters("device_class_census", parameters),
+            command=["frida", "-D", serial, "--device-census", target],
+            process=None,
+            log_path=log_path,
+            summary_path=summary_path,
+            rendered_script_path=rendered_script_path,
+            start_time=time.time(),
+            mode="census",
+            target_running_before=target_running_before,
+            launch_performed=launch_performed,
+            frida_server_started=bool(server_status.get("started")),
+            frida_server_path=server_status.get("frida_server"),
+            session_backend="frida_cli_census",
+            health_checks={
+                "device_online": True,
+                "frida_server_running": bool(server_status.get("running")),
+                "frida_server_started": bool(server_status.get("started")),
+                "expected_long_running": True,
+                "script_loaded": True,
+                "target_launch_performed": launch_performed,
+            },
+        )
+        if launch_details:
+            self._append_session_line(session, f"[STATUS] {launch_details}", "stdout", on_output)
+        with self._session_lock:
+            self._active_session = session
+        session.watcher_thread = threading.Thread(
+            target=self._watch_device_class_census_session,
+            args=(session, on_output, on_exit),
+            daemon=True,
+        )
+        session.watcher_thread.start()
+        return {
+            "session_id": session.session_id,
+            "serial": session.serial,
+            "target": session.target,
+            "mode": session.mode,
+            "command": session.command,
+            "log_path": str(session.log_path),
+            "summary_path": str(session.summary_path),
+            "rendered_script_path": str(session.rendered_script_path),
             "attach_target": session.attach_target,
             "frida_server_started": session.frida_server_started,
             "frida_server_path": session.frida_server_path,
@@ -1597,8 +1741,9 @@ class FridaRunner:
                     normalized.pop(filter_key, None)
                 else:
                     normalized[filter_key] = filter_value
-        if "class_names" in normalized and isinstance(normalized["class_names"], str):
-            normalized["class_names"] = _split_parameter_values(normalized["class_names"])
+        for list_key in ("class_names", "additional_classes"):
+            if list_key in normalized and isinstance(normalized[list_key], str):
+                normalized[list_key] = _split_parameter_values(normalized[list_key])
         if script_key == "list_classes" and "class_filter" in normalized and isinstance(normalized["class_filter"], str):
             pieces = _split_parameter_values(normalized["class_filter"])
             normalized["class_filter"] = pieces if len(pieces) > 1 else (pieces[0] if pieces else "")
@@ -1726,6 +1871,215 @@ class FridaRunner:
             "returncode": 0 if all(item["returncode"] == 0 for item in process_results) else 1,
             "summary": summary,
         }
+
+    def _watch_device_class_census_session(
+        self,
+        session: FridaSession,
+        on_output: Optional[Callable[[str], None]],
+        on_exit: Optional[Callable[[Dict[str, Any]], None]],
+    ) -> None:
+        process_results: List[Dict[str, Any]] = []
+        error_lines: List[str] = []
+        try:
+            if "." in session.target and self._package_installed(session.serial, session.target):
+                launch_info = self.launch_target_if_needed(session.target, serial=session.serial)
+                session.launch_performed = session.launch_performed or bool(launch_info.get("launched"))
+                session.health_checks["target_launch_performed"] = session.launch_performed
+                self._append_session_line(session, f"[STATUS] {launch_info.get('details', '')}", "stdout", on_output)
+        except Exception as exc:
+            self._append_session_line(session, f"[WARN] Target launch check failed: {exc}", "stdout", on_output)
+
+        try:
+            processes = self.list_processes_structured(serial=session.serial)
+            filters = _split_parameter_values(session.target) or [session.target.strip()]
+            filters = [item.lower() for item in filters if item.strip()]
+            candidates: List[Dict[str, str]] = []
+            seen_targets: set[str] = set()
+            for process in processes:
+                identifier = str(process.get("identifier") or "").strip()
+                name = str(process.get("name") or "").strip()
+                attach_target = identifier or name
+                haystacks = [attach_target.lower(), name.lower()]
+                if not attach_target:
+                    continue
+                if filters and not any(filter_value in haystack for filter_value in filters for haystack in haystacks):
+                    continue
+                if attach_target in seen_targets:
+                    continue
+                seen_targets.add(attach_target)
+                candidates.append({
+                    "attach_target": attach_target,
+                    "attach_flag": "-N" if identifier and "." in identifier else "-n",
+                    "identifier": identifier,
+                    "name": name,
+                })
+            if not candidates and "." in session.target:
+                candidates.append({
+                    "attach_target": session.target,
+                    "attach_flag": "-N",
+                    "identifier": session.target,
+                    "name": session.target,
+                })
+            if not candidates:
+                raise FridaDeviceError(f"No matching processes found for device-wide class census filter: {session.target}")
+
+            session.health_checks["processes_scanned"] = len(candidates)
+            self._append_session_line(
+                session,
+                f"[STATUS] Starting device-wide class census across {len(candidates)} process(es).",
+                "stdout",
+                on_output,
+            )
+
+            for candidate in candidates[:12]:
+                if session.stop_event.is_set():
+                    break
+                self._append_session_line(session, f"[PROCESS] {candidate['attach_target']}", "stdout", on_output)
+                cmd = [
+                    "frida",
+                    "-D",
+                    session.serial,
+                    candidate["attach_flag"],
+                    candidate["attach_target"],
+                    "-l",
+                    str(session.rendered_script_path),
+                    "-q",
+                    "--exit-on-error",
+                ]
+                session.command = cmd
+                captured_stdout: List[str] = []
+                captured_stderr: List[str] = []
+                try:
+                    process = subprocess.Popen(
+                        cmd,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        bufsize=1,
+                        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+                    )
+                    session.process = process
+                    threads = [
+                        threading.Thread(
+                            target=self._stream_census_pipe,
+                            args=(session, process.stdout, "stdout", on_output, captured_stdout),
+                            daemon=True,
+                        ),
+                        threading.Thread(
+                            target=self._stream_census_pipe,
+                            args=(session, process.stderr, "stderr", on_output, captured_stderr),
+                            daemon=True,
+                        ),
+                    ]
+                    for thread in threads:
+                        thread.start()
+                    while process.poll() is None:
+                        if session.stop_event.wait(timeout=0.2):
+                            try:
+                                if process.stdin is not None:
+                                    process.stdin.close()
+                            except Exception:
+                                pass
+                            process.terminate()
+                            try:
+                                process.wait(timeout=3)
+                            except Exception:
+                                process.kill()
+                            break
+                    returncode = int(process.returncode or 0)
+                    for thread in threads:
+                        thread.join(timeout=2)
+                except Exception as exc:
+                    captured_stderr.append(str(exc))
+                    returncode = 1
+                finally:
+                    session.process = None
+                class_count = 0
+                for line in captured_stdout:
+                    match = re.search(r"\[CLASS\]\s+total=(\d+)", line)
+                    if match:
+                        class_count = int(match.group(1))
+                        break
+                if captured_stderr:
+                    warning = f"[WARN] {candidate['attach_target']}: {'; '.join(captured_stderr[:3])}"
+                    error_lines.append(warning)
+                    self._append_session_line(session, warning, "stdout", on_output)
+                process_results.append({
+                    "target": candidate["attach_target"],
+                    "identifier": candidate["identifier"],
+                    "name": candidate["name"],
+                    "class_count": class_count,
+                    "returncode": returncode,
+                    "status": "stopped" if session.stop_event.is_set() else ("completed" if returncode == 0 else "failed"),
+                })
+                if session.stop_event.is_set():
+                    break
+            if session.stop_requested:
+                session.status_reason = "stopped_by_user"
+                exit_code = 0
+            elif process_results and all(item["returncode"] == 0 for item in process_results):
+                session.status_reason = "completed"
+                exit_code = 0
+                self._append_session_line(session, "[STATUS] device-wide class census complete", "stdout", on_output)
+            else:
+                session.status_reason = "partial_failure"
+                exit_code = 1
+        except Exception as exc:
+            session.status_reason = f"failed: {exc}"
+            exit_code = 1
+            self._append_session_line(session, f"[ERROR] {exc}", "stdout", on_output)
+        session.health_checks["process_results"] = process_results
+        session.health_checks["error_lines"] = error_lines
+        try:
+            session.target_alive_at_exit = self.is_target_running(session.target, serial=session.serial)
+        except Exception:
+            session.target_alive_at_exit = None
+        summary = self._write_session_summary(session, exit_code=exit_code)
+        summary["process_results"] = process_results
+        session.summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        with self._session_lock:
+            if self._active_session is session:
+                self._active_session = None
+        session.summary_written.set()
+        if on_exit is not None:
+            on_exit(summary)
+
+    def _stream_census_pipe(
+        self,
+        session: FridaSession,
+        pipe,
+        channel: str,
+        on_output: Optional[Callable[[str], None]],
+        captured: List[str],
+    ) -> None:
+        if pipe is None:
+            return
+        with session.log_path.open("a", encoding="utf-8") as handle:
+            for raw_line in iter(pipe.readline, ""):
+                line = self._clean_session_line(raw_line.rstrip("\r\n"))
+                if not line:
+                    continue
+                captured.append(line)
+                tag = "[stderr]" if channel == "stderr" else "[stdout]"
+                formatted = f"{tag} {line}"
+                handle.write(formatted + "\n")
+                handle.flush()
+                if channel == "stderr":
+                    session.error_line_count += 1
+                else:
+                    session.output_line_count += 1
+                event_tag = _event_tag(line)
+                if event_tag:
+                    session.events_by_tag[event_tag] = session.events_by_tag.get(event_tag, 0) + 1
+                if on_output is not None:
+                    on_output(formatted)
+        try:
+            pipe.close()
+        except Exception:
+            pass
 
     def _write_device_census_summary(
         self,
@@ -1975,6 +2329,22 @@ class FridaRunner:
     def _package_installed(self, serial: str, package_name: str) -> bool:
         return package_name in self._list_installed_packages(serial)
 
+    def _resolve_launcher_activity(self, serial: str, package_name: str) -> str:
+        commands = [
+            self._adb_cmd(serial, "shell", "cmd", "package", "resolve-activity", "--brief", package_name),
+            self._adb_cmd(serial, "shell", "cmd", "package", "resolve-activity", "--brief", "-c", "android.intent.category.LAUNCHER", package_name),
+        ]
+        for cmd in commands:
+            try:
+                result = self._executor(cmd, timeout=10)
+            except Exception:
+                continue
+            lines = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+            for line in reversed(lines):
+                if "/" in line and package_name in line and "No activity found" not in line:
+                    return line
+        return ""
+
     def _stream_pipe(
         self,
         session: FridaSession,
@@ -2009,6 +2379,7 @@ class FridaRunner:
 
     @staticmethod
     def _clean_session_line(line: str) -> str:
+        line = _ANSI_CONTROL_RE.sub("", line).replace("\x1b", "")
         stripped = line.strip()
         banner_markers = (
             stripped == "____"

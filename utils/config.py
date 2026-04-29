@@ -198,11 +198,7 @@ def list_device_profiles() -> list[Dict[str, Any]]:
             payload = _validate_device_profile(payload, path)
         except ValueError:
             continue
-        profiles.append({
-            "name": payload.get("name") or path.stem,
-            "path": str(path.resolve()),
-            "profile": payload,
-        })
+        profiles.append(_device_profile_descriptor(payload, path))
     return profiles
 
 
@@ -221,6 +217,27 @@ def load_device_profile(profile_name_or_path: Optional[str]) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"Device profile must be a mapping: {path}")
     return _validate_device_profile(payload, path)
+
+
+def _device_profile_descriptor(payload: Dict[str, Any], path: Path) -> Dict[str, Any]:
+    """Return the stable flattened shape consumed by TUI profile selectors."""
+    validated = dict(payload)
+    resolved = str(path.resolve())
+    validated.setdefault("path", resolved)
+    return {
+        "stem": path.stem,
+        "name": validated.get("name") or path.stem,
+        "vendor": validated.get("vendor"),
+        "model": validated.get("model"),
+        "target": validated.get("target"),
+        "ports": validated.get("ports") or [],
+        "expected_protocols": validated.get("expected_protocols") or [],
+        "scan_defaults": validated.get("scan_defaults") or {},
+        "frida_defaults": validated.get("frida_defaults") or {},
+        "firmware_rules": validated.get("firmware_rules") or {},
+        "path": resolved,
+        "profile": validated,
+    }
 
 
 def get_output_dir() -> Path:

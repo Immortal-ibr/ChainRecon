@@ -11,8 +11,13 @@ from utils.config import list_device_profiles, load_device_profile
 
 class DeviceProfileTests(unittest.TestCase):
     def test_builtin_device_profiles_are_listed(self):
-        names = {item["name"] for item in list_device_profiles()}
+        profiles = list_device_profiles()
+        names = {item["name"] for item in profiles}
         self.assertIn("Nooie Lab Device", names)
+        nooie = next(item for item in profiles if item["name"] == "Nooie Lab Device")
+        self.assertEqual(nooie["stem"], "nooie")
+        self.assertIn("profile", nooie)
+        self.assertIn("frida_defaults", nooie)
 
     def test_load_builtin_device_profile_by_name(self):
         profile = load_device_profile("nooie")
@@ -128,3 +133,25 @@ steps:
             )
             with self.assertRaises(ValueError):
                 WorkflowRunner(output_root=td).run(str(pipeline), dry_run=True)
+
+    def test_missing_summary_in_when_expression_is_false_not_crash(self):
+        with tempfile.TemporaryDirectory() as td:
+            pipeline = Path(td) / "pipeline.yaml"
+            pipeline.write_text(
+                """
+name: Missing Summary Guard
+steps:
+  - id: seed
+    type: community
+    plugin: example_string_scan
+    input: missing.txt
+  - id: conditional
+    type: community
+    plugin: example_string_scan
+    input: missing.txt
+    when: "steps.seed.summary.open_ports and 8883 in steps.seed.summary.open_ports"
+""",
+                encoding="utf-8",
+            )
+            result = WorkflowRunner(output_root=td).run(str(pipeline), dry_run=True)
+        self.assertEqual(result["findings"]["steps"]["conditional"]["status"], "skipped")
