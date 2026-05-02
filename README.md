@@ -28,6 +28,15 @@ python chainrecon.py firmware firmware.bin --format xlsx --output output/firmwar
 python chainrecon.py workflow run workflows/nooie_mqtt_tls.yaml --target 192.168.123.99 --device-profile nooie --dry-run
 ```
 
+## Building a package
+
+A PKGBUILD is included for Arch Linux. It installs ChainRecon to `/opt/chainrecon` with an isolated Python venv and puts a `chainrecon` wrapper on your PATH.
+
+```bash
+cd /path/to/ChainRecon
+makepkg -si
+```
+
 ## How the network setup works
 
 Classic man-in-the-middle position -- your computer sits between the IoT device and the internet:
