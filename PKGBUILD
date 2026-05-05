@@ -4,39 +4,32 @@ pkgrel=1
 pkgdesc="IoT network security analysis framework"
 arch=('any')
 url="https://github.com/Immortal-ibr/ChainRecon"
-license=('MIT')
 
-depends=('python' 'wireshark-cli' 'nmap')
-makedepends=('git' 'python-pip')
+depends=('python' 'python-jinja' 'python-requests' 'python-defusedxml'
+         'python-cryptography' 'python-yaml' 'python-rich'
+         'python-openpyxl' 'wireshark-cli' 'nmap' 'python-textual')
+optdepends=('python-pyshark' 'scapy' 'python-shodan'
+            'python-weasyprint' 'python-nmap' 'frida-tools'
+            'tcpdump' 'android-tools' 'jadx' 'apktool')
+makedepends=('git')
 
-#source=("git+https://github.com/Immortal-ibr/ChainRecon.git")
-#sha256sums=('SKIP')
-#replace $startdir with $srcdir/ChainRecon if you decide to have it fetch from git
-
-build() {
-    cd "$startdir"
-    # create python venv
-    python -m venv venv
-
-    # install deps to venv
-    ./venv/bin/pip install --isolated --no-cache-dir -r requirements.txt
-}
+source=("$pkgname::git+$url.git")
+sha256sums=('SKIP')
 
 package() {
-    cd "$startdir"
+    cd "$srcdir/$pkgname"
 
-    install -d "$pkgdir/opt/chainrecon"
-    install -d "$pkgdir/usr/bin"
+    install -d "$pkgdir/usr/share/$pkgname" "$pkgdir/usr/bin"
 
-    # copy src code to venv
-    cp -a . "$pkgdir/opt/chainrecon/"
-    rm -rf "$pkgdir/opt/chainrecon/.git" "$pkgdir/opt/chainrecon/.github"
+    cp -r analysis chainrecon.py community_plugins config interactive.py \
+          models plugins profiles runners scripts tui utils workflows \
+          "$pkgdir/usr/share/$pkgname/"
 
-    # global executable wrapper script
-    cat > "$pkgdir/usr/bin/chainrecon" << 'EOF'
-#!/bin/bash
-export PYTHONPATH="/opt/chainrecon"
-exec /opt/chainrecon/venv/bin/python /opt/chainrecon/chainrecon.py "$@"
-EOF
-    chmod 755 "$pkgdir/usr/bin/chainrecon"
+    sed -i '1i #!/usr/bin/env python3' "$pkgdir/usr/share/$pkgname/chainrecon.py"
+
+    # mark the entry point executable
+    chmod 755 "$pkgdir/usr/share/$pkgname/chainrecon.py"
+
+    # expose it on PATH as /usr/bin/chainrecon
+    ln -s "/usr/share/$pkgname/chainrecon.py" "$pkgdir/usr/bin/$pkgname"
 }
