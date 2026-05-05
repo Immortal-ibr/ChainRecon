@@ -10,7 +10,7 @@ try:
    from textual.app import App
 except ImportError:
    print("Can't launch TUI, is textual available on this system?")
-   sys.exit(1)
+   raise SystemExit
 
 from textual.binding import Binding
 from textual.widgets import Button, TextArea
