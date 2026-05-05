@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import platform
 
-from textual.app import App
+# catch for missing textual
+
+try:
+   from textual.app import App
+except ImportError:
+   print("Can't launch TUI, is textual available on this system?")
+   sys.exit(1)
+
 from textual.binding import Binding
 from textual.widgets import Button, TextArea
 
