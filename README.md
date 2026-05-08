@@ -30,7 +30,7 @@ python chainrecon.py workflow run workflows/nooie_mqtt_tls.yaml --target 192.168
 
 ## Building a package
 
-A PKGBUILD is included for Arch Linux. It installs ChainRecon to `/opt/chainrecon` with an isolated Python venv and puts a `chainrecon` wrapper on your PATH.
+A PKGBUILD is included for Arch Linux.
 
 ```bash
 cd /path/to/ChainRecon
