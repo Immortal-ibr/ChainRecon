@@ -59,7 +59,7 @@ Config: config/local.yaml -> network section
 To edit this screen: tui/screens/network_setup.py[/]
 """
 
-_SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts"
+_SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 
 
 class NetworkSetupScreen(Screen):

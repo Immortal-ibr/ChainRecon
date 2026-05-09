@@ -94,7 +94,7 @@ def _show_main_menu() -> str:
 
 def _handle_network_setup(config: SessionConfig) -> None:
     if is_linux():
-        script = Path(__file__).parent / "scripts" / "network_setup.sh"
+        script = Path(__file__).resolve().parent.parent / "scripts" / "network_setup.sh"
         if script.exists():
             print("[*] Launching network setup script...")
             subprocess.run(["sudo", "bash", str(script)], check=False)

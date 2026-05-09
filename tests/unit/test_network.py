@@ -5,13 +5,13 @@ import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
 
-from utils import network
+from chainrecon.utils import network
 
 
 class ListInterfacesWindowsTests(unittest.TestCase):
-    @patch("utils.network.is_windows", return_value=True)
-    @patch("utils.platform_info.find_tool", return_value=r"C:\Wireshark\tshark.exe")
-    @patch("utils.network.subprocess.run")
+    @patch("chainrecon.utils.network.is_windows", return_value=True)
+    @patch("chainrecon.utils.platform_info.find_tool", return_value=r"C:\Wireshark\tshark.exe")
+    @patch("chainrecon.utils.network.subprocess.run")
     def test_tshark_parsing(self, mock_run, *_):
         mock_run.return_value = subprocess.CompletedProcess(
             [], 0,
@@ -27,9 +27,9 @@ class ListInterfacesWindowsTests(unittest.TestCase):
         # device is the NPF path
         self.assertIn("NPF_", ifaces[0]["device"])
 
-    @patch("utils.network.is_windows", return_value=True)
-    @patch("utils.platform_info.find_tool", return_value=None)
-    @patch("utils.network.subprocess.run")
+    @patch("chainrecon.utils.network.is_windows", return_value=True)
+    @patch("chainrecon.utils.platform_info.find_tool", return_value=None)
+    @patch("chainrecon.utils.network.subprocess.run")
     def test_powershell_fallback(self, mock_run, *_):
         adapters = [
             {"Name": "Ethernet", "InterfaceDescription": "Intel NIC", "Status": "Up"},
@@ -41,15 +41,15 @@ class ListInterfacesWindowsTests(unittest.TestCase):
         self.assertEqual(len(ifaces), 1)
         self.assertEqual(ifaces[0]["name"], "Ethernet")
 
-    @patch("utils.network.is_windows", return_value=True)
-    @patch("utils.platform_info.find_tool", return_value=None)
-    @patch("utils.network.subprocess.run", side_effect=Exception("fail"))
+    @patch("chainrecon.utils.network.is_windows", return_value=True)
+    @patch("chainrecon.utils.platform_info.find_tool", return_value=None)
+    @patch("chainrecon.utils.network.subprocess.run", side_effect=Exception("fail"))
     def test_all_fail_returns_empty(self, *_):
         ifaces = network._list_interfaces_windows()
         self.assertEqual(ifaces, [])
 
-    @patch("utils.platform_info.find_tool", return_value=r"C:\Program Files (x86)\Nmap\nmap.exe")
-    @patch("utils.network.subprocess.run")
+    @patch("chainrecon.utils.platform_info.find_tool", return_value=r"C:\Program Files (x86)\Nmap\nmap.exe")
+    @patch("chainrecon.utils.network.subprocess.run")
     def test_list_nmap_interfaces_windows(self, mock_run, _):
         mock_run.return_value = subprocess.CompletedProcess(
             [],
@@ -64,9 +64,9 @@ class ListInterfacesWindowsTests(unittest.TestCase):
         self.assertEqual(mappings[0]["runtime_id"], "eth4")
         self.assertEqual(mappings[0]["device"], r"\Device\NPF_{DEF}")
 
-    @patch("utils.network.is_windows", return_value=True)
-    @patch("utils.network.list_interfaces")
-    @patch("utils.network.list_nmap_interfaces_windows")
+    @patch("chainrecon.utils.network.is_windows", return_value=True)
+    @patch("chainrecon.utils.network.list_interfaces")
+    @patch("chainrecon.utils.network.list_nmap_interfaces_windows")
     def test_resolve_scan_interface_uses_nmap_runtime_id(self, mock_nmap, mock_ifaces, _):
         mock_ifaces.return_value = [
             {"name": "Wi-Fi", "device": r"\Device\NPF_{DEF}", "description": "Wi-Fi"},
@@ -80,7 +80,7 @@ class ListInterfacesWindowsTests(unittest.TestCase):
 
 
 class ListInterfacesLinuxTests(unittest.TestCase):
-    @patch("utils.network.subprocess.run")
+    @patch("chainrecon.utils.network.subprocess.run")
     def test_ip_link_parsing(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(
             [], 0,
@@ -95,7 +95,7 @@ class ListInterfacesLinuxTests(unittest.TestCase):
         self.assertEqual(ifaces[1]["description"], "UP")
         self.assertEqual(ifaces[2]["description"], "DOWN")
 
-    @patch("utils.network.subprocess.run", side_effect=FileNotFoundError)
+    @patch("chainrecon.utils.network.subprocess.run", side_effect=FileNotFoundError)
     def test_sys_class_fallback(self, _):
         from pathlib import Path
         with patch("pathlib.Path") as mock_path_cls:
@@ -112,15 +112,15 @@ class ListInterfacesLinuxTests(unittest.TestCase):
 
 
 class DefaultGatewayTests(unittest.TestCase):
-    @patch("utils.network.is_windows", return_value=True)
-    @patch("utils.network.subprocess.run")
+    @patch("chainrecon.utils.network.is_windows", return_value=True)
+    @patch("chainrecon.utils.network.subprocess.run")
     def test_windows_gateway(self, mock_run, _):
         mock_run.return_value = subprocess.CompletedProcess([], 0, "192.168.1.1\n", "")
         gw = network.get_default_gateway()
         self.assertEqual(gw, "192.168.1.1")
 
-    @patch("utils.network.is_windows", return_value=False)
-    @patch("utils.network.subprocess.run")
+    @patch("chainrecon.utils.network.is_windows", return_value=False)
+    @patch("chainrecon.utils.network.subprocess.run")
     def test_linux_gateway(self, mock_run, _):
         mock_run.return_value = subprocess.CompletedProcess(
             [], 0, "default via 10.0.0.1 dev eth0\n", "",
@@ -128,14 +128,14 @@ class DefaultGatewayTests(unittest.TestCase):
         gw = network.get_default_gateway()
         self.assertEqual(gw, "10.0.0.1")
 
-    @patch("utils.network.is_windows", return_value=True)
-    @patch("utils.network.subprocess.run", side_effect=Exception("fail"))
+    @patch("chainrecon.utils.network.is_windows", return_value=True)
+    @patch("chainrecon.utils.network.subprocess.run", side_effect=Exception("fail"))
     def test_failure_returns_none(self, *_):
         self.assertIsNone(network.get_default_gateway())
 
 
 class LocalIPTests(unittest.TestCase):
-    @patch("utils.network.socket.socket")
+    @patch("chainrecon.utils.network.socket.socket")
     def test_local_ip(self, mock_socket_cls):
         mock_sock = MagicMock()
         mock_sock.__enter__ = MagicMock(return_value=mock_sock)
@@ -144,43 +144,43 @@ class LocalIPTests(unittest.TestCase):
         mock_socket_cls.return_value = mock_sock
         self.assertEqual(network.get_local_ip(), "192.168.1.50")
 
-    @patch("utils.network.socket.socket", side_effect=OSError)
+    @patch("chainrecon.utils.network.socket.socket", side_effect=OSError)
     def test_failure_returns_none(self, _):
         self.assertIsNone(network.get_local_ip())
 
 
 class IPForwardingTests(unittest.TestCase):
-    @patch("utils.network.is_windows", return_value=True)
-    @patch("utils.network.subprocess.run")
+    @patch("chainrecon.utils.network.is_windows", return_value=True)
+    @patch("chainrecon.utils.network.subprocess.run")
     def test_enable_windows(self, mock_run, _):
         mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
         self.assertTrue(network.enable_ip_forwarding())
 
-    @patch("utils.network.is_windows", return_value=True)
-    @patch("utils.network.subprocess.run", side_effect=Exception("fail"))
+    @patch("chainrecon.utils.network.is_windows", return_value=True)
+    @patch("chainrecon.utils.network.subprocess.run", side_effect=Exception("fail"))
     def test_enable_windows_failure(self, *_):
         self.assertFalse(network.enable_ip_forwarding())
 
-    @patch("utils.network.is_windows", return_value=False)
-    @patch("utils.network.subprocess.run")
+    @patch("chainrecon.utils.network.is_windows", return_value=False)
+    @patch("chainrecon.utils.network.subprocess.run")
     def test_enable_linux(self, mock_run, _):
         mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
         self.assertTrue(network.enable_ip_forwarding())
 
-    @patch("utils.network.is_windows", return_value=True)
-    @patch("utils.network.subprocess.run")
+    @patch("chainrecon.utils.network.is_windows", return_value=True)
+    @patch("chainrecon.utils.network.subprocess.run")
     def test_disable_windows(self, mock_run, _):
         mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
         self.assertTrue(network.disable_ip_forwarding())
 
-    @patch("utils.network.is_windows", return_value=False)
-    @patch("utils.network.subprocess.run")
+    @patch("chainrecon.utils.network.is_windows", return_value=False)
+    @patch("chainrecon.utils.network.subprocess.run")
     def test_disable_linux(self, mock_run, _):
         mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
         self.assertTrue(network.disable_ip_forwarding())
 
-    @patch("utils.network.is_windows", return_value=False)
-    @patch("utils.network.subprocess.run", side_effect=Exception("fail"))
+    @patch("chainrecon.utils.network.is_windows", return_value=False)
+    @patch("chainrecon.utils.network.subprocess.run", side_effect=Exception("fail"))
     def test_disable_failure(self, *_):
         self.assertFalse(network.disable_ip_forwarding())
 

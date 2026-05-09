@@ -10,7 +10,7 @@ import yaml
 
 from chainrecon.utils.artifacts import safe_token
 
-COMMUNITY_PLUGIN_DIR = Path(__file__).resolve().parent.parent / "community_plugins"
+COMMUNITY_PLUGIN_DIR = Path(__file__).resolve().parents[2] / "community_plugins"
 _REQUIRED_MANIFEST_FIELDS = ("name", "version", "type", "entrypoint", "inputs", "outputs", "description")
 
 

@@ -5,26 +5,26 @@ import unittest
 from unittest.mock import patch
 import asyncio
 
-from tui.app import ChainReconApp
-from tui.screens.dashboard import DashboardScreen
-from tui.screens.scan import ScanScreen
-from tui.screens.capture import CaptureScreen
-from tui.screens.analyze import AnalyzeScreen
-from tui.screens.frida import FridaScreen
-from tui.screens.apk import APKScreen
-from tui.screens.reports import ReportsScreen
-from tui.screens.settings import SettingsScreen
-from tui.screens.scan import SCAN_PROFILE_OPTIONS
-from tui.screens.scan import _displayable_output_files
-from tui.screens.scan import _interface_options
-from tui.screens.network_setup import NetworkSetupScreen
-from tui.screens.dashboard import _format_tool_status
-from tui.widgets.findings_table import FindingsTable
-from tui.widgets.log_viewer import LogViewer, _wrap_display_text, sanitize_terminal_controls
-from tui.widgets.pasteable_input import PasteableInput
-from tui.screens.reports import _has_report_data, _report_output_path
+from chainrecon.tui.app import ChainReconApp
+from chainrecon.tui.screens.dashboard import DashboardScreen
+from chainrecon.tui.screens.scan import ScanScreen
+from chainrecon.tui.screens.capture import CaptureScreen
+from chainrecon.tui.screens.analyze import AnalyzeScreen
+from chainrecon.tui.screens.frida import FridaScreen
+from chainrecon.tui.screens.apk import APKScreen
+from chainrecon.tui.screens.reports import ReportsScreen
+from chainrecon.tui.screens.settings import SettingsScreen
+from chainrecon.tui.screens.scan import SCAN_PROFILE_OPTIONS
+from chainrecon.tui.screens.scan import _displayable_output_files
+from chainrecon.tui.screens.scan import _interface_options
+from chainrecon.tui.screens.network_setup import NetworkSetupScreen
+from chainrecon.tui.screens.dashboard import _format_tool_status
+from chainrecon.tui.widgets.findings_table import FindingsTable
+from chainrecon.tui.widgets.log_viewer import LogViewer, _wrap_display_text, sanitize_terminal_controls
+from chainrecon.tui.widgets.pasteable_input import PasteableInput
+from chainrecon.tui.screens.reports import _has_report_data, _report_output_path
 from textual.widgets import Select
-from runners.frida_runner import FRIDA_SCRIPTS
+from chainrecon.runners.frida_runner import FRIDA_SCRIPTS
 
 
 class AppRegistrationTests(unittest.TestCase):
@@ -127,7 +127,7 @@ class ReportsHelperTests(unittest.TestCase):
 
 class ScanInterfaceOptionTests(unittest.TestCase):
     def test_interface_options_include_auto_and_selected_interface(self):
-        with patch("tui.screens.scan.list_scan_interfaces", return_value=[{"name": "Ethernet", "description": "UP", "runtime_id": "eth0"}]):
+        with patch("chainrecon.tui.screens.scan.list_scan_interfaces", return_value=[{"name": "Ethernet", "description": "UP", "runtime_id": "eth0"}]):
             options, selected = _interface_options("Ethernet")
         self.assertEqual(options[0][1], "__auto__")
         self.assertEqual(selected, "Ethernet")
@@ -183,7 +183,7 @@ class TuiRequirementTests(unittest.TestCase):
             app.add_class("ascii-mode")
             async with app.run_test(size=(100, 28)) as pilot:
                 await pilot.pause()
-                with patch("tui.screens.frida.FridaScreen.on_mount", return_value=None):
+                with patch("chainrecon.tui.screens.frida.FridaScreen.on_mount", return_value=None):
                     app.push_screen("frida")
                     await pilot.pause()
                     screen = app.screen
@@ -215,7 +215,7 @@ class TuiRequirementTests(unittest.TestCase):
             app.add_class("ascii-mode")
             async with app.run_test(size=(100, 28)) as pilot:
                 await pilot.pause()
-                with patch("tui.screens.frida.FridaScreen.on_mount", return_value=None):
+                with patch("chainrecon.tui.screens.frida.FridaScreen.on_mount", return_value=None):
                     app.push_screen("frida")
                     await pilot.pause()
                     screen = app.screen
@@ -232,7 +232,7 @@ class TuiRequirementTests(unittest.TestCase):
             app.add_class("ascii-mode")
             async with app.run_test(size=(100, 28)) as pilot:
                 await pilot.pause()
-                with patch("tui.screens.frida.FridaScreen.on_mount", return_value=None):
+                with patch("chainrecon.tui.screens.frida.FridaScreen.on_mount", return_value=None):
                     app.push_screen("frida")
                     await pilot.pause()
                     screen = app.screen
@@ -249,7 +249,7 @@ class TuiRequirementTests(unittest.TestCase):
             app.add_class("ascii-mode")
             async with app.run_test(size=(100, 28)) as pilot:
                 await pilot.pause()
-                with patch("tui.screens.frida.FridaScreen.on_mount", return_value=None):
+                with patch("chainrecon.tui.screens.frida.FridaScreen.on_mount", return_value=None):
                     app.push_screen("frida")
                     await pilot.pause()
                     screen = app.screen
@@ -275,7 +275,7 @@ class TuiRequirementTests(unittest.TestCase):
             app.add_class("ascii-mode")
             async with app.run_test(size=(100, 28)) as pilot:
                 await pilot.pause()
-                with patch("tui.screens.frida.FridaScreen.on_mount", return_value=None):
+                with patch("chainrecon.tui.screens.frida.FridaScreen.on_mount", return_value=None):
                     app.push_screen("frida")
                     await pilot.pause()
                     screen = app.screen
@@ -344,8 +344,8 @@ class TuiRequirementTests(unittest.TestCase):
             app = ChainReconApp()
             app.add_class("ascii-mode")
             with tempfile.TemporaryDirectory() as td, \
-                 patch("tui.screens.frida.FridaScreen.on_mount", return_value=None), \
-                 patch("tui.screens.frida.get_output_dir", return_value=td):
+                 patch("chainrecon.tui.screens.frida.FridaScreen.on_mount", return_value=None), \
+                 patch("chainrecon.tui.screens.frida.get_output_dir", return_value=td):
                 async with app.run_test(size=(100, 28)) as pilot:
                     await pilot.pause()
                     app.push_screen("frida")
@@ -418,7 +418,7 @@ class ApkArtifactTests(unittest.TestCase):
     def test_write_json_artifact_is_immediately_readable(self):
         import tempfile
         from pathlib import Path
-        from utils.artifacts import write_json_artifact
+        from chainrecon.utils.artifacts import write_json_artifact
 
         with tempfile.TemporaryDirectory() as td:
             target = Path(td) / "apk_result.json"

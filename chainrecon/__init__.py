@@ -143,7 +143,7 @@ def handle_network_config(args) -> int:
         return 0
 
     # Apply or remove
-    scripts_dir = _Path(__file__).resolve().parent / "scripts"
+    scripts_dir = _Path(__file__).resolve().parent.parent / "scripts"
     is_win = platform.system() == "Windows"
 
     if "/" in args.static_ip:
@@ -774,7 +774,7 @@ def main(argv: List[str] | None = None) -> int:
         return 0
 
     if args.command == "interactive":
-        from interactive import run_interactive
+        from chainrecon.interactive import run_interactive
         run_interactive()
         return 0
 

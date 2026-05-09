@@ -1,231 +1,140 @@
 # ChainRecon
 
-A network security analysis tool for figuring out what an IoT device actually does on the network -- what servers it connects to, what protocols it uses, whether its traffic is encrypted, and whether the APK has anything sketchy in it.
+ChainRecon is a local IoT security analysis toolkit. It helps you inspect what a device is doing across network traffic, Android APKs, Frida runtime behavior, firmware files, workflow runs, and generated reports.
 
-This was written because manually running nmap, tshark, jadx, and frida on every new device gets old fast. ChainRecon wraps all of that into a single TUI that you can navigate with a keyboard.
+It is built for lab work where you control the network, emulator, APKs, packet captures, and test devices. It does not magically break into devices or replace the external tools it wraps. It gives you a repeatable place to run those tools, collect artifacts, and keep the evidence together.
 
-## Setup
+## What You Can Do With It
 
-You need Python 3.10+ and pip. On Windows, run from PowerShell (admin or Windows Terminal):
+- Put your computer between an IoT device and the internet, then capture and analyze traffic.
+- Run nmap profiles and turn raw scan output into structured findings.
+- Analyze saved pcaps for DNS, TLS SNI, HTTP, MQTT, RTP/SRTP, WebRTC/STUN, certificates, entropy, and cleartext secrets.
+- Decompile Android APKs with jadx and inspect permissions, exported components, network security config, SDKs, hardcoded credentials, and pinning indicators.
+- Run managed Frida scripts against Android apps and emulators, including loaded-class discovery, live class monitoring, HTTP/socket tracing, crypto tracing, SharedPreferences tracing, and Nooie MQTT/token tracing.
+- Run YAML workflows that combine scan, capture, Frida, firmware, APK, report, and community-plugin steps.
+- Generate reports in XLSX, JSON, HTML, and CSV. XLSX is the default format shown in the UI.
+- Run early firmware triage with binwalk extraction when available, strings/config/certificate/key checks, and direct fallback scanning when extraction is not available.
+
+The firmware module is still in its beginnings and will be expanded later. Right now it is useful for first-pass triage, not full firmware reverse engineering.
+
+Reports are also still expected to improve. The current reports are useful for review and evidence capture, but the log files are often just as important because they preserve the raw tool output, Frida stream, workflow errors, and exact paths that explain what happened.
+
+## Install From Source
+
+Use Python 3.10 or newer.
 
 ```bash
-pip install -r requirements.txt
+git clone https://github.com/Immortal-ibr/ChainRecon.git
+cd ChainRecon
+python -m pip install -r requirements.txt
+python -m pip install -e .
 ```
 
-Then launch the TUI:
+On Windows, use PowerShell or Windows Terminal. Some network setup operations need Administrator privileges.
+
+On Linux, install the system tools you plan to use. At minimum, traffic and scan workflows usually need:
+
+```bash
+sudo apt install nmap tshark tcpdump android-tools-adb
+```
+
+Package names vary by distribution.
+
+## Optional Python Extras
+
+The project can be installed with focused extras:
+
+```bash
+python -m pip install -e ".[tui]"
+python -m pip install -e ".[frida]"
+python -m pip install -e ".[full]"
+python -m pip install -e ".[dev]"
+```
+
+For day-to-day development, use:
+
+```bash
+python -m pip install -e ".[full,dev]"
+```
+
+## Arch Linux Package
+
+PR #2 adds a `PKGBUILD` for Arch-style packaging.
+
+```bash
+makepkg -si
+```
+
+The package build depends on Arch package names being available on the host. If `makepkg` fails because a dependency name differs on your system, install the missing package manually or adjust the package name before rebuilding.
+
+## Run It
+
+Launch the TUI:
+
+```bash
+chainrecon tui
+```
+
+The source-checkout compatibility command is still supported:
 
 ```bash
 python chainrecon.py tui
 ```
 
-Or use the CLI directly:
+Run common CLI workflows:
 
 ```bash
-python chainrecon.py analyze-traffic captures/device.pcap --format xlsx
-python chainrecon.py scan 192.168.1.50 --profile ssl
-python chainrecon.py report output --format xlsx --output output/report.xlsx
-python chainrecon.py firmware firmware.bin --format xlsx --output output/firmware.xlsx
-python chainrecon.py workflow run workflows/nooie_mqtt_tls.yaml --target 192.168.123.99 --device-profile nooie --dry-run
+chainrecon analyze-traffic captures/device.pcap --format xlsx --output output/traffic.xlsx
+chainrecon scan 192.168.1.50 --profile ssl --format xlsx --output output/scan.xlsx
+chainrecon report output --format xlsx --output output/report.xlsx
+chainrecon firmware firmware.bin --format xlsx --output output/firmware.xlsx
+chainrecon workflow run workflows/nooie_mqtt_tls.yaml --target 192.168.123.99 --device-profile nooie --dry-run
 ```
 
-## Building a package
+The same commands work through `python chainrecon.py ...` from a source checkout.
 
-A PKGBUILD is included for Arch Linux.
+## Network Setup
 
-```bash
-cd /path/to/ChainRecon
-makepkg -si
+The normal lab position is:
+
+```text
+IoT device -> dedicated router -> your computer -> internet
 ```
 
-## How the network setup works
+Your computer becomes the gateway/NAT point. ChainRecon can then capture traffic without rooting the device or installing anything on it.
 
-Classic man-in-the-middle position -- your computer sits between the IoT device and the internet:
+The Network Setup screen uses active scripts for both desktop paths:
 
-1. Connect the IoT device to a dedicated router (not your main one)
-2. Plug that router into your computer via Ethernet
-3. Your computer forwards the traffic out through Wi-Fi to the internet
-4. ChainRecon captures and analyzes everything going through that bridge
+- Windows: `scripts/network_setup.ps1`, run through PowerShell with Administrator privileges.
+- Linux: `scripts/network_setup.sh`, run through `sudo` with `ip`, `iptables`, and `sysctl`.
 
-No rooting or installing anything on the device. You're watching at the network layer.
+The old interactive Linux shell script is kept under `legacy/manual_shell_scripts/` for reference only. The active Linux path is `scripts/network_setup.sh`.
 
-The Network Setup screen has active setup scripts for both supported desktop paths:
+## External Tools
 
-- Windows uses `scripts/network_setup.ps1` with PowerShell and administrator privileges.
-- Linux uses `scripts/network_setup.sh` with `sudo`, `ip`, `iptables`, `sysctl`, and the same interface/static-IP values from the TUI.
+ChainRecon detects optional tools at startup and shows what is missing. Missing tools only disable their matching workflows.
 
-The old interactive Linux shell script is kept only under `legacy/manual_shell_scripts/` for reference. The active Linux path is `scripts/network_setup.sh`.
+| Tool | Used for |
+| --- | --- |
+| `nmap` | scan profiles and service discovery |
+| `tshark` / `tcpdump` | live packet capture |
+| `jadx` | APK decompilation |
+| `apktool` | APK resource decoding |
+| `adb` | Android emulator/device control |
+| `frida`, `frida-ps` | Android runtime instrumentation |
+| `binwalk` | firmware extraction |
 
-## What it analyzes
-
-### Traffic analysis (from .pcap or live capture)
-
-- **DNS queries** -- what domains the device looks up at startup and during use
-- **TLS SNI** -- where it actually connects (even HTTPS leaks the hostname in ClientHello)
-- **HTTP** -- unencrypted requests including headers and POST data
-- **External IPs** with cloud provider attribution (AWS, GCP, Azure, Cloudflare, Akamai)
-- **Protocol breakdown** and conversation statistics
-- **WebRTC/STUN** -- ICE candidates, DTLS handshakes, SRTP stream detection
-- **Cleartext credentials** -- passwords, tokens, API keys in unencrypted traffic
-
-### Entropy analysis
-
-Computes Shannon entropy (bits per byte, 0-8) for every payload in the pcap. Classifies packets and streams as plaintext, structured, compressed, or encrypted. Flags anomalies like low entropy on ports that should be encrypted (443, 8443), and detects near-perfect entropy that may indicate XOR obfuscation.
-
-### RTP / protocol classification
-
-Identifies UDP protocols by first-byte heuristics: STUN (RFC 5389 magic cookie), DTLS (content types 20-25), RTP/SRTP (version 2 header), TURN channel data. Groups RTP packets by SSRC to identify media streams, extracts payload types (H.264, Opus, PCMU), estimates packet loss from sequence gaps. Detects H.264 NAL units in RTP payloads.
-
-### Certificate extraction from pcap
-
-Scans TLS and DTLS handshakes, pyshark TLS certificate fields, and raw TCP-reassembled payloads for DER-encoded X.509 certificates. Parses SANs, subject/issuer details, signature algorithms, expiry, self-signed status, and Fermat factorisation vulnerability (p close to q). Needs the `cryptography` package.
-
-### MQTT deep parsing
-
-Decodes MQTT from raw TCP payloads:
-- **CONNECT** -- client ID, username, password (flagged if sent unencrypted on port 1883)
-- **PUBLISH** -- topic names and payloads with JSON detection
-- **SUBSCRIBE** -- topic filters and QoS levels
-- **XOR detection** -- tries common single-byte XOR keys against opaque payloads
-
-### APK static analysis
-
-- Decompiles with jadx, inspects the Java source
-- Reads AndroidManifest.xml for permissions and exported components
-- Checks network_security_config.xml for cleartext traffic and cert pins
-- Scans for hardcoded credentials, API keys, AWS config
-- Identifies SDKs: Tuya, AWS IoT, Firebase, Paho MQTT, OkHttp, Agora, WebRTC
-
-### Firmware analysis
-
-- Extracts images with `binwalk`
-- Inventories extracted filesystems for web UI assets, SSH/web configs, passwd/shadow files, and embedded certificates or private keys
-- Scans extracted text files for credential-like strings and protocol configuration hints
-- If extraction tooling is not available, scans the firmware image directly and records the extraction warning instead of failing the whole run
-
-The firmware module is still in its beginnings. It is useful for a first pass over strings, keys, certificates, endpoints, and extracted filesystems, but it is not a full firmware reverse-engineering framework yet. The next expansion point is deeper filesystem unpacking, CPU/architecture detection, vendor-specific config parsers, and better binary triage.
-
-### Frida runtime instrumentation
-
-The Frida screen manages the Android side of the workflow instead of expecting every command to be typed by hand:
-
-- Selects the configured emulator/device and starts `frida-server` when possible
-- Launches or wakes a target package before attaching, including `com.nooie.home`
-- Defaults to `List App Loaded Classes` when the Frida page opens
-- Supports `Device-Wide Class Census` as a managed session that can be stopped from the TUI
-- Adds `Live Loaded Class Monitor` for newly loaded classes and `Class.forName(...)` calls from the moment the hook starts
-- Streams logs to the TUI and writes a JSON session summary with `stopped_by_user` when Stop Hook is used
-
-The HTTP trace, socket/URL monitor, crypto monitor, shared preferences watch, and Nooie MQTT/token trace keep their built-in hooks and also accept additional class names. That lets you add app-specific classes after class discovery without editing the JavaScript files.
-
-### SSL/TLS (live probing)
-
-- Connects to open ports and reads the certificate chain
-- Flags weak ciphers (RC4, DES, export) and outdated TLS (1.0, 1.1)
-- Checks key sizes and signature algorithms
-- JA3 fingerprinting from a saved pcap
-
-### Network scanning
-
-**nmap profiles** (6 built-in):
-- ARP Discovery -- local-subnet host discovery via `nmap -sn -PR`
-- Quick -- top 1000 ports with service detection
-- Gentle -- full TCP connect, slow timing (safe for fragile IoT devices)
-- Full -- all 65535 ports + OS detection + traceroute (2-hour timeout)
-- IoT -- TCP + UDP on MQTT, UPnP, mDNS, CoAP, Modbus ports
-- Vulnerability -- NSE vuln scripts (EternalBlue, Heartbleed, default creds)
-- SSL/Cert -- ssl-cert + ssl-enum-ciphers on HTTPS/MQTT-TLS ports
-
-**Extended probes**:
-- Service Fingerprint -- deep probe with HTTP/RTSP/MQTT protocol handshakes
-
-### Workflow automation
-
-- `python chainrecon.py workflow run <pipeline.yaml>` executes scan, TLS, PCAP, Frida, firmware, report, and community-plugin steps from YAML
-- `when:` expressions provide conditional branching between steps
-- `critical: true` marks steps that should stop the pipeline on failure
-- Shared device profiles live under `profiles/devices/*.yaml`; `profiles/devices/nooie.yaml` is the authoritative Nooie device profile
-- Community analyzers are discovered from `community_plugins/*/plugin.yaml`
-
-## External tools
-
-The TUI shows which tools are found on startup. Most features work without everything installed.
-
-| Tool | What it's for | Where to get it |
-|------|--------------|----------------|
-| nmap | Device scanning | nmap.org |
-| tshark | Live capture | wireshark.org |
-| jadx | APK decompilation | github.com/skylot/jadx/releases |
-| apktool | APK resource decoding | apktool.org |
-| frida | Runtime instrumentation | frida.re |
-| adb | Android device communication | developer.android.com |
-
-For jadx and apktool on Windows, set the paths in `config/local.yaml`:
+For Windows paths that are not on `PATH`, use `config/local.yaml`:
 
 ```yaml
 tools:
-  jadx: 'C:\path\to\jadx-1.5.5\bin\jadx.bat'
-  apktool: 'C:\path\to\apktool\apktool.jar'
+  jadx: 'C:\tools\jadx\bin\jadx.bat'
+  apktool: 'C:\tools\apktool\apktool.jar'
 ```
 
-Use single quotes -- double-quoted YAML strings treat backslashes as escape sequences.
+Use single quotes in YAML for Windows paths so backslashes are not treated as escapes.
 
-## Setup verification
-
-Run these checks after installation. They verify the local Python environment, optional external tools, and Frida device setup.
-
-### 1. Verify Python dependencies
-
-```bash
-python --version
-python -m pip install -r requirements.txt
-python -c "import textual, rich, yaml, requests; print('Python dependencies OK')"
-```
-
-Then run the offline test suite:
-
-```bash
-python -m pytest --tb=short -q
-```
-
-### 2. Verify external tools
-
-On Windows PowerShell:
-
-```powershell
-Get-Command nmap,tshark,adb,frida,frida-ps -ErrorAction SilentlyContinue
-```
-
-On Linux/macOS:
-
-```bash
-command -v nmap tshark adb frida frida-ps
-```
-
-Missing tools only affect their matching features. For example, traffic capture needs `tshark`, Nmap profiles need `nmap`, and Frida instrumentation needs `adb`, `frida`, and `frida-ps`.
-
-### 3. Verify APK tooling
-
-Set `jadx` and `apktool` paths in `config/local.yaml` if they are not on `PATH`:
-
-```yaml
-tools:
-  jadx: 'C:\path\to\jadx-1.5.5\bin\jadx.bat'
-  apktool: 'C:\path\to\apktool\apktool.jar'
-```
-
-Then verify them:
-
-```powershell
-python -c "from utils.config import get_tool_path; print('jadx =', get_tool_path('jadx')); print('apktool =', get_tool_path('apktool'))"
-```
-
-If you have a test APK available, run:
-
-```bash
-python chainrecon.py apk path/to/app.apk --format json --output output/apk_smoke_test.json
-```
-
-### 4. Verify Frida setup
+## Frida Workflow
 
 Install Frida tools:
 
@@ -233,90 +142,74 @@ Install Frida tools:
 python -m pip install frida-tools
 ```
 
-Recommended test device: an Android 15 / API 35 Google APIs x86_64 emulator. This image supports `adb root` and works with Frida Java hooks.
-
-Install Android command-line tools if `sdkmanager` is missing. On Windows, download Command Line Tools from the Android Studio downloads page, extract it to:
-
-```text
-%LOCALAPPDATA%\Android\Sdk\cmdline-tools\latest
-```
-
-If `sdkmanager.bat` has trouble with a newer Java version, install Java 17 and point the current shell at it:
-
-```powershell
-winget install --id EclipseAdoptium.Temurin.17.JDK --source winget
-$env:JAVA_HOME = 'C:\Program Files\Eclipse Adoptium\jdk-17.0.18.8-hotspot'
-$env:Path = "$env:JAVA_HOME\bin;$env:LOCALAPPDATA\Android\Sdk\cmdline-tools\latest\bin;$env:LOCALAPPDATA\Android\Sdk\emulator;$env:LOCALAPPDATA\Android\Sdk\platform-tools;$env:Path"
-```
-
-Install the emulator image and create the AVD:
-
-```powershell
-$sdk = "$env:LOCALAPPDATA\Android\Sdk"
-sdkmanager --sdk_root=$sdk "platform-tools" "emulator" "platforms;android-35" "system-images;android-35;google_apis;x86_64"
-avdmanager create avd --force --name ChainRecon_API35 --package "system-images;android-35;google_apis;x86_64" --device "Nexus 5X"
-emulator -avd ChainRecon_API35 -no-window -no-audio -no-snapshot -gpu swiftshader_indirect
-```
-
-Wait until Android boots:
+Start an emulator or connect a device, then verify:
 
 ```bash
 adb devices
-adb shell getprop sys.boot_completed
-```
-
-`adb devices` should show `emulator-5554 device`, and `sys.boot_completed` should return `1`.
-
-Restart ADB as root and confirm the emulator architecture:
-
-```bash
-adb root
-adb shell id
-adb shell getprop ro.product.cpu.abi
-```
-
-The recommended emulator returns `x86_64`. Download the matching `frida-server` from the Frida release that matches your local Frida tools:
-
-```powershell
-$version = (frida --version).Trim()
-$url = "https://github.com/frida/frida/releases/download/$version/frida-server-$version-android-x86_64.xz"
-curl.exe -L -o "$env:TEMP\frida-server.xz" $url
-python -c "import lzma, os; open(os.environ['TEMP'] + r'\frida-server', 'wb').write(lzma.open(os.environ['TEMP'] + r'\frida-server.xz', 'rb').read())"
-```
-
-Push and start `frida-server` on the emulator:
-
-```bash
-adb push %TEMP%\frida-server /data/local/tmp/frida-server
-adb shell chmod +x /data/local/tmp/frida-server
-adb shell "/data/local/tmp/frida-server &"
-adb forward tcp:27042 tcp:27042
-```
-
-Verify Frida can list device processes:
-
-```bash
 frida-ps -U
 ```
 
-Start a test app and verify Frida can attach by package identifier:
+In the TUI, open `Frida`, choose the device, enter a package name such as `com.nooie.home`, choose a built-in script, and run it. The page defaults to `List App Loaded Classes`. Long-running hooks stay managed by ChainRecon so `Stop Hook` records a user stop instead of an unexpected exit.
+
+Useful Frida scripts include:
+
+- `List App Loaded Classes`
+- `Device-Wide Class Census`
+- `Live Loaded Class Monitor`
+- `HTTP Trace`
+- `Socket and URL Monitor`
+- `Crypto Monitor`
+- `Shared Preferences Watch`
+- `Nooie MQTT and Token Trace`
+
+The HTTP, socket/URL, crypto, shared preferences, and Nooie tracing scripts keep their default hooks and let you add extra classes from the UI.
+
+## APK Analysis
+
+Run:
 
 ```bash
-adb shell monkey -p com.android.settings 1
-frida -U -N com.android.settings -l runners/frida_scripts/network_traffic_monitor.js -q -t 10 --exit-on-error
+chainrecon apk path/to/app.apk --format xlsx --output output/apk.xlsx
 ```
 
-Verify ChainRecon can build and render Frida scripts:
+APK analysis uses jadx when available. It reads `AndroidManifest.xml`, checks exported components and dangerous permissions, scans `network_security_config.xml`, looks for known SDKs, and searches decompiled code for credentials and pinning indicators.
+
+## Firmware Analysis
+
+Run:
 
 ```bash
-python -m pytest tests/unit tests/e2e -q
+chainrecon firmware path/to/firmware.bin --format xlsx --output output/firmware.xlsx
 ```
 
-To run a built-in script from the TUI, open `Frida`, choose or boot a device from the device selector, check the Frida compatibility note, enter a package/process name such as `com.nooie.home`, choose a built-in script, and press `Run`. ChainRecon decides whether to attach, spawn, or run the device-wide census path. If `adb`, the Android emulator tools, or Frida host tools are missing, the screen shows the required setup message instead of failing silently.
+If binwalk is present, ChainRecon attempts extraction first. If extraction is not available or fails, the module still performs direct file triage and records the warning. This module is intentionally early-stage and will be expanded later with better filesystem unpacking, architecture detection, vendor config parsing, and binary triage.
+
+## Workflow Engine
+
+Run a dry run first:
+
+```bash
+chainrecon workflow run workflows/nooie_mqtt_tls.yaml --target 192.168.123.99 --device-profile nooie --dry-run
+```
+
+Workflows can chain scan, TLS, pcap, Frida, firmware, report, and community-plugin steps. Device profiles live in `profiles/devices/*.yaml`; `profiles/devices/nooie.yaml` is the authoritative Nooie profile. Config values are runtime defaults and should not override the profile fields.
+
+## Reports And Logs
+
+Reports can be generated as:
+
+- XLSX
+- JSON
+- HTML
+- CSV
+
+XLSX is the default user-facing report format. HTML and CSV are useful for browsing and filtering, while JSON is best for automation.
+
+Do not ignore logs. Logs are important for debugging and evidence review because they keep details that reports intentionally summarize: raw tool output, Frida events, workflow step failures, output file paths, command lines, and stop/exit status.
 
 ## Configuration
 
-`config/default.yaml` has built-in defaults. Put overrides in `config/local.yaml`:
+Built-in defaults live in `config/default.yaml`. Local overrides go in `config/local.yaml`:
 
 ```yaml
 network:
@@ -325,84 +218,72 @@ network:
   router_ip: 192.168.123.1
   target_ip: 192.168.123.50
 
+output:
+  directory: ./nooie_analysis
+
 tools:
   jadx: 'D:\tools\jadx\bin\jadx.bat'
-
-api_keys:
-  shodan: your_key_here
 ```
 
-Environment variables also work: `CHAINRECON_JADX_PATH`, `CHAINRECON_APKTOOL_PATH`, etc.
+Environment variables also work for tool paths and API keys.
 
-## Running tests
+## Project Layout
+
+```text
+chainrecon/          Installable Python package
+chainrecon.py        Compatibility CLI wrapper for source checkouts
+scripts/             Windows and Linux helper scripts
+config/              Default and local configuration
+profiles/            Shared device profiles
+workflows/           YAML workflow definitions
+community_plugins/   Optional community analyzers
+documentation/       Project notes and testing docs
+tests/               Unit, integration, e2e, and requirement tests
+legacy/              Retired manual assets kept for reference
+```
+
+Temporary compatibility packages still exist for old imports like `analysis`, `runners`, `tui`, `utils`, `plugins`, and `models`. New code should import from `chainrecon.*`.
+
+## Test And Verify
+
+Run the full suite:
 
 ```bash
 python -m pytest --tb=short -q
 ```
 
-The suite covers analyzers, runners, CLI, TUI screens, workflows, reports, and plugins. Most tests are offline by default; live emulator checks are documented separately because they depend on local Android and Frida state.
-See `documentation/testing.md` for the unit, integration, end-to-end, requirement, and live Nooie verification workflow.
+Smoke-test the CLI entrypoints:
 
-## TUI reliability notes
-
-Admin PowerShell uses the older conhost terminal host. ChainRecon now keeps TUI-visible text ASCII-safe and switches Textual borders to ASCII when Windows Terminal is not detected. `Ctrl+C` and `Ctrl+Shift+C` copy from the focused output box or text widget instead of terminating the session; use `q` or `Ctrl+Q` to quit.
-
-All single-line input fields use the same paste handling. `Ctrl+V`, `Ctrl+Shift+V`, and `Shift+Insert` normalize quoted Windows paths, multiline clipboard text, and `file://` URLs before inserting them.
-
-Output boxes are bounded to the last 1000 retained lines. When older lines are dropped, the log says so. Analyzer and tool artifacts are still written to the configured output directory, and each output box has controls for Clear, Copy, Save Log, Open File, and Open Folder. The log files are important. If a long Frida session, workflow, or tool run behaves strangely, the saved logs are the first place to look because they preserve the full stream even when the visible TUI log is bounded.
-
-Long saved paths are wrapped in the output widgets so the scrollbar does not hide the actual filename, and the main scroll containers reserve space for the scrollbar instead of drawing it over controls.
-
-## Scan and SSL semantics
-
-Nmap-backed profiles run the real `nmap` executable and save both raw output and structured JSON. The structured result records the exact command, return code, output files, preflight reachability context, host-state, open ports, closed ports, and filtered ports.
-
-You can now set the nmap interface explicitly from the Scan screen or with `python chainrecon.py scan --interface <name> ...`. If omitted, ChainRecon uses `scan.interface` from configuration.
-
-The `-Pn` flag means nmap scans even if host discovery is inconclusive; it does not prove the target is alive. Python-native ARP fallback reads the local ARP table and is explicitly labeled as cached data because old entries can outlive the current device state.
-
-SSL `reachable: false` is per port. It means that specific TCP/TLS probe failed, not necessarily that the host is down. `getaddrinfo failed` means name resolution failed, usually because the target field contains an invalid hostname, a URL where a host was expected, or a pasted file path.
-
-## Report sources
-
-The report screen has two source modes:
-
-- `Current session only`: includes results produced in the current TUI session and avoids stale files.
-- `All JSON files in configured output directory`: imports top-level ChainRecon `*.json` analysis artifacts from the configured output directory and annotates each section with its source filename. Generated multi-section reports and decompiled APK asset JSON files are skipped so reports do not recursively include themselves.
-
-The default report path is based on `output.directory` from configuration, which is `./nooie_analysis` in this repo. XLSX is the default format shown to the user; HTML, JSON, and CSV are still available.
-
-Reports are still not a finished surface. They are good enough for evidence capture and review, but they still need more work around presentation consistency, consolidation across sessions, and better handling of large result sets.
-
-HTML reports are now organized into collapsible sections so long reports stay navigable. CSV exports now include a `page` column so spreadsheet filters can group rows by section like separate pages.
-
-## Project layout
-
+```bash
+python chainrecon.py --help
+python -m chainrecon --help
+chainrecon --help
 ```
-chainrecon.py        CLI entry point
-interactive.py       Interactive CLI (pre-TUI version)
-analysis/            Traffic, SSL, APK, entropy, RTP, cert, MQTT analyzers
-runners/             Subprocess wrappers for nmap, frida, tshark + native scans
-tui/                 Textual TUI app and screens
-plugins/             Report output plugins (JSON, HTML, CSV)
-tests/               Test suite
-config/              Default and local configuration files
-scripts/             Active helper scripts for Windows and Linux network setup/testing
-legacy/              Manual legacy assets not used by active runners
+
+Build and test the wheel:
+
+```bash
+python -m build --wheel
+python -m pip install dist/chainrecon-*.whl
+chainrecon --help
 ```
+
+## TUI Reliability Notes
+
+Admin PowerShell can use the older conhost terminal host. ChainRecon switches to ASCII borders when Windows Terminal is not detected and strips leaked terminal control sequences from logs.
+
+Single-line fields normalize pasted Windows paths, multiline clipboard text, and `file://` URLs. Output panes keep the last visible lines bounded, but saved log files preserve the important details for later review.
 
 ## Troubleshooting
 
-**Question marks (?) in TUI borders** -- Happens in admin PowerShell / conhost.exe. ChainRecon detects this and switches to ASCII borders. If you still see garbled output, use Windows Terminal.
+**The TUI shows question marks or broken borders.** Use Windows Terminal when possible. ChainRecon falls back to ASCII borders in older console hosts.
 
-**Escape text like `^[[<35;28;21M` appears in the TUI** -- That is leaked terminal mouse reporting. ChainRecon disables the relevant terminal modes on startup and strips control sequences from tool output before rendering logs.
+**Escape text like `^[[<35;28;21M` appears.** That is leaked mouse reporting from the terminal. ChainRecon disables those modes on startup and sanitizes rendered logs.
 
-**jadx not found** -- Set the path in `config/local.yaml` as shown above.
+**No traffic is captured.** Check the interface name and verify the IoT device is actually routing through your computer.
 
-**APK analysis seems stuck** -- Large APKs take 3-5 minutes to decompile. The TUI shows jadx progress as it runs.
+**jadx is not found.** Put its path in `config/local.yaml` or add it to `PATH`.
 
-**Full nmap scan times out** -- Scanning all 65535 ports with `-A` can take over an hour. The timeout is 2 hours but on slow networks it may not be enough. Run nmap from the command line directly if the TUI times out.
+**Frida cannot attach.** Confirm `adb devices`, `frida-ps -U`, matching `frida-server` architecture, and that the target package is running or launchable.
 
-**No traffic captured** -- Check the interface name in config matches your Ethernet adapter. Run `ipconfig` (Windows) or `ip link` (Linux) to check.
-
-**Which Nooie profile is used?** -- The device profile used by the Profiles, Workflow, and Firmware screens is `profiles/devices/nooie.yaml`. Values in `config/default.yaml` or `config/local.yaml` are runtime configuration defaults, not the authoritative Nooie device profile.
+**Which Nooie profile is used?** The shared profile is `profiles/devices/nooie.yaml`. Config files provide runtime defaults; they are not the source of truth for the Nooie profile.

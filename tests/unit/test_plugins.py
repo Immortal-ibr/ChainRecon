@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from plugins import CsvExportPlugin, HtmlReportPlugin, JsonReportPlugin, XlsxReportPlugin, get_plugin
-from plugins.base import ReportPlugin
+from chainrecon.plugins import CsvExportPlugin, HtmlReportPlugin, JsonReportPlugin, XlsxReportPlugin, get_plugin
+from chainrecon.plugins.base import ReportPlugin
 from openpyxl import load_workbook
 
 

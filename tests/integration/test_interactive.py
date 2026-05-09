@@ -9,8 +9,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
-import interactive
-from interactive import (
+import chainrecon.interactive as interactive
+from chainrecon.interactive import (
     SessionConfig,
     _auto_report,
     _handle_capture,
@@ -23,7 +23,7 @@ from interactive import (
     _pick_format,
     _report_from_session,
 )
-from runners.base import ToolNotFoundError
+from chainrecon.runners.base import ToolNotFoundError
 
 
 # ===========================================================================
@@ -61,7 +61,7 @@ class BannerTests(unittest.TestCase):
 
 
 class ConfigurationPhaseTests(unittest.TestCase):
-    @patch("interactive.make_output_dir")
+    @patch("chainrecon.interactive.make_output_dir")
     @patch("builtins.input", side_effect=["192.168.1.1", "192.168.1.50", "eth0"])
     def test_sets_config_values(self, mock_input, mock_dir):
         mock_dir.return_value = Path(tempfile.mkdtemp())
@@ -71,7 +71,7 @@ class ConfigurationPhaseTests(unittest.TestCase):
         self.assertEqual(cfg.target_ip, "192.168.1.50")
         self.assertEqual(cfg.interface, "eth0")
 
-    @patch("interactive.make_output_dir")
+    @patch("chainrecon.interactive.make_output_dir")
     @patch("builtins.input", side_effect=["", "", ""])
     def test_empty_values_set_to_none(self, mock_input, mock_dir):
         mock_dir.return_value = Path(tempfile.mkdtemp())
@@ -88,14 +88,14 @@ class ConfigurationPhaseTests(unittest.TestCase):
 
 
 class NetworkSetupTests(unittest.TestCase):
-    @patch("interactive.is_linux", return_value=True)
-    @patch("interactive.subprocess.run")
+    @patch("chainrecon.interactive.is_linux", return_value=True)
+    @patch("chainrecon.interactive.subprocess.run")
     def test_linux_calls_script(self, mock_run, _):
         cfg = SessionConfig()
         # Just verify it doesn't crash; path mocking is complex
         pass
 
-    @patch("interactive.is_linux", return_value=False)
+    @patch("chainrecon.interactive.is_linux", return_value=False)
     def test_non_linux_prints_instructions(self, _):
         cfg = SessionConfig()
         stdout = io.StringIO()
@@ -116,9 +116,9 @@ class HandleScanTests(unittest.TestCase):
         cfg.output_dir = output_dir or tempfile.mkdtemp()
         return cfg
 
-    @patch("interactive.ReportGenerator")
-    @patch("interactive.ScannerAnalyzer")
-    @patch("interactive.NmapRunner")
+    @patch("chainrecon.interactive.ReportGenerator")
+    @patch("chainrecon.interactive.ScannerAnalyzer")
+    @patch("chainrecon.interactive.NmapRunner")
     @patch("builtins.input", side_effect=["1"])
     def test_scan_pipeline(self, mock_input, mock_runner_cls, mock_analyzer_cls, mock_gen_cls):
         with tempfile.TemporaryDirectory() as td:
@@ -159,7 +159,7 @@ class HandleScanTests(unittest.TestCase):
             _handle_scan(cfg)
         self.assertIn("No target IP", stdout.getvalue())
 
-    @patch("interactive.NmapRunner")
+    @patch("chainrecon.interactive.NmapRunner")
     @patch("builtins.input", side_effect=["99"])
     def test_scan_back_to_menu(self, mock_input, mock_runner_cls):
         cfg = self._make_config()
@@ -170,7 +170,7 @@ class HandleScanTests(unittest.TestCase):
         _handle_scan(cfg)
         runner_instance.run_scan.assert_not_called()
 
-    @patch("interactive.NmapRunner")
+    @patch("chainrecon.interactive.NmapRunner")
     @patch("builtins.input", side_effect=["abc"])
     def test_scan_invalid_choice(self, mock_input, mock_runner_cls):
         cfg = self._make_config()
@@ -183,7 +183,7 @@ class HandleScanTests(unittest.TestCase):
             _handle_scan(cfg)
         self.assertIn("Invalid", stdout.getvalue())
 
-    @patch("interactive.NmapRunner")
+    @patch("chainrecon.interactive.NmapRunner")
     @patch("builtins.input", side_effect=["1"])
     def test_scan_tool_not_found(self, mock_input, mock_runner_cls):
         cfg = self._make_config()
@@ -220,7 +220,7 @@ class HandleCaptureTests(unittest.TestCase):
             _handle_capture(cfg)
         self.assertIn("No interface", stdout.getvalue())
 
-    @patch("interactive.CaptureRunner")
+    @patch("chainrecon.interactive.CaptureRunner")
     @patch("builtins.input", side_effect=["abc"])
     def test_capture_invalid_choice(self, mock_input, mock_runner_cls):
         cfg = self._make_config()
@@ -233,7 +233,7 @@ class HandleCaptureTests(unittest.TestCase):
             _handle_capture(cfg)
         self.assertIn("Invalid", stdout.getvalue())
 
-    @patch("interactive.CaptureRunner")
+    @patch("chainrecon.interactive.CaptureRunner")
     @patch("builtins.input", side_effect=["1", ""])
     def test_capture_tool_not_found(self, mock_input, mock_runner_cls):
         cfg = self._make_config()
@@ -247,9 +247,9 @@ class HandleCaptureTests(unittest.TestCase):
             _handle_capture(cfg)
         self.assertIn("tcpdump not found", stdout.getvalue())
 
-    @patch("interactive.ReportGenerator")
-    @patch("interactive.TrafficAnalyzer")
-    @patch("interactive.CaptureRunner")
+    @patch("chainrecon.interactive.ReportGenerator")
+    @patch("chainrecon.interactive.TrafficAnalyzer")
+    @patch("chainrecon.interactive.CaptureRunner")
     @patch("builtins.input", side_effect=["1", "10"])
     def test_capture_pipeline(self, mock_input, mock_runner_cls, mock_analyzer_cls, mock_gen_cls):
         with tempfile.TemporaryDirectory() as td:
@@ -303,8 +303,8 @@ class HandleSslTests(unittest.TestCase):
             _handle_ssl(cfg)
         self.assertIn("No target IP", stdout.getvalue())
 
-    @patch("interactive.ReportGenerator")
-    @patch("interactive.SSLAnalyzer")
+    @patch("chainrecon.interactive.ReportGenerator")
+    @patch("chainrecon.interactive.SSLAnalyzer")
     @patch("builtins.input", return_value="1")
     def test_ssl_cert_probe(self, mock_input, mock_analyzer_cls, mock_gen_cls):
         with tempfile.TemporaryDirectory() as td:
@@ -322,15 +322,15 @@ class HandleSslTests(unittest.TestCase):
             instance.probe_certificates.assert_called_once()
             self.assertIsNotNone(cfg.collected["ssl"])
 
-    @patch("interactive.SSLAnalyzer")
+    @patch("chainrecon.interactive.SSLAnalyzer")
     @patch("builtins.input", return_value="4")
     def test_ssl_back_to_menu(self, mock_input, mock_analyzer_cls):
         cfg = self._make_config()
         _handle_ssl(cfg)
         mock_analyzer_cls.return_value.probe_certificates.assert_not_called()
 
-    @patch("interactive.ReportGenerator")
-    @patch("interactive.SSLAnalyzer")
+    @patch("chainrecon.interactive.ReportGenerator")
+    @patch("chainrecon.interactive.SSLAnalyzer")
     @patch("builtins.input", return_value="3")
     def test_ssl_full_analysis(self, mock_input, mock_analyzer_cls, mock_gen_cls):
         with tempfile.TemporaryDirectory() as td:
@@ -367,7 +367,7 @@ class HandleSslTests(unittest.TestCase):
 
 
 class HandleFridaTests(unittest.TestCase):
-    @patch("interactive.FridaRunner")
+    @patch("chainrecon.interactive.FridaRunner")
     def test_frida_missing_tools_shows_guide(self, mock_cls):
         instance = mock_cls.return_value
         instance.check_prerequisites.return_value = {
@@ -382,7 +382,7 @@ class HandleFridaTests(unittest.TestCase):
         self.assertIn("Missing tools", output)
         self.assertIn("frida", output)
 
-    @patch("interactive.FridaRunner")
+    @patch("chainrecon.interactive.FridaRunner")
     @patch("builtins.input", side_effect=["1", "", "8"])
     def test_frida_setup_guide(self, mock_input, mock_cls):
         instance = mock_cls.return_value
@@ -396,7 +396,7 @@ class HandleFridaTests(unittest.TestCase):
             _handle_frida(SessionConfig())
         self.assertIn("Frida Setup Guide", stdout.getvalue())
 
-    @patch("interactive.FridaRunner")
+    @patch("chainrecon.interactive.FridaRunner")
     @patch("builtins.input", side_effect=["4", "", "8"])
     def test_frida_list_processes(self, mock_input, mock_cls):
         instance = mock_cls.return_value
@@ -411,7 +411,7 @@ class HandleFridaTests(unittest.TestCase):
             _handle_frida(SessionConfig())
         self.assertIn("com.test.app", stdout.getvalue())
 
-    @patch("interactive.FridaRunner")
+    @patch("chainrecon.interactive.FridaRunner")
     @patch("builtins.input", side_effect=["8"])
     def test_frida_back_to_menu(self, mock_input, mock_cls):
         instance = mock_cls.return_value
@@ -422,7 +422,7 @@ class HandleFridaTests(unittest.TestCase):
         }
         _handle_frida(SessionConfig())
 
-    @patch("interactive.FridaRunner")
+    @patch("chainrecon.interactive.FridaRunner")
     @patch("builtins.input", side_effect=["9", "", "8"])
     def test_frida_invalid_option(self, mock_input, mock_cls):
         instance = mock_cls.return_value
@@ -458,7 +458,7 @@ class HandleReportTests(unittest.TestCase):
             _handle_report(cfg)
         self.assertIn("No data collected", stdout.getvalue())
 
-    @patch("interactive.ReportGenerator")
+    @patch("chainrecon.interactive.ReportGenerator")
     @patch("builtins.input", side_effect=["1", "1"])
     def test_report_from_session_with_data(self, mock_input, mock_gen_cls):
         with tempfile.TemporaryDirectory() as td:
@@ -474,7 +474,7 @@ class HandleReportTests(unittest.TestCase):
             gen_instance.add_scan_results.assert_called_once()
             self.assertIn("Report saved", stdout.getvalue())
 
-    @patch("interactive.ReportGenerator")
+    @patch("chainrecon.interactive.ReportGenerator")
     @patch("builtins.input", side_effect=["2", "", "1"])
     def test_report_from_files_no_files(self, mock_input, mock_gen_cls):
         cfg = SessionConfig()
@@ -612,7 +612,7 @@ class PrintSummaryTests(unittest.TestCase):
 
 
 class AutoReportTests(unittest.TestCase):
-    @patch("interactive.ReportGenerator")
+    @patch("chainrecon.interactive.ReportGenerator")
     def test_generates_json_report(self, mock_gen_cls):
         with tempfile.TemporaryDirectory() as td:
             gen_instance = mock_gen_cls.return_value
@@ -621,7 +621,7 @@ class AutoReportTests(unittest.TestCase):
             gen_instance.add_traffic_results.assert_called_once()
             gen_instance.generate.assert_called_once_with("json", str(Path(td) / "traffic_report.json"))
 
-    @patch("interactive.ReportGenerator")
+    @patch("chainrecon.interactive.ReportGenerator")
     def test_ssl_section(self, mock_gen_cls):
         with tempfile.TemporaryDirectory() as td:
             gen_instance = mock_gen_cls.return_value
@@ -629,7 +629,7 @@ class AutoReportTests(unittest.TestCase):
             _auto_report({"summary": {}}, "ssl", td)
             gen_instance.add_ssl_results.assert_called_once()
 
-    @patch("interactive.ReportGenerator")
+    @patch("chainrecon.interactive.ReportGenerator")
     def test_scan_section(self, mock_gen_cls):
         with tempfile.TemporaryDirectory() as td:
             gen_instance = mock_gen_cls.return_value
@@ -645,7 +645,7 @@ class AutoReportTests(unittest.TestCase):
 
 class RunInteractiveTests(unittest.TestCase):
     @patch("builtins.input", side_effect=["", "", "", "8"])
-    @patch("interactive.make_output_dir")
+    @patch("chainrecon.interactive.make_output_dir")
     def test_exit_immediately(self, mock_dir, mock_input):
         mock_dir.return_value = Path(tempfile.mkdtemp())
         stdout = io.StringIO()
@@ -654,7 +654,7 @@ class RunInteractiveTests(unittest.TestCase):
         self.assertIn("Exiting", stdout.getvalue())
 
     @patch("builtins.input", side_effect=["", "", "", "9", "", "8"])
-    @patch("interactive.make_output_dir")
+    @patch("chainrecon.interactive.make_output_dir")
     def test_invalid_option_then_exit(self, mock_dir, mock_input):
         mock_dir.return_value = Path(tempfile.mkdtemp())
         stdout = io.StringIO()
@@ -664,9 +664,9 @@ class RunInteractiveTests(unittest.TestCase):
         self.assertIn("Invalid option", output)
         self.assertIn("Exiting", output)
 
-    @patch("interactive._handle_reconfigure")
+    @patch("chainrecon.interactive._handle_reconfigure")
     @patch("builtins.input", side_effect=["", "", "", "7", "", "8"])
-    @patch("interactive.make_output_dir")
+    @patch("chainrecon.interactive.make_output_dir")
     def test_reconfigure_option(self, mock_dir, mock_input, mock_reconf):
         mock_dir.return_value = Path(tempfile.mkdtemp())
         stdout = io.StringIO()

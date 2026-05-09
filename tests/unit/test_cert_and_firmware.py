@@ -9,8 +9,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from analysis.cert_analyzer import CertAnalyzer
-from analysis.firmware_analyzer import FirmwareAnalyzer
+from chainrecon.analysis.cert_analyzer import CertAnalyzer
+from chainrecon.analysis.firmware_analyzer import FirmwareAnalyzer
 
 
 class CertAnalyzerTests(unittest.TestCase):

@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Cross-platform IoT security reconnaissance framework"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
 
 dependencies = [
     "pyshark>=0.6",
@@ -54,3 +54,6 @@ markers = [
 
 [tool.setuptools.packages.find]
 include = ["chainrecon*"]
+
+[tool.setuptools.package-data]
+"chainrecon.runners" = ["frida_scripts/*.js"]

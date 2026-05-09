@@ -13,7 +13,8 @@ from typing import Any, Dict, Optional
 
 import yaml
 
-_CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_CONFIG_DIR = _PROJECT_ROOT / "config"
 _DEFAULT_CONFIG = _CONFIG_DIR / "default.yaml"
 _DEVICE_PROFILE_DIR = _CONFIG_DIR.parent / "profiles" / "devices"
 

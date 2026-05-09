@@ -5,15 +5,15 @@ import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from analysis.report_generator import ReportGenerator, normalize_report_data
-from analysis.scanner import ScannerAnalyzer
-from runners.nmap_runner import NmapInterfaceMismatchError, NmapRunner
-from utils.artifacts import update_artifact_index, write_json_artifact
-from utils.frida_utils import _extract_frida_log_events
+from chainrecon.analysis.report_generator import ReportGenerator, normalize_report_data
+from chainrecon.analysis.scanner import ScannerAnalyzer
+from chainrecon.runners.nmap_runner import NmapInterfaceMismatchError, NmapRunner
+from chainrecon.utils.artifacts import update_artifact_index, write_json_artifact
+from chainrecon.utils.frida_utils import _extract_frida_log_events
 
 
 class ScanRequirementTests(unittest.TestCase):
-    @patch("runners.nmap_runner.check_tool", return_value="/usr/bin/nmap")
+    @patch("chainrecon.runners.nmap_runner.check_tool", return_value="/usr/bin/nmap")
     def test_wrong_interface_blocks_misleading_scan_by_default(self, _):
         def preflight(_target, selected_interface=None):
             return {
@@ -77,9 +77,9 @@ class ReportRequirementTests(unittest.TestCase):
 
 
 class FridaLifecycleRequirementTests(unittest.TestCase):
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_managed_frida_command_omits_auto_perform(self, _):
-        from runners.frida_runner import FridaRunner
+        from chainrecon.runners.frida_runner import FridaRunner
 
         cmd = FridaRunner._build_managed_command(
             serial="emulator-5554",
@@ -90,9 +90,9 @@ class FridaLifecycleRequirementTests(unittest.TestCase):
         )
         self.assertNotIn("--auto-perform", cmd)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_frida_long_session_stays_active_until_stop(self, _):
-        from runners.frida_runner import FridaRunner
+        from chainrecon.runners.frida_runner import FridaRunner
 
         class FakeProcess:
             def __init__(self, _cmd, **_kwargs):
@@ -129,7 +129,7 @@ class FridaLifecycleRequirementTests(unittest.TestCase):
              patch.object(runner, "list_device_inventory", return_value={"connected_devices": [{"serial": "emulator-5554", "frida_compatible": True}], "local_avds": []}), \
              patch.object(runner, "start_frida_server_if_needed", return_value={"running": True, "started": False}), \
              patch.object(runner, "resolve_attach_target", return_value={"mode": "attach", "attach_flag": "-N", "attach_target": "com.nooie.home", "target_running_before": True, "launch_performed": False}), \
-             patch("runners.frida_runner.subprocess.Popen", side_effect=FakeProcess):
+             patch("chainrecon.runners.frida_runner.subprocess.Popen", side_effect=FakeProcess):
             runner.start_session(target="com.nooie.home", script_key="network_traffic_monitor", output_dir=td)
             self.assertIsNotNone(runner.active_session())
             summary = runner.stop_session(timeout=2)

@@ -27,7 +27,7 @@ except ImportError:
 
 logger = get_logger("apk")
 
-_PATTERNS_FILE = Path(__file__).resolve().parent.parent / "config" / "apk_patterns.yaml"
+_PATTERNS_FILE = Path(__file__).resolve().parents[2] / "config" / "apk_patterns.yaml"
 
 
 def _load_patterns(path: Optional[Path] = None) -> Dict[str, Any]:

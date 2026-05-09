@@ -7,10 +7,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from analysis.mqtt_analyzer import MQTTAnalyzer
-from analysis.pcap_stats import PcapStatsAnalyzer
-from analysis.traffic import TrafficAnalyzer
-from analysis.webrtc_analyzer import WebRTCAnalyzer
+from chainrecon.analysis.mqtt_analyzer import MQTTAnalyzer
+from chainrecon.analysis.pcap_stats import PcapStatsAnalyzer
+from chainrecon.analysis.traffic import TrafficAnalyzer
+from chainrecon.analysis.webrtc_analyzer import WebRTCAnalyzer
 
 
 # ── Helper: build fake packets ───────────────────────────────────────
