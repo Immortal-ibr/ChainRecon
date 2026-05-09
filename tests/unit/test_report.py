@@ -4,8 +4,8 @@ import json
 import tempfile
 import unittest
 
-from analysis import ReportGenerator
-from models.finding import Category, Finding, FindingCollection, Severity
+from chainrecon.analysis import ReportGenerator
+from chainrecon.models.finding import Category, Finding, FindingCollection, Severity
 
 
 class ReportGeneratorDataTests(unittest.TestCase):
@@ -370,7 +370,7 @@ class FindingEdgeCaseTests(unittest.TestCase):
 
 class HtmlFallbackTests(unittest.TestCase):
     def test_fallback_with_findings(self):
-        from plugins.html_report import HtmlReportPlugin
+        from chainrecon.plugins.html_report import HtmlReportPlugin
 
         plugin = HtmlReportPlugin()
         html = plugin._generate_fallback(
@@ -383,7 +383,7 @@ class HtmlFallbackTests(unittest.TestCase):
         self.assertIn("Traffic", html)
 
     def test_fallback_escapes_xss(self):
-        from plugins.html_report import HtmlReportPlugin
+        from chainrecon.plugins.html_report import HtmlReportPlugin
 
         plugin = HtmlReportPlugin()
         html = plugin._generate_fallback(
@@ -395,14 +395,14 @@ class HtmlFallbackTests(unittest.TestCase):
         self.assertIn("&lt;script&gt;", html)
 
     def test_sev_color_known(self):
-        from plugins.html_report import HtmlReportPlugin
+        from chainrecon.plugins.html_report import HtmlReportPlugin
 
         plugin = HtmlReportPlugin()
         self.assertEqual(plugin._sev_color("critical"), "#dc2626")
         self.assertEqual(plugin._sev_color("high"), "#ea580c")
 
     def test_sev_color_unknown(self):
-        from plugins.html_report import HtmlReportPlugin
+        from chainrecon.plugins.html_report import HtmlReportPlugin
 
         plugin = HtmlReportPlugin()
         self.assertEqual(plugin._sev_color("unknown"), "#6b7280")

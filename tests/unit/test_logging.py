@@ -3,7 +3,7 @@
 import logging
 import unittest
 
-from utils.logging_config import get_logger, reset_logging, setup_logging
+from chainrecon.utils.logging_config import get_logger, reset_logging, setup_logging
 
 
 class SetupLoggingTests(unittest.TestCase):

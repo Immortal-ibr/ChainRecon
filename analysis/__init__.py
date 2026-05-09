@@ -1,29 +1,8 @@
-"""Analysis package exports for ChainRecon."""
+"""Backward-compatible import shim for ``chainrecon.analysis``."""
 
-from analysis.apk_analyzer import APKAnalyzer
-from analysis.cert_analyzer import CertAnalyzer
-from analysis.entropy_analyzer import EntropyAnalyzer
-from analysis.firmware_analyzer import FirmwareAnalyzer
-from analysis.mqtt_analyzer import MQTTAnalyzer
-from analysis.pcap_stats import PcapStatsAnalyzer
-from analysis.report_generator import ReportGenerator
-from analysis.rtp_analyzer import RTPAnalyzer
-from analysis.scanner import ScannerAnalyzer
-from analysis.ssl_analyzer import SSLAnalyzer
-from analysis.traffic import TrafficAnalyzer
-from analysis.webrtc_analyzer import WebRTCAnalyzer
+from importlib import import_module
+import sys
 
-__all__ = [
-    "APKAnalyzer",
-    "CertAnalyzer",
-    "EntropyAnalyzer",
-    "FirmwareAnalyzer",
-    "MQTTAnalyzer",
-    "PcapStatsAnalyzer",
-    "ReportGenerator",
-    "RTPAnalyzer",
-    "ScannerAnalyzer",
-    "SSLAnalyzer",
-    "TrafficAnalyzer",
-    "WebRTCAnalyzer",
-]
+_TARGET = import_module("chainrecon.analysis")
+globals().update(_TARGET.__dict__)
+sys.modules[__name__] = _TARGET

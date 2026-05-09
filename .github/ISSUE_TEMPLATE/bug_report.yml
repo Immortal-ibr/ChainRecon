@@ -1,0 +1,82 @@
+name: Bug report
+description: Report something that is broken or behaving unexpectedly.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when ChainRecon crashes, produces the wrong output, or a workflow does not behave as documented. Logs and report paths are important because they usually contain the raw tool output behind the UI summary.
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: Include version and whether this is Windows, Linux, WSL, or a VM.
+      placeholder: "Windows 11, Ubuntu 24.04, Arch Linux, WSL2..."
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "python --version"
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Install method
+      options:
+        - Editable source install
+        - pip from GitHub
+        - Wheel
+        - Arch PKGBUILD
+        - Not installed / source checkout only
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: command-or-page
+    attributes:
+      label: Command or TUI page
+      description: Paste the command you ran or name the TUI page/module.
+      placeholder: "chainrecon workflow run workflows/nooie_mqtt_tls.yaml --dry-run"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: List the shortest steps that trigger the problem.
+      placeholder: |
+        1. Open ...
+        2. Run ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include traceback text when available.
+    validations:
+      required: true
+  - type: textarea
+    id: logs-reports
+    attributes:
+      label: Logs and reports
+      description: Paste relevant log excerpts, report paths, Frida session summaries, or workflow output. Redact secrets and private IPs if needed.
+      render: text
+  - type: textarea
+    id: context
+    attributes:
+      label: Extra context
+      description: Device model, emulator/device target, APK/package name, pcap source, firmware file type, or anything else that narrows the issue.

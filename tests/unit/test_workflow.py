@@ -4,9 +4,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from runners.workflow_runner import WorkflowRunner
-from utils.community_plugins import discover_community_plugins, load_community_plugin
-from utils.config import list_device_profiles, load_device_profile
+from chainrecon.runners.workflow_runner import WorkflowRunner
+from chainrecon.utils.community_plugins import discover_community_plugins, load_community_plugin
+from chainrecon.utils.config import list_device_profiles, load_device_profile
 
 
 class DeviceProfileTests(unittest.TestCase):
@@ -111,7 +111,7 @@ steps:
 """,
                 encoding="utf-8",
             )
-            with patch("runners.workflow_runner.NmapRunner.run_scan", side_effect=RuntimeError("nmap failed")):
+            with patch("chainrecon.runners.workflow_runner.NmapRunner.run_scan", side_effect=RuntimeError("nmap failed")):
                 result = WorkflowRunner(output_root=td).run(str(pipeline))
         self.assertEqual(result["summary"]["status"], "failed")
         self.assertNotIn("never_runs", result["findings"]["steps"])

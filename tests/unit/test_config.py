@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from utils.config import (
+from chainrecon.utils.config import (
     _deep_merge,
     get_api_key,
     get_capture_config,

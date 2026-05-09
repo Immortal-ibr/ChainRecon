@@ -1,5 +1,8 @@
-"""Data models for ChainRecon."""
+"""Backward-compatible import shim for ``chainrecon.models``."""
 
-from models.finding import Category, Finding, FindingCollection, Severity
+from importlib import import_module
+import sys
 
-__all__ = ["Category", "Finding", "FindingCollection", "Severity"]
+_TARGET = import_module("chainrecon.models")
+globals().update(_TARGET.__dict__)
+sys.modules[__name__] = _TARGET

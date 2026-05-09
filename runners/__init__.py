@@ -1,7 +1,8 @@
-"""Subprocess runners for ChainRecon data collection."""
+"""Backward-compatible import shim for ``chainrecon.runners``."""
 
-from runners.capture_runner import CaptureRunner
-from runners.frida_runner import FridaDeviceError, FridaRunner
-from runners.nmap_runner import NmapRunner
+from importlib import import_module
+import sys
 
-__all__ = ["NmapRunner", "CaptureRunner", "FridaRunner", "FridaDeviceError"]
+_TARGET = import_module("chainrecon.runners")
+globals().update(_TARGET.__dict__)
+sys.modules[__name__] = _TARGET

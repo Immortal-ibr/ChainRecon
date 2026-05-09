@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import chainrecon
-from runners.base import ToolNotFoundError
+from chainrecon.runners.base import ToolNotFoundError
 
 
 # ===========================================================================
@@ -302,7 +302,7 @@ class FirmwareAndWorkflowCliTests(unittest.TestCase):
 
     def test_workflow_handler_dispatches_runner(self):
         stdout = io.StringIO()
-        with patch("runners.workflow_runner.WorkflowRunner.run", return_value={"summary": {"status": "completed"}}):
+        with patch("chainrecon.runners.workflow_runner.WorkflowRunner.run", return_value={"summary": {"status": "completed"}}):
             with contextlib.redirect_stdout(stdout):
                 code = chainrecon.main(["workflow", "run", "pipeline.yaml", "--dry-run"])
         self.assertEqual(code, 0)
@@ -406,21 +406,21 @@ class BuildParserTests(unittest.TestCase):
 class InteractiveModeTests(unittest.TestCase):
     def test_no_args_launches_tui(self):
         mock_module = MagicMock()
-        with patch.dict("sys.modules", {"tui": mock_module, "tui.app": mock_module}):
+        with patch.dict("sys.modules", {"tui": mock_module, "chainrecon.tui.app": mock_module}):
             code = chainrecon.main([])
         self.assertEqual(code, 0)
         mock_module.run_tui.assert_called_once()
 
     def test_interactive_subcommand(self):
         mock_module = MagicMock()
-        with patch.dict("sys.modules", {"interactive": mock_module}):
+        with patch.dict("sys.modules", {"chainrecon.interactive": mock_module}):
             code = chainrecon.main(["interactive"])
         self.assertEqual(code, 0)
         mock_module.run_interactive.assert_called_once()
 
     def test_tui_subcommand(self):
         mock_module = MagicMock()
-        with patch.dict("sys.modules", {"tui": mock_module, "tui.app": mock_module}):
+        with patch.dict("sys.modules", {"tui": mock_module, "chainrecon.tui.app": mock_module}):
             code = chainrecon.main(["tui"])
         self.assertEqual(code, 0)
         mock_module.run_tui.assert_called_once()
@@ -485,7 +485,7 @@ class HandleScanCliTests(unittest.TestCase):
         mock_runners.NmapRunner.return_value.run_scan.side_effect = ToolNotFoundError("nmap not found")
         mock_base = MagicMock()
         mock_base.ToolNotFoundError = ToolNotFoundError
-        with patch.dict("sys.modules", {"runners": mock_runners, "runners.base": mock_base}):
+        with patch.dict("sys.modules", {"chainrecon.runners": mock_runners, "chainrecon.runners.base": mock_base}):
             with contextlib.redirect_stdout(stdout):
                 code = chainrecon.handle_scan(args)
         self.assertEqual(code, 1)
@@ -506,7 +506,7 @@ class HandleScanCliTests(unittest.TestCase):
         }
         mock_base = MagicMock()
         mock_base.ToolNotFoundError = ToolNotFoundError
-        with patch.dict("sys.modules", {"runners": mock_runners, "runners.base": mock_base}):
+        with patch.dict("sys.modules", {"chainrecon.runners": mock_runners, "chainrecon.runners.base": mock_base}):
             with contextlib.redirect_stdout(stdout):
                 code = chainrecon.handle_scan(args)
         self.assertEqual(code, 1)
@@ -533,7 +533,7 @@ class HandleCaptureCliTests(unittest.TestCase):
         mock_runners.CaptureRunner.return_value.run_capture.side_effect = ToolNotFoundError("tcpdump not found")
         mock_base = MagicMock()
         mock_base.ToolNotFoundError = ToolNotFoundError
-        with patch.dict("sys.modules", {"runners": mock_runners, "runners.base": mock_base}):
+        with patch.dict("sys.modules", {"chainrecon.runners": mock_runners, "chainrecon.runners.base": mock_base}):
             with contextlib.redirect_stdout(stdout):
                 code = chainrecon.handle_capture(args)
         self.assertEqual(code, 1)
@@ -556,7 +556,7 @@ class HandleCaptureCliTests(unittest.TestCase):
         }
         mock_base = MagicMock()
         mock_base.ToolNotFoundError = ToolNotFoundError
-        with patch.dict("sys.modules", {"runners": mock_runners, "runners.base": mock_base}):
+        with patch.dict("sys.modules", {"chainrecon.runners": mock_runners, "chainrecon.runners.base": mock_base}):
             with contextlib.redirect_stdout(stdout):
                 code = chainrecon.handle_capture(args)
         self.assertEqual(code, 1)
@@ -586,7 +586,7 @@ class HandleAPKCliTests(unittest.TestCase):
             "findings": {"permissions": []},
             "risk_indicators": [],
         }
-        with patch.dict("sys.modules", {"analysis.apk_analyzer": MagicMock(APKAnalyzer=mock_analyzer)}):
+        with patch.dict("sys.modules", {"chainrecon.analysis.apk_analyzer": MagicMock(APKAnalyzer=mock_analyzer)}):
             with contextlib.redirect_stdout(io.StringIO()):
                 code = chainrecon.handle_apk(args)
         self.assertEqual(code, 0)

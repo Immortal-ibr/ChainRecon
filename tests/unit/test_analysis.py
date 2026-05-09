@@ -5,7 +5,7 @@ import socket
 import unittest
 from unittest.mock import patch
 
-from analysis import ScannerAnalyzer, SSLAnalyzer, TrafficAnalyzer
+from chainrecon.analysis import ScannerAnalyzer, SSLAnalyzer, TrafficAnalyzer
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +272,7 @@ class TrafficRuntimeErrorTests(unittest.TestCase):
         # The default factory checks for pyshark; since we haven't mocked it,
         # it should raise RuntimeError if pyshark is not installed.
         # We can't guarantee pyshark is or isn't installed, so test the factory directly.
-        import analysis.traffic as mod
+        import chainrecon.analysis.traffic as mod
         if mod.pyshark is None:
             with self.assertRaises(RuntimeError):
                 analyzer.analyze_pcap("missing.pcap")
@@ -362,7 +362,7 @@ class SSLProbeTests(unittest.TestCase):
 
     def test_dns_resolution_failure_has_actionable_error(self):
         analyzer = SSLAnalyzer()
-        with patch("analysis.ssl_analyzer.socket.create_connection", side_effect=socket.gaierror(11001, "getaddrinfo failed")):
+        with patch("chainrecon.analysis.ssl_analyzer.socket.create_connection", side_effect=socket.gaierror(11001, "getaddrinfo failed")):
             result = analyzer._probe_port("does-not-resolve.example", 443)
         self.assertFalse(result["reachable"])
         self.assertEqual(result["error_type"], "dns_resolution_failed")
@@ -373,7 +373,7 @@ class SSLProbeTests(unittest.TestCase):
 
     def test_tcp_failure_is_not_reported_as_dns_or_tls_success(self):
         analyzer = SSLAnalyzer()
-        with patch("analysis.ssl_analyzer.socket.create_connection", side_effect=ConnectionRefusedError("refused")):
+        with patch("chainrecon.analysis.ssl_analyzer.socket.create_connection", side_effect=ConnectionRefusedError("refused")):
             result = analyzer._probe_port("10.0.0.1", 443)
         self.assertEqual(result["error_type"], "tcp_connection_failed")
         self.assertTrue(result["target_resolved"])

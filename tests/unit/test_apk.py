@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from analysis.apk_analyzer import APKAnalyzer, _load_patterns
+from chainrecon.analysis.apk_analyzer import APKAnalyzer, _load_patterns
 
 
 class LoadPatternsTests(unittest.TestCase):

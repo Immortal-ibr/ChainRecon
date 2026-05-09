@@ -9,8 +9,8 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from runners.base import ToolNotFoundError
-from runners.frida_runner import FRIDA_SCRIPTS, FridaDeviceError, FridaRunner, _SCRIPTS_DIR, _script_filename_from_label
+from chainrecon.runners.base import ToolNotFoundError
+from chainrecon.runners.frida_runner import FRIDA_SCRIPTS, FridaDeviceError, FridaRunner, _SCRIPTS_DIR, _script_filename_from_label
 
 
 # ===========================================================================
@@ -19,7 +19,7 @@ from runners.frida_runner import FRIDA_SCRIPTS, FridaDeviceError, FridaRunner, _
 
 
 class PrerequisiteTests(unittest.TestCase):
-    @patch("runners.frida_runner.check_tool")
+    @patch("chainrecon.runners.frida_runner.check_tool")
     def test_all_found(self, mock_check):
         mock_check.return_value = "/usr/bin/tool"
         runner = FridaRunner()
@@ -28,7 +28,7 @@ class PrerequisiteTests(unittest.TestCase):
             self.assertTrue(status[t]["found"])
             self.assertIsNotNone(status[t]["path"])
 
-    @patch("runners.frida_runner.check_tool")
+    @patch("chainrecon.runners.frida_runner.check_tool")
     def test_some_missing(self, mock_check):
         def side(name):
             if name == "frida":
@@ -52,7 +52,7 @@ class DeviceHelperTests(unittest.TestCase):
         self.executor = MagicMock()
         self.runner = FridaRunner(executor=self.executor, validate_device=False)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/adb")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/adb")
     def test_list_devices(self, _):
         self.executor.return_value = subprocess.CompletedProcess(
             [], 0, "List of devices attached\nemulator-5554\tdevice\n", ""
@@ -60,7 +60,7 @@ class DeviceHelperTests(unittest.TestCase):
         result = self.runner.list_devices()
         self.assertIn("emulator-5554", result)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/frida-ps")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/frida-ps")
     def test_list_processes(self, _):
         self.executor.return_value = subprocess.CompletedProcess(
             [], 0, " PID  Name\n----  ----\n1234  com.example.app\n", ""
@@ -68,28 +68,28 @@ class DeviceHelperTests(unittest.TestCase):
         result = self.runner.list_processes()
         self.assertIn("com.example.app", result)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/adb")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/adb")
     def test_push_frida_server(self, _):
         self.executor.return_value = subprocess.CompletedProcess([], 0, "", "")
         dest = self.runner.push_frida_server("/tmp/frida-server")
         self.assertEqual(dest, "/data/local/tmp/frida-server")
         self.assertEqual(self.executor.call_count, 2)  # push + chmod
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/adb")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/adb")
     def test_start_frida_server(self, _):
         self.executor.return_value = subprocess.CompletedProcess([], 0, "", "")
         self.runner.start_frida_server()
         cmd = self.executor.call_args[0][0]
         self.assertIn("/data/local/tmp/frida-server", " ".join(str(part) for part in cmd))
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/adb")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/adb")
     def test_forward_port(self, _):
         self.executor.return_value = subprocess.CompletedProcess([], 0, "", "")
         self.runner.forward_port(27042)
         cmd = self.executor.call_args[0][0]
         self.assertIn("tcp:27042", cmd)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/adb")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/adb")
     def test_forward_custom_port(self, _):
         self.executor.return_value = subprocess.CompletedProcess([], 0, "", "")
         self.runner.forward_port(9999)
@@ -102,7 +102,7 @@ class DeviceValidationTests(unittest.TestCase):
         self.executor = MagicMock()
         self.runner = FridaRunner(executor=self.executor)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_get_device_state_online(self, _):
         self.executor.return_value = subprocess.CompletedProcess(
             [], 0, "List of devices attached\nemulator-5554\tdevice\n", ""
@@ -111,7 +111,7 @@ class DeviceValidationTests(unittest.TestCase):
         self.assertTrue(state["online"])
         self.assertEqual(state["serial"], "emulator-5554")
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_no_device_raises_for_process_list(self, _):
         self.executor.return_value = subprocess.CompletedProcess([], 0, "List of devices attached\n\n", "")
         with patch.object(self.runner, "_configured_serial", return_value=None):
@@ -119,7 +119,7 @@ class DeviceValidationTests(unittest.TestCase):
                 self.runner.list_processes()
         self.assertEqual(ctx.exception.state["state"], "no_device")
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_offline_device_raises(self, _):
         self.executor.return_value = subprocess.CompletedProcess(
             [], 0, "List of devices attached\nemulator-5554\toffline\n", ""
@@ -128,7 +128,7 @@ class DeviceValidationTests(unittest.TestCase):
             self.runner.ensure_online_device()
         self.assertEqual(ctx.exception.state["state"], "offline")
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_online_device_allows_process_list(self, _):
         def execute(cmd, timeout=None):
             if cmd[:2] == ["adb", "devices"]:
@@ -143,7 +143,7 @@ class DeviceValidationTests(unittest.TestCase):
         self.assertIn("com.example.app", out)
         self.assertEqual(self.executor.call_args[0][0][:3], ["frida-ps", "-D", "emulator-5554"])
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_inventory_marks_unauthorized_device_not_compatible(self, _):
         def execute(cmd, timeout=None):
             if cmd[:2] == ["adb", "devices"]:
@@ -158,7 +158,7 @@ class DeviceValidationTests(unittest.TestCase):
         self.assertFalse(inventory["connected_devices"][0]["frida_compatible"])
         self.assertIn("authorization", inventory["connected_devices"][0]["frida_note"])
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_inventory_uses_ro_boot_qemu_avd_name_fallback(self, _):
         def execute(cmd, timeout=None):
             if cmd[:2] == ["adb", "devices"]:
@@ -184,7 +184,7 @@ class DeviceValidationTests(unittest.TestCase):
         self.assertEqual(inventory["connected_devices"][0]["avd_name"], "ChainRecon_API35")
         self.assertEqual(inventory["local_avds"], [])
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_inventory_marks_play_store_avd_not_compatible(self, _):
         with patch.object(self.runner, "_list_avds", return_value=["PlayStore_AVD"]), \
              patch.object(self.runner, "_read_avd_config", return_value={
@@ -198,7 +198,7 @@ class DeviceValidationTests(unittest.TestCase):
         self.assertFalse(inventory["local_avds"][0]["frida_compatible"])
         self.assertIn("Play Store", inventory["local_avds"][0]["frida_note"])
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_inventory_marks_api_36_avd_not_compatible(self, _):
         with patch.object(self.runner, "_list_avds", return_value=["ChainRecon_API36"]), \
              patch.object(self.runner, "_read_avd_config", return_value={
@@ -211,7 +211,7 @@ class DeviceValidationTests(unittest.TestCase):
         self.assertFalse(inventory["local_avds"][0]["frida_compatible"])
         self.assertIn("API 36", inventory["local_avds"][0]["frida_note"])
 
-    @patch("runners.frida_runner.check_tool")
+    @patch("chainrecon.runners.frida_runner.check_tool")
     def test_boot_device_requires_emulator_tool(self, mock_check):
         def side(name):
             if name == "emulator":
@@ -222,7 +222,7 @@ class DeviceValidationTests(unittest.TestCase):
         with self.assertRaises(ToolNotFoundError):
             self.runner.boot_device("avd:ChainRecon_API35")
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_boot_device_reuses_running_avd(self, _):
         with patch.object(self.runner, "_list_avds", return_value=["ChainRecon_API35"]), \
              patch.object(self.runner, "_find_connected_avd_serial", return_value="emulator-5554"):
@@ -317,7 +317,7 @@ class RunScriptTests(unittest.TestCase):
         )
         self.runner = FridaRunner(executor=self.executor, validate_device=False)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/frida")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/frida")
     def test_run_builtin_script(self, _):
         with patch.object(self.runner, "_configured_serial", return_value=None):
             result = self.runner.run_script("Settings", "ssl_pinning_bypass")
@@ -331,7 +331,7 @@ class RunScriptTests(unittest.TestCase):
         self.assertIn("Settings", cmd)
         self.assertIn("-l", cmd)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/frida")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/frida")
     def test_run_package_identifier_uses_identifier_attach(self, _):
         self.runner.run_script("com.example.app", "ssl_pinning_bypass")
         cmd = self.executor.call_args[0][0]
@@ -339,7 +339,7 @@ class RunScriptTests(unittest.TestCase):
         self.assertNotIn("-n", cmd)
         self.assertIn("com.example.app", cmd)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/frida")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/frida")
     def test_device_class_census_iterates_matching_processes(self, _):
         self.runner.list_processes_structured = MagicMock(return_value=[
             {"pid": "1", "name": "Nooie", "identifier": "com.nooie.home"},
@@ -376,7 +376,7 @@ class RunScriptTests(unittest.TestCase):
         )
         self.assertEqual(normalized["class_filter"], ["com.nooie", "com.thingclips", "webrtc"])
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_setup_device_uses_directory_binary_match_and_installs_apks(self, _):
         import tempfile
 
@@ -428,7 +428,7 @@ class RunScriptTests(unittest.TestCase):
         self.assertIn("Validated frida-ps connectivity.", result["actions"])
         self.assertIn("17.8.2", result["frida_server"])
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_install_apks_uses_install_multiple_and_requires_verification(self, _):
         import tempfile
 
@@ -456,7 +456,7 @@ class RunScriptTests(unittest.TestCase):
         self.assertIn("install-multiple", result["command"])
         self.assertIn("com.example.splitdemo", result["installed_packages"])
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_setup_device_reuses_booted_avd_without_launching(self, _):
         def execute(cmd, timeout=None):
             if cmd[:2] == ["adb", "devices"]:
@@ -488,7 +488,7 @@ class RunScriptTests(unittest.TestCase):
         self.assertEqual(result["serial"], "emulator-5554")
         self.assertIn("already running", " ".join(result["actions"]))
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_wait_for_avd_registration_succeeds_after_delay(self, _):
         responses = [
             "List of devices attached\n\n",
@@ -504,11 +504,11 @@ class RunScriptTests(unittest.TestCase):
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         self.executor.side_effect = execute
-        with patch("runners.frida_runner.time.sleep", return_value=None):
+        with patch("chainrecon.runners.frida_runner.time.sleep", return_value=None):
             serial = self.runner._wait_for_avd_serial_registration(adb_timeout=5, avd_name="ChainRecon_API35")
         self.assertEqual(serial, "emulator-5554")
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_wait_for_boot_complete_succeeds_after_delay(self, _):
         responses = ["0\n", "0\n", "1\n"]
 
@@ -518,18 +518,18 @@ class RunScriptTests(unittest.TestCase):
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         self.executor.side_effect = execute
-        with patch("runners.frida_runner.time.sleep", return_value=None):
+        with patch("chainrecon.runners.frida_runner.time.sleep", return_value=None):
             self.runner._wait_for_boot_complete("emulator-5554", timeout=5)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_wait_for_avd_registration_timeout_is_distinct(self, _):
         self.executor.return_value = subprocess.CompletedProcess([], 0, "List of devices attached\n\n", "")
-        with patch("runners.frida_runner.time.sleep", return_value=None):
+        with patch("chainrecon.runners.frida_runner.time.sleep", return_value=None):
             with self.assertRaises(FridaDeviceError) as ctx:
                 self.runner._wait_for_avd_serial_registration(adb_timeout=1, avd_name="ChainRecon_API35")
         self.assertIn("register in adb devices", str(ctx.exception))
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_wait_for_boot_complete_timeout_is_distinct(self, _):
         def execute(cmd, timeout=None):
             if cmd[:4] == ["adb", "-s", "emulator-5554", "shell"] and cmd[-1] == "sys.boot_completed":
@@ -537,12 +537,12 @@ class RunScriptTests(unittest.TestCase):
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         self.executor.side_effect = execute
-        with patch("runners.frida_runner.time.sleep", return_value=None):
+        with patch("chainrecon.runners.frida_runner.time.sleep", return_value=None):
             with self.assertRaises(FridaDeviceError) as ctx:
                 self.runner._wait_for_boot_complete("emulator-5554", timeout=1)
         self.assertIn("boot to complete", str(ctx.exception))
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_resolve_frida_server_path_prefers_exact_version_and_abi(self, _):
         import tempfile
 
@@ -565,7 +565,7 @@ class RunScriptTests(unittest.TestCase):
         self.assertEqual(selected, exact.resolve())
         self.assertEqual(resolution["selected"], str(exact.resolve()))
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_render_script_materializes_parameters(self, _):
         import tempfile
 
@@ -581,7 +581,7 @@ class RunScriptTests(unittest.TestCase):
         self.assertIn('"class_name": "com.nooie.home.Device"', content)
         self.assertIn('"method_name": "connect"', content)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_resolve_attach_target_auto_launches_installed_package(self, _):
         with patch.object(self.runner, "_package_installed", return_value=True), \
              patch.object(self.runner, "is_target_running", side_effect=[False, True]), \
@@ -590,7 +590,7 @@ class RunScriptTests(unittest.TestCase):
         self.assertEqual(result["mode"], "attach")
         self.assertTrue(result["launch_performed"])
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_start_session_streams_output_and_writes_summary(self, _):
         import tempfile
 
@@ -627,7 +627,7 @@ class RunScriptTests(unittest.TestCase):
              patch.object(self.runner, "list_device_inventory", return_value={"connected_devices": [{"serial": "emulator-5554", "frida_compatible": True}], "local_avds": []}), \
              patch.object(self.runner, "start_frida_server_if_needed", return_value={"running": True, "started": False, "frida_server": "/tmp/frida-server"}), \
              patch.object(self.runner, "resolve_attach_target", return_value={"mode": "attach", "attach_flag": "-N", "attach_target": "com.nooie.home", "target_running_before": True, "launch_performed": False}), \
-             patch("runners.frida_runner.subprocess.Popen", side_effect=FakeProcess) as mock_popen:
+             patch("chainrecon.runners.frida_runner.subprocess.Popen", side_effect=FakeProcess) as mock_popen:
             streamed = []
             result = self.runner.start_session(
                 target="com.nooie.home",
@@ -645,7 +645,7 @@ class RunScriptTests(unittest.TestCase):
             self.assertNotIn("--auto-perform", cmd)
             self.assertIn("--stdio", cmd)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_one_shot_script_clean_exit_is_completed(self, _):
         import tempfile
 
@@ -675,7 +675,7 @@ class RunScriptTests(unittest.TestCase):
              patch.object(self.runner, "start_frida_server_if_needed", return_value={"running": True, "started": False}), \
              patch.object(self.runner, "resolve_attach_target", return_value={"mode": "attach", "attach_flag": "-N", "attach_target": "com.nooie.home", "target_running_before": True, "launch_performed": False}), \
              patch.object(self.runner, "is_target_running", return_value=True), \
-             patch("runners.frida_runner.subprocess.Popen", side_effect=FakeProcess):
+             patch("chainrecon.runners.frida_runner.subprocess.Popen", side_effect=FakeProcess):
             self.runner.start_session(target="com.nooie.home", script_key="list_classes", output_dir=td)
             active = self.runner.active_session()
             self.assertIsNotNone(active)
@@ -685,11 +685,11 @@ class RunScriptTests(unittest.TestCase):
         self.assertEqual(summary["status"], "completed")
         self.assertFalse(summary["expected_long_running"])
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_stop_session_returns_none_when_idle(self, _):
         self.assertIsNone(self.runner.stop_session())
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/tool")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_start_session_uses_managed_cli_backend_for_long_running_scripts(self, _):
         import tempfile
 
@@ -722,7 +722,7 @@ class RunScriptTests(unittest.TestCase):
              patch.object(self.runner, "list_device_inventory", return_value={"connected_devices": [{"serial": "emulator-5554", "frida_compatible": True}], "local_avds": []}), \
              patch.object(self.runner, "start_frida_server_if_needed", return_value={"running": True, "started": False, "frida_server": "/tmp/frida-server"}), \
              patch.object(self.runner, "resolve_attach_target", return_value={"mode": "attach", "attach_flag": "-N", "attach_target": "com.nooie.home", "target_running_before": True, "launch_performed": False}), \
-             patch("runners.frida_runner.subprocess.Popen", return_value=FakeProcess()):
+             patch("chainrecon.runners.frida_runner.subprocess.Popen", return_value=FakeProcess()):
             result = self.runner.start_session(
                 target="com.nooie.home",
                 script_key="network_traffic_monitor",
@@ -752,7 +752,7 @@ class LiveFridaValidationTests(unittest.TestCase):
         self.assertEqual(result["serial"].startswith("emulator-"), True)
         self.assertIn("Validated frida-ps connectivity.", result["actions"])
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/frida")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/frida")
     def test_run_custom_script(self, _):
         result = self.runner.run_script(
             "com.example.app", "", custom_script_path="/tmp/my_hook.js"
@@ -761,7 +761,7 @@ class LiveFridaValidationTests(unittest.TestCase):
         cmd = self.executor.call_args[0][0]
         self.assertIn("/tmp/my_hook.js", cmd)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/frida")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/frida")
     def test_spawn_and_run(self, _):
         result = self.runner.spawn_and_run("com.example.app", "crypto_monitor")
         self.assertEqual(result["package"], "com.example.app")
@@ -769,7 +769,7 @@ class LiveFridaValidationTests(unittest.TestCase):
         self.assertIn("-f", cmd)
         self.assertIn("com.example.app", cmd)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/frida")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/frida")
     def test_spawn_custom_script(self, _):
         result = self.runner.spawn_and_run(
             "com.example.app", "", custom_script_path="/tmp/hook.js"
@@ -778,12 +778,12 @@ class LiveFridaValidationTests(unittest.TestCase):
         self.assertIn("-f", cmd)
         self.assertIn("/tmp/hook.js", cmd)
 
-    @patch("runners.frida_runner.check_tool", side_effect=ToolNotFoundError("frida not found"))
+    @patch("chainrecon.runners.frida_runner.check_tool", side_effect=ToolNotFoundError("frida not found"))
     def test_run_script_tool_missing(self, _):
         with self.assertRaises(ToolNotFoundError):
             self.runner.run_script("com.example.app", "ssl_pinning_bypass")
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/frida")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/frida")
     def test_run_script_stderr(self, _):
         self.executor.return_value = subprocess.CompletedProcess(
             [], 1, "", "Error: process not found"
@@ -792,7 +792,7 @@ class LiveFridaValidationTests(unittest.TestCase):
         self.assertIn("Error: process not found", result["stderr"])
         self.assertEqual(result["returncode"], 1)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/frida")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/frida")
     def test_run_script_uses_current_frida_noninteractive_flags(self, _):
         self.runner.run_script("com.example.app", "network_traffic_monitor")
         cmd = self.executor.call_args[0][0]
@@ -801,7 +801,7 @@ class LiveFridaValidationTests(unittest.TestCase):
         self.assertIn("120", cmd)
         self.assertIn("--exit-on-error", cmd)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/frida")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/frida")
     def test_every_builtin_script_builds_attach_command(self, _):
         for key, meta in FRIDA_SCRIPTS.items():
             with self.subTest(script=key):
@@ -816,7 +816,7 @@ class LiveFridaValidationTests(unittest.TestCase):
                 self.assertIn("120", cmd)
                 self.assertIn("--exit-on-error", cmd)
 
-    @patch("runners.frida_runner.check_tool", return_value="/usr/bin/frida")
+    @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/frida")
     def test_every_builtin_script_builds_spawn_command(self, _):
         for key, meta in FRIDA_SCRIPTS.items():
             with self.subTest(script=key):

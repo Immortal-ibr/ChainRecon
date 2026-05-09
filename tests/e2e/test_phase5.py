@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import yaml
 
-from utils.config import (
+from chainrecon.utils.config import (
     get_network_config,
     load_config,
     reset_config,
@@ -43,7 +43,7 @@ class NetworkConfigTests(unittest.TestCase):
     def test_save_and_load_network_config(self):
         with tempfile.TemporaryDirectory() as td:
             local_yaml = Path(td) / "local.yaml"
-            with patch("utils.config._CONFIG_DIR", Path(td)):
+            with patch("chainrecon.utils.config._CONFIG_DIR", Path(td)):
                 save_network_config({
                     "eth_interface": "Ethernet",
                     "internet_interface": "Wi-Fi",
@@ -60,7 +60,7 @@ class NetworkConfigTests(unittest.TestCase):
     def test_save_then_get_network_config(self):
         """Verify save + reset_config + get_network_config round-trip via auto-loaded local.yaml."""
         with tempfile.TemporaryDirectory() as td:
-            with patch("utils.config._CONFIG_DIR", Path(td)):
+            with patch("chainrecon.utils.config._CONFIG_DIR", Path(td)):
                 save_network_config({
                     "eth_interface": "Ethernet",
                     "internet_interface": "Wi-Fi",
@@ -77,7 +77,7 @@ class NetworkConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             local_yaml = Path(td) / "local.yaml"
             local_yaml.write_text("api_keys:\n  shodan: test-key\n", encoding="utf-8")
-            with patch("utils.config._CONFIG_DIR", Path(td)):
+            with patch("chainrecon.utils.config._CONFIG_DIR", Path(td)):
                 save_network_config({"eth_interface": "eth0"})
                 with open(local_yaml, encoding="utf-8") as f:
                     data = yaml.safe_load(f)
@@ -101,16 +101,16 @@ class HelpPanelWidgetTests(unittest.TestCase):
     """Unit tests for the HelpPanel widget (no Textual app required)."""
 
     def test_import_succeeds(self):
-        from tui.widgets.help_panel import HelpPanel
+        from chainrecon.tui.widgets.help_panel import HelpPanel
         self.assertTrue(callable(HelpPanel))
 
     def test_stores_help_text(self):
-        from tui.widgets.help_panel import HelpPanel
+        from chainrecon.tui.widgets.help_panel import HelpPanel
         panel = HelpPanel("Test help text", id="help")
         self.assertEqual(panel._help_text, "Test help text")
 
     def test_default_css_has_display_none(self):
-        from tui.widgets.help_panel import HelpPanel
+        from chainrecon.tui.widgets.help_panel import HelpPanel
         self.assertIn("display: none", HelpPanel.DEFAULT_CSS)
 
 
@@ -129,31 +129,31 @@ class ScreenHelpTextTests(unittest.TestCase):
         self.assertGreater(len(mod.HELP_TEXT), 50, f"{module_path} HELP_TEXT too short")
 
     def test_dashboard_help_text(self):
-        self._check_module("tui.screens.dashboard")
+        self._check_module("chainrecon.tui.screens.dashboard")
 
     def test_scan_help_text(self):
-        self._check_module("tui.screens.scan")
+        self._check_module("chainrecon.tui.screens.scan")
 
     def test_capture_help_text(self):
-        self._check_module("tui.screens.capture")
+        self._check_module("chainrecon.tui.screens.capture")
 
     def test_analyze_help_text(self):
-        self._check_module("tui.screens.analyze")
+        self._check_module("chainrecon.tui.screens.analyze")
 
     def test_frida_help_text(self):
-        self._check_module("tui.screens.frida")
+        self._check_module("chainrecon.tui.screens.frida")
 
     def test_apk_help_text(self):
-        self._check_module("tui.screens.apk")
+        self._check_module("chainrecon.tui.screens.apk")
 
     def test_reports_help_text(self):
-        self._check_module("tui.screens.reports")
+        self._check_module("chainrecon.tui.screens.reports")
 
     def test_settings_help_text(self):
-        self._check_module("tui.screens.settings")
+        self._check_module("chainrecon.tui.screens.settings")
 
     def test_network_setup_help_text(self):
-        self._check_module("tui.screens.network_setup")
+        self._check_module("chainrecon.tui.screens.network_setup")
 
 
 # ===========================================================================
@@ -165,16 +165,16 @@ class ScreenBindingsTests(unittest.TestCase):
     """Verify every screen has the question_mark → toggle_help binding."""
 
     SCREENS = [
-        "tui.screens.dashboard",
-        "tui.screens.scan",
-        "tui.screens.capture",
-        "tui.screens.analyze",
-        "tui.screens.frida",
-        "tui.screens.apk",
-        "tui.screens.reports",
-        "tui.screens.settings",
-        "tui.screens.network_setup",
-        "tui.screens.custom_script",
+        "chainrecon.tui.screens.dashboard",
+        "chainrecon.tui.screens.scan",
+        "chainrecon.tui.screens.capture",
+        "chainrecon.tui.screens.analyze",
+        "chainrecon.tui.screens.frida",
+        "chainrecon.tui.screens.apk",
+        "chainrecon.tui.screens.reports",
+        "chainrecon.tui.screens.settings",
+        "chainrecon.tui.screens.network_setup",
+        "chainrecon.tui.screens.custom_script",
         # help_screen and welcome are intentionally excluded:
         # HelpScreen is a ModalScreen with no persistent ? binding
         # WelcomeScreen has no help binding by design
@@ -210,15 +210,15 @@ class NetworkSetupScreenTests(unittest.TestCase):
     """Tests for the NetworkSetupScreen module."""
 
     def test_import_succeeds(self):
-        from tui.screens.network_setup import NetworkSetupScreen
+        from chainrecon.tui.screens.network_setup import NetworkSetupScreen
         self.assertTrue(callable(NetworkSetupScreen))
 
     def test_scripts_dir_exists(self):
-        from tui.screens.network_setup import _SCRIPTS_DIR
+        from chainrecon.tui.screens.network_setup import _SCRIPTS_DIR
         self.assertTrue(_SCRIPTS_DIR.exists(), f"Scripts dir not found: {_SCRIPTS_DIR}")
 
     def test_ps1_script_exists(self):
-        from tui.screens.network_setup import _SCRIPTS_DIR
+        from chainrecon.tui.screens.network_setup import _SCRIPTS_DIR
         ps1 = _SCRIPTS_DIR / "network_setup.ps1"
         self.assertTrue(ps1.exists(), "network_setup.ps1 not found")
 
@@ -237,12 +237,12 @@ class AppRegistrationTests(unittest.TestCase):
     """Verify network_setup is registered in the TUI app."""
 
     def test_network_setup_in_screens_dict(self):
-        from tui.app import ChainReconApp
+        from chainrecon.tui.app import ChainReconApp
         self.assertIn("network_setup", ChainReconApp.SCREENS)
 
     def test_network_setup_screen_class(self):
-        from tui.app import ChainReconApp
-        from tui.screens.network_setup import NetworkSetupScreen
+        from chainrecon.tui.app import ChainReconApp
+        from chainrecon.tui.screens.network_setup import NetworkSetupScreen
         self.assertIs(ChainReconApp.SCREENS["network_setup"], NetworkSetupScreen)
 
 
@@ -255,8 +255,8 @@ class PlatformApktoolTests(unittest.TestCase):
     """Verify apktool is included in check_all_tools."""
 
     def test_check_all_tools_includes_apktool(self):
-        from utils.platform_info import check_all_tools
-        with patch("utils.platform_info.find_tool", return_value=None):
+        from chainrecon.utils.platform_info import check_all_tools
+        with patch("chainrecon.utils.platform_info.find_tool", return_value=None):
             results = check_all_tools()
         self.assertIn("apktool", results)
 

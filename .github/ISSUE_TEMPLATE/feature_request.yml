@@ -1,0 +1,61 @@
+name: Feature request
+description: Suggest a workflow, module improvement, report change, or integration.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the lab workflow first. ChainRecon features are easiest to evaluate when the input, tool path, and expected artifact are clear.
+  - type: dropdown
+    id: module
+    attributes:
+      label: Affected module
+      options:
+        - Network setup
+        - Capture / pcap analysis
+        - Nmap scanning
+        - APK analysis
+        - Frida runtime tracing
+        - Firmware analysis
+        - Workflow engine
+        - Reports
+        - TUI
+        - Packaging / install
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Workflow
+      description: What are you trying to do in the lab?
+      placeholder: "I want to run ... against ... and save ..."
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard, missing, repetitive, or error-prone today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed behavior
+      description: What should ChainRecon do differently?
+    validations:
+      required: true
+  - type: textarea
+    id: inputs-outputs
+    attributes:
+      label: Inputs and outputs
+      description: Mention commands, files, profiles, reports, logs, or UI fields that would be involved.
+  - type: textarea
+    id: testing
+    attributes:
+      label: Testing notes
+      description: How could this be tested without access to your exact device, or what sample artifact can be used?
