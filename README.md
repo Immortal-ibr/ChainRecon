@@ -1,5 +1,9 @@
 # ChainRecon
 
+[![CI](https://github.com/Immortal-ibr/ChainRecon/actions/workflows/ci.yml/badge.svg)](https://github.com/Immortal-ibr/ChainRecon/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Latest release](https://img.shields.io/github/v/release/Immortal-ibr/ChainRecon?include_prereleases&label=latest%20release)](https://github.com/Immortal-ibr/ChainRecon/releases)
+
 ChainRecon is a local IoT security analysis toolkit. It helps you inspect what a device is doing across network traffic, Android APKs, Frida runtime behavior, firmware files, workflow runs, and generated reports.
 
 It is built for lab work where you control the network, emulator, APKs, packet captures, and test devices. It does not magically break into devices or replace the external tools it wraps. It gives you a repeatable place to run those tools, collect artifacts, and keep the evidence together.
@@ -59,13 +63,43 @@ python -m pip install -e ".[full,dev]"
 
 ## Arch Linux Package
 
-PR #2 adds a `PKGBUILD` for Arch-style packaging.
+`PKGBUILD` for Arch-style packaging.
 
 ```bash
 makepkg -si
 ```
 
 The package build depends on Arch package names being available on the host. If `makepkg` fails because a dependency name differs on your system, install the missing package manually or adjust the package name before rebuilding.
+
+## Updating an Existing Install
+
+If you installed from a source checkout, update the checkout and reinstall the editable package:
+
+```bash
+git pull
+python -m pip install -e ".[full,dev]"
+```
+
+If you installed directly from GitHub with pip:
+
+```bash
+python -m pip install --upgrade git+https://github.com/Immortal-ibr/ChainRecon.git
+```
+
+If you installed from a wheel, download or build the newer wheel and upgrade with:
+
+```bash
+python -m pip install --upgrade path/to/chainrecon-1.0.0-py3-none-any.whl
+```
+
+If you installed through the Arch package, pull the latest source and rebuild:
+
+```bash
+git pull
+makepkg -si
+```
+
+After updating, run `chainrecon --help` to make sure the command resolves to the environment you expect.
 
 ## Run It
 
