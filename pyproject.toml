@@ -53,4 +53,4 @@ markers = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["analysis*", "plugins*", "runners*", "utils*", "models*", "tui*"]
+include = ["chainrecon*"]
