@@ -10,7 +10,7 @@ It is built for lab work where you control the network, emulator, APKs, packet c
 
 ## Demo
 
-<video src="Demo%20Video/Demo.mp4" controls width="800"></video>
+https://github.com/Immortal-ibr/ChainRecon/raw/main/Demo%20Video/Demo.mp4
 
 ## What You Can Do With It
 
@@ -146,8 +146,6 @@ The Network Setup screen uses active scripts for both desktop paths:
 - Windows: `scripts/network_setup.ps1`, run through PowerShell with Administrator privileges.
 - Linux: `scripts/network_setup.sh`, run through `sudo` with `ip`, `iptables`, and `sysctl`.
 
-The old interactive Linux shell script is kept under `legacy/manual_shell_scripts/` for reference only. The active Linux path is `scripts/network_setup.sh`.
-
 ## External Tools
 
 ChainRecon detects optional tools at startup and shows what is missing. Missing tools only disable their matching workflows.
@@ -277,7 +275,6 @@ workflows/           YAML workflow definitions
 community_plugins/   Optional community analyzers
 documentation/       Project notes and testing docs
 tests/               Unit, integration, e2e, and requirement tests
-legacy/              Retired manual assets kept for reference
 ```
 
 Temporary compatibility packages still exist for old imports like `analysis`, `runners`, `tui`, `utils`, `plugins`, and `models`. New code should import from `chainrecon.*`.
