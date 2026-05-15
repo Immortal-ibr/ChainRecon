@@ -10,7 +10,7 @@ It is built for lab work where you control the network, emulator, APKs, packet c
 
 ## Demo
 
-https://github.com/Immortal-ibr/ChainRecon/raw/main/Demo%20Video/Demo.mp4
+[![ChainRecon demo preview](./Demo%20Video/Demo.gif)](./Demo%20Video/Demo.mp4)
 
 ## What You Can Do With It
 
