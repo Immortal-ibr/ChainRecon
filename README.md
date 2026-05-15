@@ -8,6 +8,10 @@ ChainRecon is a local IoT security analysis toolkit. It helps you inspect what a
 
 It is built for lab work where you control the network, emulator, APKs, packet captures, and test devices. It does not magically break into devices or replace the external tools it wraps. It gives you a repeatable place to run those tools, collect artifacts, and keep the evidence together.
 
+## Demo
+
+<video src="Demo%20Video/Demo.mp4" controls width="800"></video>
+
 ## What You Can Do With It
 
 - Put your computer between an IoT device and the internet, then capture and analyze traffic.
@@ -106,13 +110,13 @@ After updating, run `chainrecon --help` to make sure the command resolves to the
 Launch the TUI:
 
 ```bash
-chainrecon tui
+chainrecon
 ```
 
 The source-checkout compatibility command is still supported:
 
 ```bash
-python chainrecon.py tui
+python chainrecon.py
 ```
 
 Run common CLI workflows:
