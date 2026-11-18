@@ -11,6 +11,8 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 from chainrecon.runners.base import run_subprocess
 from chainrecon.utils.logging_config import get_logger
 from chainrecon.utils.platform_info import find_tool
+from chainrecon.firmware_engine import FirmwareEngine, _walk_regular
+from chainrecon.case_model import file_sha256
 
 logger = get_logger("firmware")
 
@@ -31,9 +33,10 @@ class FirmwareAnalyzer:
     _IP_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
     _DOMAIN_PATTERN = re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\b", re.IGNORECASE)
 
-    def __init__(self, executor: Optional[Callable] = None, binwalk_path: Optional[str] = None):
+    def __init__(self, executor: Optional[Callable] = None, binwalk_path: Optional[str] = None, extraction_mode: str = "container"):
         self._executor = executor or run_subprocess
         self._binwalk = binwalk_path or find_tool("binwalk") or "binwalk"
+        self.extraction_mode = extraction_mode
 
     def analyze(self, firmware_path: str, output_dir: Optional[str] = None, rules: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         image = Path(firmware_path)
@@ -60,25 +63,25 @@ class FirmwareAnalyzer:
         risk_indicators: List[Dict[str, str]] = []
         if secrets["private_keys"]:
             risk_indicators.append({
-                "severity": "high",
-                "title": "Private key material extracted from firmware",
+                "severity": "medium",
+                "title": "Private key material requires review",
                 "details": f"Found {len(secrets['private_keys'])} private key file(s) in extracted firmware.",
             })
         if secrets["shadow_files"]:
             risk_indicators.append({
-                "severity": "high",
+                "severity": "info",
                 "title": "Password database files present",
                 "details": "Extracted firmware contains passwd/shadow-style files that should be reviewed for default or weak hashes.",
             })
         if credential_hits:
             risk_indicators.append({
-                "severity": "medium",
+                "severity": "info",
                 "title": "Credential-like strings found in extracted files",
                 "details": f"Detected {len(credential_hits)} credential-like hit(s) across extracted firmware files.",
             })
         if network_indicators["urls"] or network_indicators["domains"] or network_indicators["ips"]:
             risk_indicators.append({
-                "severity": "medium",
+                "severity": "info",
                 "title": "Network endpoints embedded in firmware",
                 "details": "Extracted firmware contains hardcoded URLs, domains, or IPs that should be reviewed against the device profile.",
             })
@@ -90,6 +93,8 @@ class FirmwareAnalyzer:
                 "analyzer": self.__class__.__name__,
                 "binwalk_path": self._binwalk,
                 "extraction_warning": extraction_warning,
+                "status": "partial" if extraction_warning else "complete",
+                "sha256": file_sha256(image),
             },
             "findings": {
                 "extracted_paths": [str(path) for path in extracted_paths],
@@ -113,11 +118,17 @@ class FirmwareAnalyzer:
                 "ip_count": len(network_indicators["ips"]),
                 "domain_count": len(network_indicators["domains"]),
                 "firmware_rule_hit_count": len(network_indicators["rule_hits"]),
+                "coverage": "raw_image_only" if extraction_warning else "extracted_filesystem",
             },
             "risk_indicators": risk_indicators,
         }
 
     def _run_binwalk(self, image: Path, extract_root: Path) -> None:
+        if self.extraction_mode != "trusted-host":
+            status, message = FirmwareEngine()._extract(image, extract_root, self.extraction_mode, [])
+            if status != "complete":
+                raise RuntimeError(message)
+            return
         args = ["--extract", "--matryoshka", "--directory", str(extract_root), str(image)]
         commands = [[self._binwalk, *args]]
         if sys.platform == "win32":
@@ -154,7 +165,7 @@ class FirmwareAnalyzer:
     def _inventory_files(self, roots: Iterable[Path]) -> List[Dict[str, Any]]:
         inventory: List[Dict[str, Any]] = []
         for root in roots:
-            if root.is_file():
+            if root.is_file() and not root.is_symlink():
                 inventory.append({
                     "path": str(root),
                     "name": root.name,
@@ -162,9 +173,7 @@ class FirmwareAnalyzer:
                     "size": root.stat().st_size,
                 })
                 continue
-            for path in root.rglob("*"):
-                if not path.is_file():
-                    continue
+            for path in _walk_regular(root, []):
                 inventory.append({
                     "path": str(path),
                     "name": path.name,
@@ -282,13 +291,11 @@ class FirmwareAnalyzer:
 
     def _iter_small_text_files(self, roots: Iterable[Path]) -> Iterable[Path]:
         for root in roots:
-            if root.is_file():
+            if root.is_file() and not root.is_symlink():
                 if root.suffix.lower() in self._TEXT_EXTENSIONS or root.stat().st_size <= 2_000_000:
                     yield root
                 continue
-            for path in root.rglob("*"):
-                if not path.is_file():
-                    continue
+            for path in _walk_regular(root, []):
                 if path.suffix.lower() not in self._TEXT_EXTENSIONS and path.stat().st_size > 512_000:
                     continue
                 if path.stat().st_size > 2_000_000:

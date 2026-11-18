@@ -3,7 +3,7 @@ import unittest
 import json
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from chainrecon.analysis.report_generator import ReportGenerator, normalize_report_data
 from chainrecon.analysis.scanner import ScannerAnalyzer
@@ -37,7 +37,8 @@ class ScanRequirementTests(unittest.TestCase):
         result = ScannerAnalyzer().parse_nmap_output(path)
         self.assertEqual(result["summary"]["open_port_count"], 0)
         self.assertEqual(result["summary"]["ambiguous_udp_count"], 1)
-        self.assertTrue(any(item["title"] == "Ambiguous UDP scan result" for item in result["risk_indicators"]))
+        self.assertEqual(len(result["findings"]["ambiguous_udp_ports"]), 1)
+        self.assertEqual(result["risk_indicators"], [])
 
 
 class FridaReportRequirementTests(unittest.TestCase):
@@ -47,7 +48,7 @@ class FridaReportRequirementTests(unittest.TestCase):
             path = handle.name
         hooks = _extract_frida_log_events(path, prefixes=("[HOOK]",))
         errors = _extract_frida_log_events(path, prefixes=("[WARN]", "[stderr]"))
-        self.assertEqual(hooks, ["[stdout] [HOOK] java.net.Socket.connect"])
+        self.assertEqual(hooks, ["[stdout] [HOOK] [CONTENT REDACTED; rerun with explicit reveal_sensitive for local analysis]"])
         self.assertTrue(errors)
 
 
@@ -84,7 +85,7 @@ class FridaLifecycleRequirementTests(unittest.TestCase):
         cmd = FridaRunner._build_managed_command(
             serial="emulator-5554",
             attach_flag="-N",
-            attach_target="com.nooie.home",
+            attach_target="com.samplecam.home",
             rendered_script_path=Path("session.js"),
             long_running=True,
         )
@@ -128,9 +129,9 @@ class FridaLifecycleRequirementTests(unittest.TestCase):
              patch.object(runner, "ensure_online_device", return_value={"serial": "emulator-5554", "online": True}), \
              patch.object(runner, "list_device_inventory", return_value={"connected_devices": [{"serial": "emulator-5554", "frida_compatible": True}], "local_avds": []}), \
              patch.object(runner, "start_frida_server_if_needed", return_value={"running": True, "started": False}), \
-             patch.object(runner, "resolve_attach_target", return_value={"mode": "attach", "attach_flag": "-N", "attach_target": "com.nooie.home", "target_running_before": True, "launch_performed": False}), \
+             patch.object(runner, "resolve_attach_target", return_value={"mode": "attach", "attach_flag": "-N", "attach_target": "com.samplecam.home", "target_running_before": True, "launch_performed": False}), \
              patch("chainrecon.runners.frida_runner.subprocess.Popen", side_effect=FakeProcess):
-            runner.start_session(target="com.nooie.home", script_key="network_traffic_monitor", output_dir=td)
+            runner.start_session(target="com.samplecam.home", script_key="network_traffic_monitor", output_dir=td)
             self.assertIsNotNone(runner.active_session())
             summary = runner.stop_session(timeout=2)
         self.assertEqual(summary["status"], "stopped_by_user")

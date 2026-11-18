@@ -1,7 +1,7 @@
 pkgname=chainrecon
-pkgver=1.0.0
+pkgver=2.0.0
 pkgrel=1
-pkgdesc="IoT network security analysis framework"
+pkgdesc="Local IoT investigation toolkit"
 arch=('any')
 url="https://github.com/Immortal-ibr/ChainRecon"
 

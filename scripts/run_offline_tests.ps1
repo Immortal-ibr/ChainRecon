@@ -8,6 +8,4 @@ Set-Location $repo
 
 $env:CHAINRECON_LIVE_NMAP = $null
 $env:CHAINRECON_LIVE_FRIDA = $null
-$env:CHAINRECON_LIVE_NOOIE = $null
-
-python -m pytest -m "unit or integration or requirement" @PytestArgs
+python -m pytest @PytestArgs

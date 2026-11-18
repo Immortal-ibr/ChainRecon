@@ -14,7 +14,7 @@ from chainrecon.runners.base import (
     run_subprocess,
 )
 from chainrecon.runners.capture_runner import CAPTURE_MODES, CaptureRunner
-from chainrecon.runners.nmap_runner import SCAN_PROFILES, NmapInterfaceMismatchError, NmapRunner, powershell_command
+from chainrecon.runners.nmap_runner import SCAN_PROFILES, NmapExecutionError, NmapInterfaceMismatchError, NmapRunner, powershell_command
 
 
 # ===========================================================================
@@ -116,6 +116,38 @@ class NmapRunnerScanTests(unittest.TestCase):
         self.executor = MagicMock()
 
     @patch("chainrecon.runners.nmap_runner.check_tool", return_value="/usr/bin/nmap")
+    def test_failed_scan_does_not_return_output_as_success(self, _):
+        import subprocess
+        import tempfile
+
+        self.executor.return_value = subprocess.CompletedProcess(["nmap"], 2, "", "failed to initialize")
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(NmapExecutionError) as context:
+                NmapRunner(executor=self.executor).run_scan("192.0.2.10", "quick", td)
+        self.assertEqual(context.exception.returncode, 2)
+        self.assertIn("failed to initialize", str(context.exception))
+
+    @patch("chainrecon.runners.nmap_runner.check_tool", return_value="/usr/bin/nmap")
+    def test_iot_scan_stops_after_failed_tcp_pass(self, _):
+        import subprocess
+        import tempfile
+
+        self.executor.return_value = subprocess.CompletedProcess(["nmap"], 1, "", "no route")
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(NmapExecutionError):
+                NmapRunner(executor=self.executor).run_scan("192.0.2.10", "iot", td)
+        self.executor.assert_called_once()
+
+    @patch("chainrecon.runners.nmap_runner.check_tool", return_value="/usr/bin/nmap")
+    def test_success_exit_without_xml_is_not_a_completed_scan(self, _):
+        import tempfile
+
+        self.executor.return_value = subprocess.CompletedProcess(["nmap"], 0, "", "")
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaisesRegex(RuntimeError, "without XML evidence"):
+                NmapRunner(executor=self.executor).run_scan("192.0.2.10", "quick", td)
+
+    @patch("chainrecon.runners.nmap_runner.check_tool", return_value="/usr/bin/nmap")
     def test_arp_scan_builds_host_discovery_command(self, _):
         import tempfile
 
@@ -194,7 +226,7 @@ class NmapRunnerScanTests(unittest.TestCase):
         runner = NmapRunner(executor=self.executor)
         with patch("chainrecon.runners.nmap_runner.make_output_dir") as mock_dir:
             mock_dir.return_value = Path(tempfile.mkdtemp())
-            result = runner.run_scan("10.0.0.1", "quick")
+            runner.run_scan("10.0.0.1", "quick")
             mock_dir.assert_called_once()
 
     @patch("chainrecon.runners.nmap_runner.check_tool", return_value="/usr/bin/nmap")
@@ -310,6 +342,33 @@ class CaptureRunnerCaptureTests(unittest.TestCase):
     def setUp(self):
         self.executor = MagicMock()
 
+    def test_rejects_invalid_duration_and_filter_target_before_launch(self):
+        runner = CaptureRunner(executor=self.executor)
+        for duration in (0, -1, 86_401):
+            with self.assertRaisesRegex(ValueError, "duration"):
+                runner.run_capture("eth0", "full", duration=duration)
+        with self.assertRaisesRegex(ValueError, "IPv4 or IPv6"):
+            runner.run_capture("eth0", "full", target_ip="192.0.2.1 or port 53")
+        self.executor.assert_not_called()
+
+    @patch("chainrecon.runners.capture_runner.check_tool", return_value="/usr/bin/tshark")
+    def test_failed_capture_does_not_return_nonexistent_pcap_as_success(self, _):
+        import tempfile
+
+        self.executor.return_value = subprocess.CompletedProcess(["tshark"], 2, "", "interface unavailable")
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaisesRegex(RuntimeError, "interface unavailable"):
+                CaptureRunner(executor=self.executor).run_capture("eth0", "full", output_dir=td)
+
+    @patch("chainrecon.runners.capture_runner.check_tool", return_value="/usr/bin/tshark")
+    def test_success_exit_without_pcap_is_incomplete(self, _):
+        import tempfile
+
+        self.executor.return_value = subprocess.CompletedProcess(["tshark"], 0, "", "")
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaisesRegex(RuntimeError, "no PCAP file"):
+                CaptureRunner(executor=self.executor).run_capture("eth0", "full", output_dir=td)
+
     @patch("chainrecon.runners.capture_runner.is_windows", return_value=False)
     @patch("chainrecon.runners.capture_runner.check_tool", return_value="/usr/sbin/tcpdump")
     def test_basic_capture_builds_tcpdump_command(self, _ct, _win):
@@ -379,7 +438,7 @@ class CaptureRunnerCaptureTests(unittest.TestCase):
             with patch("chainrecon.runners.capture_runner.is_windows", return_value=False):
                 with patch("chainrecon.runners.capture_runner.check_tool", side_effect=mock_check):
                     runner = CaptureRunner(executor=self.executor)
-                    result = runner.run_capture("eth0", "live", output_dir=td)
+                    runner.run_capture("eth0", "live", output_dir=td)
                     cmd = self.executor.call_args[0][0]
                     self.assertEqual(cmd[0], "/usr/sbin/tcpdump")
 
@@ -399,7 +458,7 @@ class CaptureRunnerCaptureTests(unittest.TestCase):
             with patch("chainrecon.runners.capture_runner.is_windows", return_value=True):
                 with patch("chainrecon.runners.capture_runner.check_tool", return_value="C:\\Wireshark\\tshark.exe"):
                     runner = CaptureRunner(executor=self.executor)
-                    result = runner.run_capture("eth0", "basic", output_dir=td)
+                    runner.run_capture("eth0", "basic", output_dir=td)
                     cmd = self.executor.call_args[0][0]
                     self.assertEqual(cmd[0], "C:\\Wireshark\\tshark.exe")
 
@@ -463,7 +522,7 @@ class CaptureRunnerCaptureTests(unittest.TestCase):
             import tempfile
 
             mock_dir.return_value = Path(tempfile.mkdtemp())
-            result = runner.run_capture("eth0", "basic")
+            runner.run_capture("eth0", "basic")
             mock_dir.assert_called_once()
 
     @patch("chainrecon.runners.capture_runner.check_tool", return_value="/usr/sbin/tcpdump")

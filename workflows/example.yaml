@@ -1,0 +1,12 @@
+name: Evidence review
+inputs:
+  investigation_note:
+    type: string
+    default: Pending
+steps:
+  - id: scope_review
+    type: review
+    prompt: Confirm the case evidence and authorized scope
+  - id: scope_recorded
+    type: assert
+    condition: "steps.scope_review.status == 'completed'"

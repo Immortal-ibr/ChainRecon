@@ -9,6 +9,7 @@ from pathlib import Path
 
 from chainrecon.plugins.base import ReportPlugin
 from chainrecon.plugins.csv_export import CsvExportPlugin
+from chainrecon.utils.redaction import redact_report_data, spreadsheet_cell
 
 try:  # pragma: no cover - import guard exercised via plugin tests
     from openpyxl import Workbook
@@ -25,7 +26,7 @@ class XlsxReportPlugin(ReportPlugin):
             raise RuntimeError("XLSX export requires openpyxl. Install it with: python -m pip install openpyxl")
 
         flattener = CsvExportPlugin()
-        rows = list(flattener._flatten_data(analysis_data))
+        rows = list(flattener._flatten_data(redact_report_data(analysis_data)))
         grouped = defaultdict(list)
         for row in rows:
             grouped[str(row.get("section", "report"))].append(row)
@@ -36,14 +37,14 @@ class XlsxReportPlugin(ReportPlugin):
         summary.append(["section", "row_count", "risk_indicator_count"])
         for section, section_rows in grouped.items():
             risk_count = sum(1 for row in section_rows if row.get("key") == "risk_indicators")
-            summary.append([section, len(section_rows), risk_count])
+            summary.append([spreadsheet_cell(section), len(section_rows), risk_count])
 
         for section, section_rows in grouped.items():
             sheet = workbook.create_sheet(title=_sheet_name(section))
             fieldnames = _fieldnames(section_rows)
             sheet.append(fieldnames)
             for row in section_rows:
-                sheet.append([_scalarize(row.get(name, "")) for name in fieldnames])
+                sheet.append([spreadsheet_cell(_scalarize(row.get(name, ""))) for name in fieldnames])
 
         target = Path(output_path).expanduser().resolve()
         target.parent.mkdir(parents=True, exist_ok=True)

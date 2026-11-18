@@ -13,16 +13,16 @@ class DeviceProfileTests(unittest.TestCase):
     def test_builtin_device_profiles_are_listed(self):
         profiles = list_device_profiles()
         names = {item["name"] for item in profiles}
-        self.assertIn("Nooie Lab Device", names)
-        nooie = next(item for item in profiles if item["name"] == "Nooie Lab Device")
-        self.assertEqual(nooie["stem"], "nooie")
-        self.assertIn("profile", nooie)
-        self.assertIn("frida_defaults", nooie)
+        self.assertIn("Generic Camera", names)
+        generic = next(item for item in profiles if item["name"] == "Generic Camera")
+        self.assertEqual(generic["stem"], "generic_camera")
+        self.assertIn("profile", generic)
+        self.assertIn("frida_defaults", generic)
 
     def test_load_builtin_device_profile_by_name(self):
-        profile = load_device_profile("nooie")
-        self.assertEqual(profile["name"], "Nooie Lab Device")
-        self.assertEqual(profile["target"], "192.168.123.99")
+        profile = load_device_profile("generic_camera")
+        self.assertEqual(profile["name"], "Generic Camera")
+        self.assertIsNone(profile["target"])
         self.assertIn("vendor", profile)
         self.assertIn("scan_defaults", profile)
         self.assertIn("firmware_rules", profile)
@@ -38,7 +38,7 @@ class CommunityPluginTests(unittest.TestCase):
         self.assertEqual(descriptor["entrypoint"], "plugin.py:ExampleStringAnalyzer")
 
     def test_loads_example_plugin_and_analyzes_input(self):
-        plugin = load_community_plugin("example_string_scan")
+        plugin = load_community_plugin("example_string_scan", trusted=True)
         with tempfile.TemporaryDirectory() as td:
             sample = Path(td) / "sample.txt"
             sample.write_text("token=password\n", encoding="utf-8")
@@ -84,6 +84,7 @@ steps:
   - id: strings
     type: community
     plugin: example_string_scan
+    trusted: true
     input: {json.dumps(str(sample))}
 """,
                 encoding="utf-8",

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from chainrecon.models.finding import FindingCollection
 from chainrecon.plugins import get_plugin

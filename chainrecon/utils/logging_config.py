@@ -39,9 +39,11 @@ def setup_logging(
     console.setLevel(logging.DEBUG if verbose else logging.INFO)
 
     try:
+        from rich.console import Console  # type: ignore
         from rich.logging import RichHandler  # type: ignore
 
         console = RichHandler(
+            console=Console(stderr=True),
             show_time=True,
             show_path=verbose,
             markup=True,

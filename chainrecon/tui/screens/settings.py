@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import os
 import platform
 
+from rich.markup import escape
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Label, Static
+from textual.widgets import Button, Collapsible, Header, Label, Static
 
 from chainrecon.tui.screens.help_screen import HelpScreen
-from chainrecon.utils.config import get_config, get_tool_path
+from chainrecon.tui.widgets.help_footer import HelpFooter
+from chainrecon.utils.config import (
+    get_case_directory,
+    get_firmware_mode,
+    get_tool_path,
+    user_config_dir,
+)
 from chainrecon.utils.platform_info import find_tool
 
 _IS_WINDOWS = platform.system() == "Windows"
@@ -24,14 +32,14 @@ Shows which external tools are installed and the active configuration.
 ChainRecon auto-detects tools from your system PATH. If a tool isn't
 found automatically, you have three options:
   1. Add its directory to your system PATH
-  2. Set its path in config/local.yaml under the tools: section
+  2. Set its path in your per-user ChainRecon/local.yaml under tools:
   3. Use an environment variable (see below)
 
 [bold]Setting Up JADX (APK Decompiler)[/]
   1. Download jadx from: github.com/skylot/jadx/releases
      Get the zip (e.g. jadx-1.5.5.zip), not the .deb package
   2. Unzip to somewhere permanent (e.g. D:\\tools\\jadx-1.5.5)
-  3. Add to config/local.yaml -- use SINGLE quotes for Windows paths:
+  3. Add to your per-user local.yaml -- use SINGLE quotes for Windows paths:
 
        tools:
          jadx: 'D:\\tools\\jadx-1.5.5\\bin\\jadx.bat'
@@ -50,7 +58,7 @@ found automatically, you have three options:
   you just point it at the .jar file.
 
   1. Download apktool.jar from: apktool.org or github.com/iBotPeaches/Apktool
-  2. Add to config/local.yaml:
+  2. Add to your per-user local.yaml:
 
        tools:
          apktool: 'D:\\tools\\apktool\\apktool.jar'
@@ -68,12 +76,10 @@ found automatically, you have three options:
     jadx: C:/path/to/jadx.bat
 
 [bold]Config File Cascade[/] (later overrides earlier)
-  1. config/default.yaml  Built-in defaults. Don't edit this directly.
-  2. config/local.yaml    Your local overrides. Create this file for
-                          custom tool paths, API keys, or network values.
-  3. config/nooie_profile.yaml  Device-specific profile, loaded via
-                          the --config CLI flag.
-  4. Environment variables  Highest priority. Always wins.
+  1. Packaged defaults. Don't edit the installed package.
+  2. Per-user ChainRecon/local.yaml for tool paths and local values.
+  3. Explicit user YAML when supported by a command.
+  4. Environment variables take highest priority.
 
 [bold]Environment Variables[/]
   CHAINRECON_JADX_PATH       Path to jadx.bat
@@ -88,31 +94,33 @@ found automatically, you have three options:
   IoT port mappings, capture defaults, network interface names,
   Frida settings, and output directory.
 
-[dim]Config files: config/ directory
-To edit this screen: tui/screens/settings.py[/]
+[dim]The Settings screen shows the active per-user config path.[/dim]
 """
 
 
 class SettingsScreen(Screen):
     BINDINGS = [("escape", "app.pop_screen", "Back"), ("question_mark", "toggle_help", "Help")]
+    DEFAULT_CSS = """
+    SettingsScreen #settings { padding: 1 2; }
+    SettingsScreen #settings-summary { color: $text-muted; margin: 1 0; }
+    SettingsScreen #settings Collapsible { margin-bottom: 1; }
+    SettingsScreen #settings Button { margin: 0; }
+    """
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Vertical(id="settings"):
-            yield Label("[bold]Settings & Tool Verification[/]")
-            yield Label("")
-            yield Label("[bold underline]External Tools[/]")
-            _tools = ["nmap", "tshark", "adb", "frida", "frida-ps", "jadx", "apktool"]
-            if not _IS_WINDOWS:
-                _tools.insert(2, "tcpdump")  # tcpdump not available on Windows
-            for tool in _tools:
-                yield _ToolRow(tool)
-            yield Label("")
-            yield Label("[bold underline]Active Configuration[/]")
-            yield _ConfigSummary()
-            yield Label("")
+        with VerticalScroll(id="settings"):
+            yield Label("Settings", id="title")
+            yield _ConfigSummary(id="settings-summary")
+            with Collapsible(title="External tools", collapsed=True):
+                yield Static("Tool checks are shown here when needed. Missing tools affect only their own tasks.")
+                _tools = ["nmap", "tshark", "adb", "frida", "frida-ps", "jadx", "apktool"]
+                if not _IS_WINDOWS:
+                    _tools.insert(2, "tcpdump")
+                for tool in _tools:
+                    yield _ToolRow(tool)
             yield Button("Back", id="btn-back")
-        yield Footer()
+        yield HelpFooter()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-back":
@@ -133,18 +141,25 @@ class _ToolRow(Static):
             # Try raw config value even if file not found yet
             cfg_val = get_tool_path("jadx")
             if cfg_val:
-                path = cfg_val + "  [dim](from config -- file not found)[/dim]"
+                path = cfg_val
         mark = "[green]OK[/]" if path else "[red]X[/]"
-        self.update(f"  {mark} {self._tool}: {path or 'not found'}")
+        self.update(f"  {mark} {self._tool}: {escape(str(path)) if path else 'not found'}")
 
 
 class _ConfigSummary(Static):
     def on_mount(self) -> None:
-        import json
         try:
-            cfg = get_config()
-            text = json.dumps(cfg, indent=2, default=str)[:2000]
+            case = get_case_directory()
+            local_file = user_config_dir() / "local.yaml"
+            selected_file = os.environ.get("CHAINRECON_CONFIG_FILE")
+            lines = [
+                f"Default case: {case or 'Not configured'}",
+                f"Firmware extraction: {get_firmware_mode()}",
+                f"User settings: {local_file}",
+            ]
+            if selected_file:
+                lines.append(f"Selected settings: {selected_file}")
+            text = "\n".join(lines)
         except Exception as exc:
             text = f"Error loading config: {exc}"
-        # Use Text() to prevent Rich from interpreting JSON brackets as markup
         self.update(Text(text))

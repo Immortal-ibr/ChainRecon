@@ -11,11 +11,12 @@ from typing import Any, Dict, List
 
 from chainrecon.plugins.base import ReportPlugin
 from chainrecon.utils.artifacts import local_file_href, write_text_artifact
+from chainrecon.utils.redaction import redact_report_data
 
 try:
-    from jinja2 import Template
+    from jinja2 import Environment, select_autoescape
 except ImportError:  # pragma: no cover
-    Template = None
+    Environment = None
 
 
 _SEV_COLORS = {
@@ -618,17 +619,17 @@ class HtmlReportPlugin(ReportPlugin):
         return _SEV_COLORS.get(sev, "#6b7280")
 
     def generate(self, analysis_data, output_path):
-        payload = deepcopy(analysis_data)
+        payload = redact_report_data(deepcopy(analysis_data))
         findings_summary = payload.pop("findings_summary", None)
         findings = payload.pop("findings", None)
         sections = _annotate_sections(payload)
         risk_indicators = _collect_risk_indicators(sections)
         metrics = _dashboard_metrics(sections, findings_summary, findings, risk_indicators)
 
-        if Template is None:
+        if Environment is None:
             html = self._generate_fallback(sections, findings_summary, findings, risk_indicators=risk_indicators)
         else:
-            tmpl = Template(self.TEMPLATE)
+            tmpl = Environment(autoescape=select_autoescape(default=True, default_for_string=True)).from_string(self.TEMPLATE)
             tmpl.globals["sev_color"] = self._sev_color
             html = tmpl.render(
                 findings_summary=findings_summary,

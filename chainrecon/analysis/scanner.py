@@ -38,11 +38,11 @@ class ScannerAnalyzer:
         47808: "BACnet",
     }
 
-    CVE_HINTS = {
-        "telnet": "Cleartext remote administration is exposed.",
-        "ftp": "Legacy file transfer service may allow weak authentication.",
-        "http": "Web administration surface should be reviewed for default credentials and known CVEs.",
-        "upnp": "UPnP exposure is commonly associated with misconfiguration risk.",
+    SERVICE_REVIEW_HINTS = {
+        "telnet": "Nmap identified Telnet; confirm the protocol and inspect authentication and transport.",
+        "ftp": "Nmap identified FTP; confirm the protocol and inspect authentication and transport.",
+        "http": "Nmap identified HTTP; enumerate endpoints and versions before making a security claim.",
+        "upnp": "Nmap identified UPnP; verify the endpoint and enabled actions.",
     }
 
     def __init__(self, request_get=None, iot_port_map: Optional[Dict[int, str]] = None):
@@ -61,20 +61,24 @@ class ScannerAnalyzer:
     def parse_nmap_output(self, file_path: str) -> Dict[str, Any]:
         path = _normalize_file_path(file_path)
         logger.info("Parsing nmap output: %s", path)
-        if path.suffix.lower() == ".xml":
+        # Case evidence is content-addressed and intentionally has no suffix.
+        with path.open("rb") as source:
+            looks_like_xml = b"<nmaprun" in source.read(4096)
+        if path.suffix.lower() == ".xml" or looks_like_xml:
             hosts = self._parse_xml(path)
         else:
             hosts = self._parse_text(path.read_text(encoding="utf-8", errors="replace"))
 
         services = [service for host in hosts for service in host["services"]]
         iot_services = self.identify_iot_services(services)
-        cve_hints = self.correlate_cves(services)
+        service_hints = self.service_review_hints(services)
         ports = [port for host in hosts for port in host.get("ports", [])]
         state_summary = _combine_state_summaries(hosts)
         ambiguous_udp = _ambiguous_udp_ports(ports, state_summary)
         return {
             "metadata": {"source": str(path), "host_count": len(hosts)},
-            "findings": {"hosts": hosts, "iot_services": iot_services, "cve_hints": cve_hints},
+            "findings": {"hosts": hosts, "iot_services": iot_services,
+                         "service_review_hints": service_hints, "ambiguous_udp_ports": ambiguous_udp},
             "summary": {
                 "open_port_count": len(services),
                 "closed_port_count": _state_count(ports, state_summary, "closed"),
@@ -84,26 +88,9 @@ class ScannerAnalyzer:
                 "host_up_count": sum(1 for host in hosts if host.get("host_state") == "up"),
                 "host_down_count": sum(1 for host in hosts if host.get("host_state") == "down"),
                 "iot_service_count": len(iot_services),
-                "cve_hint_count": len(cve_hints),
+                "service_review_hint_count": len(service_hints),
             },
-            "risk_indicators": [
-                {
-                    "severity": "medium",
-                    "title": "Potentially risky service exposed",
-                    "details": hint["details"],
-                }
-                for hint in cve_hints
-            ] + [
-                {
-                    "severity": "info",
-                    "title": "Ambiguous UDP scan result",
-                    "details": (
-                        "UDP open|filtered means nmap did not receive a response. "
-                        "Treat this as inconclusive, not proof that the service is open."
-                    ),
-                }
-                for _ in ([1] if ambiguous_udp else [])
-            ],
+            "risk_indicators": [],
         }
 
     def lookup_shodan(self, ip: str, api_key: Optional[str] = None) -> Dict[str, Any]:
@@ -147,15 +134,20 @@ class ScannerAnalyzer:
                 results.append({"port": port, "service": service.get("service"), "protocol": service.get("service")})
         return results
 
-    def correlate_cves(self, services: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def service_review_hints(self, services: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Describe exposed services without implying a CVE or vulnerability."""
         hints = []
         for service in services:
             service_name = (service.get("service") or "").lower()
-            for key, detail in self.CVE_HINTS.items():
+            for key, detail in self.SERVICE_REVIEW_HINTS.items():
                 if key in service_name:
                     hints.append({"port": service.get("port"), "service": service.get("service"), "details": detail})
                     break
         return hints
+
+    def correlate_cves(self, services: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Compatibility alias; these hints are not CVE matches."""
+        return self.service_review_hints(services)
 
     def _parse_xml(self, path: Path) -> List[Dict[str, Any]]:
         xml_text = path.read_text(encoding="utf-8", errors="replace")
@@ -166,6 +158,8 @@ class ScannerAnalyzer:
             # external entities for basic protection if somehow missing.
             parser = ET.XMLParser()
             root = ET.fromstring(xml_text, parser=parser)
+        if root.tag != "nmaprun":
+            raise ValueError("Expected Nmap XML root <nmaprun>")
 
         hosts = []
         for host in root.findall("host"):

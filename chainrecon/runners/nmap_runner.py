@@ -116,15 +116,24 @@ class NmapRunner:
             udp_xml_file = str(artifact_path(out_dir, f"{cfg['suffix']}_udp", ".xml"))
             tcp_cmd = [nmap_path] + _inject_interface(cfg["tcp_args"], configured_interface) + [target, "-oN", tcp_file, "-oX", tcp_xml_file]
             udp_cmd = [nmap_path] + _inject_interface(cfg["udp_args"], configured_interface) + [target, "-oN", udp_file, "-oX", udp_xml_file]
-            command_results.append(_command_record(tcp_cmd, self._executor(tcp_cmd, timeout=default_timeout)))
-            command_results.append(_command_record(udp_cmd, self._executor(udp_cmd, timeout=default_timeout)))
+            command_results.append(_checked_command_record(tcp_cmd, self._executor(tcp_cmd, timeout=default_timeout)))
+            command_results.append(_checked_command_record(udp_cmd, self._executor(udp_cmd, timeout=default_timeout)))
             output_files = [tcp_file, tcp_xml_file, udp_file, udp_xml_file]
         else:
             out_file = str(artifact_path(out_dir, cfg["suffix"], ".txt"))
             xml_file = str(artifact_path(out_dir, cfg["suffix"], ".xml"))
             cmd = [nmap_path] + _inject_interface(cfg["args"], configured_interface) + [target, "-oN", out_file, "-oX", xml_file]
-            command_results.append(_command_record(cmd, self._executor(cmd, timeout=default_timeout)))
+            command_results.append(_checked_command_record(cmd, self._executor(cmd, timeout=default_timeout)))
             output_files = [out_file, xml_file]
+
+        if all(isinstance(record["returncode"], int) for record in command_results):
+            missing_xml = [
+                name for name in output_files
+                if Path(name).suffix.lower() == ".xml"
+                and (not Path(name).is_file() or Path(name).stat().st_size == 0)
+            ]
+            if missing_xml:
+                raise RuntimeError(f"nmap exited successfully without XML evidence: {', '.join(missing_xml)}")
 
         return {
             "profile": profile,
@@ -149,6 +158,16 @@ class NmapInterfaceMismatchError(RuntimeError):
     def __init__(self, message: str, preflight: Dict[str, Any]):
         super().__init__(message)
         self.preflight = preflight
+
+
+class NmapExecutionError(RuntimeError):
+    """A launched nmap process failed; its output is not a completed scan."""
+
+    def __init__(self, command: List[str], returncode: int, stderr: str):
+        super().__init__(f"nmap exited with status {returncode}: {stderr[:500] or 'no stderr'}")
+        self.command = command
+        self.returncode = returncode
+        self.stderr = stderr
 
 
 def _profile_uses_pn(cfg: Dict[str, Any]) -> bool:
@@ -194,6 +213,14 @@ def _command_record(cmd: List[str], result: Any) -> Dict[str, Any]:
         "stdout_preview": (getattr(result, "stdout", "") or "")[:2000],
         "stderr_preview": (getattr(result, "stderr", "") or "")[:2000],
     }
+
+
+def _checked_command_record(cmd: List[str], result: Any) -> Dict[str, Any]:
+    record = _command_record(cmd, result)
+    returncode = getattr(result, "returncode", None)
+    if isinstance(returncode, int) and returncode != 0:
+        raise NmapExecutionError(cmd, returncode, str(getattr(result, "stderr", "") or ""))
+    return record
 
 
 def powershell_command(cmd: List[str]) -> str:
@@ -279,13 +306,13 @@ def _annotate_interface_context(info: Dict[str, Any], target_ip: Optional[str], 
             str(selected.get("name") or ""),
             str(selected.get("runtime_id") or ""),
             str(selected.get("device") or ""),
-        }
+        } - {""}
         route_tokens = {
             route_name,
             str(route.get("runtime_id") or ""),
             str(route.get("device") or ""),
-        }
-        if selected_tokens.isdisjoint(route_tokens):
+        } - {""}
+        if selected_tokens and route_tokens and selected_tokens.isdisjoint(route_tokens):
             info["interface_mismatch"] = True
             info["recommended_interface"] = route
     elif in_selected_subnet is False:

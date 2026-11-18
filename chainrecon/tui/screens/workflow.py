@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import threading
-from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Checkbox, Footer, Header, Label, Select
+from textual.widgets import Button, Checkbox, Header, Label, Select
 
 from chainrecon.tui.screens.help_screen import HelpScreen
+from chainrecon.tui.widgets.help_footer import HelpFooter
 from chainrecon.tui.widgets.log_viewer import LogActionBar, LogViewer
 from chainrecon.tui.widgets.pasteable_input import PasteableInput as Input
 from chainrecon.utils.config import list_device_profiles
@@ -24,12 +23,12 @@ only run if a prior step completed or produced specific findings.
 
 [bold]What to provide[/]
   Pipeline YAML -- path to your pipeline file.  A sample pipeline is at
-                   workflows/nooie_mqtt_tls.yaml.
+                   a YAML workflow you created locally.
   Target        -- IP or hostname to pass into {{ target }} variables inside
                    the YAML.  Leave empty to use values hard-coded in the file.
   Scan Profile  -- overrides the scan profile for all scan steps (arp/quick/
                    iot/full/ssl etc.).  Leave empty to use per-step defaults.
-  Device Profile -- pre-defined device profile (Nooie Lab Device etc.) that
+  Device Profile -- a built-in or local device profile that
                     injects default target/ports/firmware rules into the run.
   Dry Run       -- validates the YAML, renders variables, and evaluates when
                    conditions WITHOUT calling any real tools.  Use this first.
@@ -72,7 +71,7 @@ class WorkflowScreen(Screen):
         with VerticalScroll(id="workflow-form"):
             yield Label("[bold]Workflow -- YAML Pipeline Runner[/]", id="title")
             yield Label("Pipeline YAML")
-            yield Input(placeholder="workflows/nooie_mqtt_tls.yaml", id="pipeline-path")
+            yield Input(placeholder="/path/to/workflow.yaml", id="pipeline-path")
             yield Label("Target (optional override)")
             yield Input(placeholder="192.168.1.1", id="workflow-target")
             yield Label("Scan Profile (optional override)")
@@ -85,7 +84,7 @@ class WorkflowScreen(Screen):
                 yield Button("Back", id="back-btn")
             yield LogActionBar()
             yield LogViewer(id="workflow-log")
-        yield Footer()
+        yield HelpFooter()
 
     def on_mount(self) -> None:
         self._workflow_running = False
@@ -140,9 +139,10 @@ class WorkflowScreen(Screen):
             summary = result.get("summary", {})
             status = summary.get("status", "unknown")
             color = "green" if status == "completed" else ("yellow" if "error" in status else "red")
+            display_status = "plan complete" if dry_run and status == "completed" else status
             emit(
                 log.append,
-                f"[{color}]Workflow {status}[/]",
+                f"[{color}]Workflow {display_status}[/]",
             )
             emit(
                 log.append,

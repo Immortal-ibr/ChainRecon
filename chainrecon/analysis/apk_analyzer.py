@@ -6,10 +6,10 @@ source code and resource files for security-relevant findings.
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from xml.etree import ElementTree as ET
@@ -19,6 +19,7 @@ import yaml
 from chainrecon.runners.base import run_subprocess
 from chainrecon.utils.logging_config import get_logger
 from chainrecon.utils.platform_info import find_tool
+from chainrecon.case_model import file_sha256
 
 try:
     import defusedxml.ElementTree as SafeET
@@ -27,7 +28,7 @@ except ImportError:
 
 logger = get_logger("apk")
 
-_PATTERNS_FILE = Path(__file__).resolve().parents[2] / "config" / "apk_patterns.yaml"
+_PATTERNS_FILE = Path(__file__).resolve().parents[1] / "resources" / "config" / "apk_patterns.yaml"
 
 
 def _load_patterns(path: Optional[Path] = None) -> Dict[str, Any]:
@@ -81,6 +82,7 @@ class APKAnalyzer:
         credentials = self._scan_credentials(decompiled)
         pinning = self._check_pinning(decompiled)
         sdks = self._detect_sdks(decompiled)
+        native_libraries = self._native_libraries(apk)
 
         risk_indicators = self._build_risk_indicators(
             permissions, components, app_flags, net_security, credentials, pinning,
@@ -104,6 +106,9 @@ class APKAnalyzer:
                 "analyzer": self.__class__.__name__,
                 "jadx_error_count": jadx_error_count,
                 "jadx_error_classes": jadx_error_classes,
+                "jadx_exit_code": decompile_info.get("jadx_exit_code", 0),
+                "manifest_decoded": manifest is not None,
+                "sha256": file_sha256(apk),
             },
             "findings": {
                 "permissions": permissions,
@@ -113,6 +118,7 @@ class APKAnalyzer:
                 "credentials": credentials,
                 "pinning": pinning,
                 "sdks": sdks,
+                "native_libraries": native_libraries,
             },
             "summary": {
                 "permission_count": len(permissions),
@@ -124,12 +130,25 @@ class APKAnalyzer:
                 ),
                 "credential_count": len(credentials),
                 "sdk_count": len(sdks),
+                "native_library_count": len(native_libraries),
                 "pinning_detected": pinning.get("detected", False),
                 "jadx_error_count": jadx_error_count,
                 "risk_indicator_count": len(risk_indicators),
             },
             "risk_indicators": risk_indicators,
         }
+
+    @staticmethod
+    def _native_libraries(apk: Path) -> List[Dict[str, str]]:
+        try:
+            with zipfile.ZipFile(apk) as archive:
+                return [
+                    {"path": name, "abi": name.split("/")[1]}
+                    for name in archive.namelist()
+                    if name.startswith("lib/") and name.endswith(".so") and len(name.split("/")) >= 3
+                ]
+        except (zipfile.BadZipFile, OSError):
+            return []
 
     # ------------------------------------------------------------------
     # Decompilation
@@ -154,10 +173,11 @@ class APKAnalyzer:
         cmd = [self._jadx, "-d", output_dir, "--no-debug-info", apk_path]
         logger.debug("Running: %s", " ".join(str(c) for c in cmd))
         if self._executor is run_subprocess:
-            # Stream jadx output line-by-line to avoid filling the pipe buffer
-            # (large APKs can generate megabytes of progress text which causes
-            # subprocess.run(capture_output=True) to deadlock on Windows).
+            # Drain output concurrently so the wall-clock timeout also covers
+            # a process that stops producing lines or fills its pipe.
             import subprocess as _sp
+            from threading import Thread
+
             proc = _sp.Popen(
                 cmd,
                 stdout=_sp.PIPE,
@@ -171,29 +191,51 @@ class APKAnalyzer:
             error_count_re = re.compile(r"finished with errors,\s*count:\s*(\d+)", re.IGNORECASE)
             # jadx prints per-class errors like: "ERROR: ... in method ..." or "code throw: ..."
             error_class_re = re.compile(r"(?:ERROR in|error in|decode error in|failed to decompile)\s+([^\s:,]+)", re.IGNORECASE)
-            for line in iter(proc.stdout.readline, ""):
-                line = line.rstrip()
-                if line:
-                    logger.debug("jadx: %s", line)
-                    m = error_count_re.search(line)
-                    if m:
-                        try:
-                            jadx_error_count = int(m.group(1))
-                        except ValueError:
-                            jadx_error_count = 0
-                    cm = error_class_re.search(line)
-                    if cm:
-                        jadx_error_classes.append(cm.group(1))
-                    if progress_cb is not None:
-                        progress_cb(line)
-            proc.stdout.close()
-            ret = proc.wait(timeout=600)
+            output_errors: List[Exception] = []
+            assert proc.stdout is not None
+
+            def read_output() -> None:
+                nonlocal jadx_error_count
+                try:
+                    for line in iter(proc.stdout.readline, ""):
+                        line = line.rstrip()
+                        if not line:
+                            continue
+                        logger.debug("jadx: %s", line)
+                        match = error_count_re.search(line)
+                        if match:
+                            jadx_error_count = int(match.group(1))
+                        error_class = error_class_re.search(line)
+                        if error_class:
+                            jadx_error_classes.append(error_class.group(1))
+                        if progress_cb is not None:
+                            try:
+                                progress_cb(line)
+                            except Exception as exc:
+                                logger.warning("JADX progress callback failed: %s", exc)
+                except (OSError, ValueError) as exc:
+                    output_errors.append(exc)
+
+            reader = Thread(target=read_output, daemon=True)
+            reader.start()
+            try:
+                ret = proc.wait(timeout=600)
+            except _sp.TimeoutExpired as exc:
+                proc.kill()
+                proc.wait()
+                raise RuntimeError("JADX exceeded the 600-second analysis limit") from exc
+            finally:
+                reader.join(timeout=5)
+                proc.stdout.close()
+            if reader.is_alive() or output_errors:
+                raise RuntimeError("JADX output could not be read completely")
             if ret not in (0, 1):
                 raise RuntimeError(f"jadx exited with code {ret}")
-            return {"jadx_error_count": jadx_error_count, "jadx_error_classes": jadx_error_classes}
+            return {"jadx_error_count": jadx_error_count, "jadx_error_classes": jadx_error_classes,
+                    "jadx_exit_code": ret}
         else:
             self._executor(cmd, timeout=600)
-            return {"jadx_error_count": 0, "jadx_error_classes": []}
+            return {"jadx_error_count": 0, "jadx_error_classes": [], "jadx_exit_code": 0}
 
     # ------------------------------------------------------------------
     # Manifest parsing
@@ -271,7 +313,7 @@ class APKAnalyzer:
             return {}
         return {
             "debuggable": app.get(f"{ns}debuggable") == "true",
-            "allowBackup": app.get(f"{ns}allowBackup") != "false",  # default true
+            "allowBackup": None if app.get(f"{ns}allowBackup") is None else app.get(f"{ns}allowBackup") == "true",
             "usesCleartextTraffic": app.get(f"{ns}usesCleartextTraffic") == "true",
             "networkSecurityConfig": app.get(f"{ns}networkSecurityConfig") or None,
             "minSdkVersion": self._get_sdk(root, "minSdkVersion"),
@@ -485,8 +527,8 @@ class APKAnalyzer:
         dangerous = [p for p in permissions if p.get("dangerous")]
         if dangerous:
             indicators.append({
-                "severity": "medium",
-                "title": "Dangerous permissions requested",
+                "severity": "info",
+                "title": "Sensitive permissions requested",
                 "details": ", ".join(p["permission"] for p in dangerous),
             })
 
@@ -494,7 +536,7 @@ class APKAnalyzer:
         exported = [c for c in components if c.get("exported")]
         if exported:
             indicators.append({
-                "severity": "medium",
+                "severity": "info",
                 "title": f"{len(exported)} exported component(s)",
                 "details": ", ".join(c["name"] for c in exported[:5]),
             })
@@ -502,7 +544,7 @@ class APKAnalyzer:
         # Debuggable
         if app_flags.get("debuggable"):
             indicators.append({
-                "severity": "high",
+                "severity": "medium",
                 "title": "Application is debuggable",
                 "details": "android:debuggable is set to true -- allows runtime attachment.",
             })
@@ -510,31 +552,23 @@ class APKAnalyzer:
         # Cleartext traffic
         if app_flags.get("usesCleartextTraffic"):
             indicators.append({
-                "severity": "high",
-                "title": "Cleartext traffic permitted",
+                "severity": "info",
+                "title": "Cleartext traffic permitted by manifest",
                 "details": "android:usesCleartextTraffic is true.",
             })
 
         # Network security config cleartext
         if net_security.get("cleartext_allowed"):
             indicators.append({
-                "severity": "high",
+                "severity": "info",
                 "title": "Network security config allows cleartext",
                 "details": "domain-config cleartextTrafficPermitted=true found.",
-            })
-
-        # No pinning
-        if not pinning.get("detected"):
-            indicators.append({
-                "severity": "medium",
-                "title": "No certificate pinning detected",
-                "details": "No CertificatePinner, TrustManager, or pinning config found.",
             })
 
         # Pinning bypass risk  
         if pinning.get("bypass_risk_indicators"):
             indicators.append({
-                "severity": "high",
+                "severity": "low",
                 "title": "Potential certificate pinning bypass",
                 "details": ", ".join(pinning["bypass_risk_indicators"]),
             })
@@ -542,8 +576,8 @@ class APKAnalyzer:
         # Hardcoded credentials
         if credentials:
             indicators.append({
-                "severity": "critical" if any(c.get("severity") == "critical" for c in credentials) else "high",
-                "title": f"{len(credentials)} hardcoded credential(s) found",
+                "severity": "medium",
+                "title": f"{len(credentials)} credential-like pattern(s) require review",
                 "details": ", ".join(set(c["type"] for c in credentials)),
             })
 

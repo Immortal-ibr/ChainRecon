@@ -1,0 +1,107 @@
+# ChainRecon Default Configuration
+# Default case is optional. Set case.directory in local.yaml or a project
+# configuration selected with CHAINRECON_CONFIG_FILE.
+case:
+  directory: null
+
+firmware:
+  mode: container
+# Override in the per-user ChainRecon configuration directory.
+
+# Tool paths
+# Leave null to auto-detect from PATH or common install directories.
+tools:
+  nmap: null
+  tshark: null
+  tcpdump: null
+  adb: null
+  frida: null
+  openssl: null
+  jadx: null
+  apktool: null
+
+# API keys
+# Prefer environment variables such as CHAINRECON_SHODAN_KEY.
+api_keys:
+  shodan: null
+
+# Scan profiles
+scan_profiles:
+  quick:
+    label: "Quick Scan"
+    description: "Top 1000 ports, fast (-T4)"
+    args: ["-Pn", "-sV", "-T4", "--top-ports", "1000"]
+  gentle:
+    label: "Gentle Scan"
+    description: "Full TCP connect, slow (-T2) -- safe for fragile IoT"
+    args: ["-Pn", "-sT", "-sV", "-T2", "--max-retries", "1", "-r"]
+  full:
+    label: "Full Scan"
+    description: "All 65535 ports with OS/version detection (-A)"
+    args: ["-Pn", "-A", "-p-", "-T4", "--version-intensity", "9"]
+  iot:
+    label: "IoT Protocol Scan"
+    description: "TCP + UDP for IoT ports (UPnP, mDNS, CoAP, MQTT)"
+    tcp_args: ["-Pn", "-sV", "-T4", "-p", "80,443,8080,8443,8008,1883,8883,502,102,47808"]
+    udp_args: ["-Pn", "-sU", "-T4", "-p", "53,67,123,1900,5353,5683"]
+  vuln:
+    label: "Vulnerability Scan"
+    description: "NSE vuln scripts + version detection"
+    args: ["-Pn", "-sV", "--script", "vuln", "-T4"]
+
+# IoT port to protocol mapping
+iot_ports:
+  1883: "MQTT"
+  8883: "MQTT over TLS"
+  5683: "CoAP"
+  5684: "CoAP over DTLS"
+  5353: "mDNS"
+  1900: "UPnP"
+  47808: "BACnet"
+  502: "Modbus"
+  102: "S7comm"
+  8080: "HTTP Alternate"
+  8443: "HTTPS Alternate"
+  161: "SNMP"
+  162: "SNMP Trap"
+  6668: "Zigbee"
+  11095: "Thread"
+
+# SSL/TLS ports to probe
+ssl_ports: [443, 8443, 8008, 8080, 8883, 1883]
+
+# Traffic capture defaults
+capture:
+  default_duration: 60
+  max_file_size_mb: 500
+  interface: null
+
+# Scan defaults
+scan:
+  # Network interface for nmap -e <interface> (null = let nmap choose)
+  interface: null
+
+# Frida settings
+frida:
+  server_path: null
+  device_serial: null
+  default_package: null
+  spawn_mode: false
+  apk_directory: null
+  frida_server_path: null
+  frida_server_directory: null
+  preferred_avd: null
+
+# Output settings
+output:
+  directory: "output"
+  default_format: "json"
+
+# Network setup
+# Saved from the Network Setup screen. Values persist across sessions.
+network:
+  eth_interface: null
+  internet_interface: null
+  static_ip: "10.50.0.1/24"
+  target_ip: null
+  router_ip: null

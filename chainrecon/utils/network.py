@@ -7,7 +7,7 @@ import socket
 import subprocess
 from typing import Dict, List, Optional
 
-from chainrecon.utils.platform_info import is_linux, is_windows
+from chainrecon.utils.platform_info import is_windows
 
 
 def list_interfaces() -> List[Dict[str, str]]:

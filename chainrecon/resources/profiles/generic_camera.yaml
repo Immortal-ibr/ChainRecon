@@ -1,0 +1,26 @@
+name: Generic Camera
+vendor: Generic
+model: Camera
+target: null
+ports:
+  - 80
+  - 554
+  - 8000
+expected_protocols:
+  - http
+  - rtsp
+scan_defaults:
+  profile: quick
+frida_defaults:
+  target: null
+firmware_rules:
+  keywords:
+    - admin
+    - password
+scan:
+  profile: quick
+firmware:
+  image: null
+report:
+  formats:
+    - json

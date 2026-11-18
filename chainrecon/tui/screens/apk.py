@@ -9,45 +9,39 @@ import threading
 import time
 from pathlib import Path
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Checkbox, Footer, Header, Label, Select
-
-from chainrecon.tui.widgets.pasteable_input import PasteableInput as Input
+from textual.widgets import Button, Checkbox, Header, Label, Select
 
 from chainrecon.analysis.apk_analyzer import APKAnalyzer
 from chainrecon.tui.screens.help_screen import HelpScreen
+from chainrecon.tui.widgets.help_footer import HelpFooter
 from chainrecon.tui.widgets.log_viewer import LogActionBar, LogViewer
-from chainrecon.utils.artifacts import artifact_path, safe_token, update_artifact_index, write_json_artifact
+from chainrecon.tui.widgets.pasteable_input import PasteableInput as Input
+from chainrecon.tui.widgets.path_input import PathInput
+from chainrecon.utils.artifacts import (
+    artifact_path,
+    safe_token,
+    update_artifact_index,
+    write_json_artifact,
+)
+from chainrecon.utils.redaction import redact_report_data, redact_text
 
-HELP_TEXT = """[bold underline]APK Static Analysis[/]
+HELP_TEXT = """[bold]APK toolkit[/]
 
-Decompiles an Android APK file using JADX and inspects the resulting
-Java source code, manifests, and resources for security issues.
+Inspect a local APK with JADX. The toolkit records decoded permissions,
+components, app flags, network security settings, library hints, and
+credential-like strings. These are leads to review, not verified flaws.
 
-[bold]What It Does (Step by Step)[/]
-  1. Decompiles the APK: JADX converts DEX bytecode back into readable
-     Java source and extracts all resources (XML, images, configs).
-  2. Parses AndroidManifest.xml: Reads declared permissions, exported
-     components (activities, services, receivers, content providers),
-     and app flags (debuggable, allowBackup, usesCleartextTraffic).
-  3. Checks network_security_config.xml: Looks for cleartext traffic
-     permissions, certificate pins, and custom trusted CAs.
-  4. Scans for hardcoded credentials: Regex patterns search Java and
-     XML files for passwords, API keys, AWS credentials, Firebase URLs,
-     and private keys embedded in the source.
-  5. Detects IoT SDKs: Identifies Tuya, AWS IoT, Firebase, MQTT
-     (Paho/HiveMQ), OkHttp, Retrofit, Agora, and WebRTC libraries.
-  6. Checks certificate pinning implementation and method used.
+This standalone tool saves a result and decompiled files separately. For
+evidence-linked runs, coverage, and reviewer decisions, import the APK into
+an investigation and choose Android APK on the home screen.
 
-[bold]Tool[/]: JADX (download from github.com/skylot/jadx/releases)
-  Configure path in Settings or config/default.yaml -> tools.jadx
-  Or set environment variable: CHAINRECON_JADX_PATH=C:\\path\\to\\jadx.bat
-
-[dim]Credential patterns: config/apk_patterns.yaml
-Analyzer code: analysis/apk_analyzer.py
-To edit this screen: tui/screens/apk.py[/]
+Select Built-in analyzer only to run JADX and the built-in checks. Select
+Custom Script to run your chosen script afterward. The script runs only when
+that option is selected. Configure JADX under Settings and tools.
 """
 
 
@@ -67,9 +61,9 @@ class APKScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         with VerticalScroll(id="apk-form"):
-            yield Label("[bold]APK Static Analysis[/]")
-            yield Label("APK file path:")
-            yield Input(placeholder="path/to/app.apk", id="apk-path")
+            yield Label("[bold]APK toolkit[/]")
+            yield Label("APK file — standalone result")
+            yield PathInput(placeholder="APK file path — Tab completes", id="apk-path")
             yield Label("Post-analysis:")
             yield Select(
                 [
@@ -82,7 +76,7 @@ class APKScreen(Screen):
             with Vertical(id="custom-section"):
                 yield Label("[dim]-- Custom Script --[/]")
                 yield Label("Script path:")
-                yield Input(placeholder="e.g. C:\\scripts\\apk_check.py", id="custom-path")
+                yield PathInput(placeholder="Script path — Tab completes", id="custom-path")
                 yield Label("Interpreter:")
                 yield Select(
                     [("Python", "python"), ("PowerShell", "powershell"), ("Bash / sh", "bash"), ("Executable", "exe")],
@@ -95,7 +89,7 @@ class APKScreen(Screen):
                 yield Button("Back", id="btn-back")
             yield LogActionBar()
             yield LogViewer(id="apk-log")
-        yield Footer()
+        yield HelpFooter()
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "mode":
@@ -117,8 +111,13 @@ class APKScreen(Screen):
         path = self.query_one("#apk-path", Input).value.strip().strip('"\'')
         log = self.query_one("#apk-log", LogViewer)
         mode = self.query_one("#mode", Select).value
+        if not isinstance(mode, str):
+            log.append("[red]Choose a post-analysis option first.[/]")
+            return
         custom_path = self.query_one("#custom-path", Input).value.strip().strip('"\'')
         custom_interp = self.query_one("#custom-interp", Select).value
+        if not isinstance(custom_interp, str):
+            custom_interp = "python"
 
         if not path:
             log.append("[red]Please provide an APK path.[/]")
@@ -128,21 +127,21 @@ class APKScreen(Screen):
             log.append("[red]Set a script path in the Custom Script field.[/]")
             return
 
-        log.append(f"[bold]Analyzing {path}...[/]")
+        log.append(f"[bold]Analyzing {escape(path)}...[/]")
         from chainrecon.utils.config import get_output_dir
 
         outdir = get_output_dir()
         apk_name = safe_token(Path(path).stem, "apk")
         decompiled_dir = artifact_path(outdir, f"apk_decompiled_{apk_name}", "")
         outfile = artifact_path(outdir, f"apk_analysis_{apk_name}", ".json")
-        log.append(f"[dim]Analysis will be saved to: {outfile.resolve()}[/]")
-        log.append(f"[dim]Decompiled output: {decompiled_dir.resolve()}[/]")
+        log.append(f"[dim]Analysis will be saved to: {escape(str(outfile.resolve()))}[/]")
+        log.append(f"[dim]Decompiled output: {escape(str(decompiled_dir.resolve()))}[/]")
         log.append("[dim]Decompiling with jadx -- large APKs can take 3-5 minutes, please wait...[/]")
 
         def _worker() -> None:
             def _on_progress(line: str) -> None:
                 # Show jadx progress lines in the log (e.g. "progress: 120 of 500 (24%)")
-                self.app.call_from_thread(log.append, f"[dim]{line}[/]")
+                self.app.call_from_thread(log.append, f"[dim]{escape(redact_text(line))}[/]")
 
             try:
                 result = APKAnalyzer().analyze(path, output_dir=str(decompiled_dir), progress_cb=_on_progress)
@@ -171,31 +170,33 @@ class APKScreen(Screen):
                     "apk": str(Path(path).resolve()),
                 })
 
-                if not hasattr(self.app, "_report_gen"):
+                report_gen = getattr(self.app, "_report_gen", None)
+                if report_gen is None:
                     from chainrecon.analysis.report_generator import ReportGenerator
 
-                    self.app._report_gen = ReportGenerator()
+                    report_gen = ReportGenerator()
+                    setattr(self.app, "_report_gen", report_gen)
                 result["metadata"]["source_file"] = str(verified_outfile.resolve())
                 result["metadata"]["source_filename"] = verified_outfile.name
-                self.app._report_gen.add_results("apk", result)
+                report_gen.add_results("apk", result)
 
-                text = json.dumps(result, indent=2, default=str)[:4000]
+                text = escape(json.dumps(redact_report_data(result), indent=2, default=str)[:4000])
                 self.app.call_from_thread(log.set_last_output_path, verified_outfile)
                 self.app.call_from_thread(
                     log.append,
-                    f"[green]Done.[/]\n[dim]Analysis: {verified_outfile}[/]\n[dim]Decompiled: {verified_decompiled_dir}[/]\n{text}"
+                    f"[green]Done.[/]\n[dim]Analysis: {escape(str(verified_outfile))}[/]\n[dim]Decompiled: {escape(str(verified_decompiled_dir))}[/]\n{text}"
                 )
-                if custom_path:
+                if mode == "custom":
                     self.app.call_from_thread(self._run_custom_inline, path, custom_path, custom_interp, log)
             except Exception as exc:
                 import traceback
                 tb = traceback.format_exc()
-                self.app.call_from_thread(log.append, f"[red]Error: {exc}\n{tb[:1500]}[/]")
+                self.app.call_from_thread(log.append, f"[red]Error: {escape(redact_text(str(exc)))}\n{escape(redact_text(tb[:1500]))}[/]")
 
         threading.Thread(target=_worker, daemon=True).start()
 
     def _run_custom_inline(self, apk_path: str, script_path: str, interp: str, log: LogViewer) -> None:
-        log.append(f"[bold]Running custom script: {script_path}[/]")
+        log.append(f"[bold]Running custom script: {escape(script_path)}[/]")
 
         try:
             save_to_lib = self.query_one("#custom-save", Checkbox).value
@@ -216,11 +217,11 @@ class APKScreen(Screen):
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                 out = result.stdout.strip()
                 if out:
-                    self.app.call_from_thread(log.append, out[:3000])
+                    self.app.call_from_thread(log.append, escape(redact_text(out[:3000])))
                 if result.returncode != 0:
                     self.app.call_from_thread(log.append, f"[yellow]Script exited with code {result.returncode}[/]")
                     if result.stderr:
-                        self.app.call_from_thread(log.append, f"[red]{result.stderr[:500]}[/]")
+                        self.app.call_from_thread(log.append, f"[red]{escape(redact_text(result.stderr[:500]))}[/]")
                 else:
                     self.app.call_from_thread(log.append, "[green]Custom script complete.[/]")
 
@@ -244,14 +245,14 @@ class APKScreen(Screen):
                     "path": str(outfile.resolve()),
                     "apk": apk_path,
                 })
-                self.app.call_from_thread(log.append, f"[dim]Result saved: {outfile}[/]")
+                self.app.call_from_thread(log.append, f"[dim]Result saved: {escape(str(outfile))}[/]")
 
                 if save_to_lib:
                     from chainrecon.utils.custom_scripts import save_to_library
                     save_to_library("apk", script_path, interp)
                     self.app.call_from_thread(log.append, "[dim]Script saved to library.[/]")
             except Exception as exc:
-                self.app.call_from_thread(log.append, f"[red]Custom script error: {exc}[/]")
+                self.app.call_from_thread(log.append, f"[red]Custom script error: {escape(redact_text(str(exc)))}[/]")
 
         threading.Thread(target=_worker, daemon=True).start()
 

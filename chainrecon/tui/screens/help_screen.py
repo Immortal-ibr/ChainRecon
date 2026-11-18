@@ -1,6 +1,6 @@
 """Full-screen help overlay -- replaces the small collapsible side panel.
 
-Press ? on any screen to open this.  Press Escape / Q / Enter to close.
+Press F1 from any screen to open this. Press Escape / Q / Enter to close.
 """
 
 from __future__ import annotations
@@ -9,6 +9,17 @@ from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static, TextArea
+
+
+KEYBOARD_GUIDE = """Keyboard navigation
+
+Tab moves to the next control; Shift+Tab moves back.
+In a path field, Tab completes the path. Ctrl+Tab moves to the next control.
+Arrow keys browse menus and folders. Enter chooses or activates.
+Esc goes back or cancels. F1 opens keyboard help from any screen.
+Single-letter shortcuts work when you are not typing in a field.
+Every action also has an on-screen button.
+"""
 
 
 class HelpScreen(ModalScreen):
@@ -68,7 +79,7 @@ class HelpScreen(ModalScreen):
 
     def __init__(self, help_text: str, title: str = "Help", **kwargs) -> None:
         super().__init__(**kwargs)
-        self._help_text = help_text
+        self._help_text = KEYBOARD_GUIDE + ("\n" + help_text if help_text else "")
         self._title = title
 
     def compose(self) -> ComposeResult:
@@ -82,10 +93,6 @@ class HelpScreen(ModalScreen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss()
-
-    def action_dismiss(self) -> None:
-        self.dismiss()
-
 
 def _plain_help_text(text: str) -> str:
     import re

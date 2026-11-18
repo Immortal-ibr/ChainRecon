@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import datetime
 import json
-import os
 import subprocess
 import threading
 from pathlib import Path
@@ -18,14 +17,15 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Label, Select, TextArea
-
-from chainrecon.tui.widgets.pasteable_input import PasteableInput as Input
+from textual.widgets import Button, Header, Label, Select, TextArea
 
 from chainrecon.tui.screens.help_screen import HelpScreen
+from chainrecon.tui.widgets.help_footer import HelpFooter
 from chainrecon.tui.widgets.log_viewer import LogActionBar, LogViewer
+from chainrecon.tui.widgets.pasteable_input import PasteableInput as Input
 from chainrecon.utils.artifacts import artifact_path, safe_token
 from chainrecon.utils.config import get_output_dir
+from chainrecon.utils.redaction import redact_report_data, redact_text
 
 HELP_TEXT = """[bold underline]Custom Script Runner[/]
 
@@ -55,8 +55,8 @@ directory (same folder used by all other ChainRecon analyzers).  Open
 the Reports screen and click Generate to include it.
 
 [bold]Exit Codes[/]
-  0 -> success (finding severity: Info)
-  Non-zero -> something flagged (finding severity: High)
+  0 -> script completed successfully
+  Non-zero -> script failed or reported a condition; review its own output
 
 [bold]Security Note[/]
 Only run scripts you trust.  ChainRecon will execute the file with the
@@ -121,7 +121,7 @@ class CustomScriptScreen(Screen):
 
             yield LogActionBar()
             yield LogViewer(id="script-log")
-        yield Footer()
+        yield HelpFooter()
 
     # ------------------------------------------------------------------
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -162,9 +162,9 @@ class CustomScriptScreen(Screen):
         else:  # custom -- args_raw is treated as the prefix command, script appended
             cmd = extra_args + [script_path]
 
-        log.append(f"[bold]Running:[/] {' '.join(cmd)}")
+        log.append(f"[bold]Running:[/] {redact_text(' '.join(cmd))}")
         if notes:
-            log.append(f"[dim]Notes: {notes}[/]")
+            log.append(f"[dim]Notes: {redact_text(notes)}[/]")
 
         def _worker() -> None:
             start = datetime.datetime.now(datetime.timezone.utc)
@@ -182,21 +182,20 @@ class CustomScriptScreen(Screen):
                 # Emit output to log viewer
                 if stdout:
                     for line in stdout.splitlines()[-200:]:
-                        self.app.call_from_thread(log.append, line)
+                        self._post(log.append, redact_text(line))
                 if stderr:
                     for line in stderr.splitlines()[-50:]:
-                        self.app.call_from_thread(log.append, f"[yellow]{line}[/]")
+                        self._post(log.append, f"[yellow]{redact_text(line)}[/]")
 
                 exit_code = result.returncode
-                severity = "info" if exit_code == 0 else "high"
                 color = "green" if exit_code == 0 else "red"
-                self.app.call_from_thread(
+                self._post(
                     log.append,
                     f"[{color}]Script exited with code {exit_code} in {duration:.1f}s[/]",
                 )
 
                 # Save findings JSON for report aggregation
-                self.app.call_from_thread(
+                self._post(
                     self._save_result,
                     description=description,
                     script_path=script_path,
@@ -205,18 +204,25 @@ class CustomScriptScreen(Screen):
                     stdout=stdout,
                     stderr=stderr,
                     exit_code=exit_code,
-                    severity=severity,
+                    severity="info",
                     duration=duration,
                     log=log,
                 )
             except subprocess.TimeoutExpired:
-                self.app.call_from_thread(log.append, "[red]Script timed out (5 minutes).[/]")
+                self._post(log.append, "[red]Script timed out (5 minutes).[/]")
             except FileNotFoundError as exc:
-                self.app.call_from_thread(log.append, f"[red]Interpreter not found: {exc}[/]")
+                self._post(log.append, f"[red]Interpreter not found: {redact_text(str(exc))}[/]")
             except Exception as exc:
-                self.app.call_from_thread(log.append, f"[red]{exc}[/]")
+                self._post(log.append, f"[red]{redact_text(str(exc))}[/]")
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _post(self, callback, *args, **kwargs) -> None:
+        try:
+            self.app.call_from_thread(callback, *args, **kwargs)
+        except RuntimeError:
+            # The user may close the TUI before the script exits.
+            pass
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -239,7 +245,7 @@ class CustomScriptScreen(Screen):
         safe_name = safe_token(description[:40], "custom")
         out_file = artifact_path(out_dir, f"custom_{safe_name}", ".json")
 
-        payload = {
+        payload = redact_report_data({
             "metadata": {
                 "analyzer": "CustomScriptRunner",
                 "description": description,
@@ -269,7 +275,7 @@ class CustomScriptScreen(Screen):
                     ),
                 }
             ],
-        }
+        })
 
         try:
             with open(out_file, "w", encoding="utf-8") as fh:

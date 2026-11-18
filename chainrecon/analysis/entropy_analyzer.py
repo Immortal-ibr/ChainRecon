@@ -1,10 +1,4 @@
-"""Entropy-based encryption detection for ChainRecon.
-
-Computes Shannon entropy per packet, per stream, and across the entire
-capture to classify traffic as plaintext, compressed, or encrypted.
-Also detects anomalies like low-entropy traffic on ports that should be
-encrypted (e.g. port 443 with entropy < 5).
-"""
+"""Payload entropy observations; entropy alone cannot identify encryption."""
 
 from __future__ import annotations
 
@@ -17,13 +11,9 @@ from chainrecon.utils.logging_config import get_logger
 logger = get_logger("entropy")
 
 # Entropy thresholds (bits per byte, 0-8)
-ENCRYPTED_THRESHOLD = 7.2    # highly random -- encrypted or compressed
-COMPRESSED_THRESHOLD = 6.0   # moderately random -- likely compressed
-PLAINTEXT_THRESHOLD = 4.5    # structured text (HTTP, JSON, XML)
-# Below 4.5 is very structured or repetitive data
-
-# Ports that SHOULD carry encrypted traffic
-ENCRYPTED_PORTS = {443, 8443, 8883, 993, 995, 465, 636}
+HIGH_ENTROPY_THRESHOLD = 7.2
+ELEVATED_ENTROPY_THRESHOLD = 6.0
+LOW_ENTROPY_THRESHOLD = 4.5
 
 
 class EntropyAnalyzer:
@@ -38,30 +28,8 @@ class EntropyAnalyzer:
         distribution = self._entropy_distribution(per_packet)
         anomalies = self._detect_anomalies(per_packet)
         classification = self._classify_streams(stream_entropy)
-
-        indicators: List[Dict[str, str]] = []
-        low_on_secure = [a for a in anomalies if a["type"] == "low_entropy_on_secure_port"]
-        if low_on_secure:
-            indicators.append({
-                "severity": "high",
-                "title": "Plaintext on encrypted port",
-                "details": (
-                    f"{len(low_on_secure)} packet(s) with low entropy on "
-                    "ports that should be encrypted (443, 8443, etc.)."
-                ),
-            })
-
-        high_entropy_count = sum(1 for p in per_packet if p["entropy"] >= ENCRYPTED_THRESHOLD)
-        plain_count = sum(1 for p in per_packet if p["entropy"] < PLAINTEXT_THRESHOLD)
-        if plain_count and high_entropy_count:
-            indicators.append({
-                "severity": "info",
-                "title": "Mixed encryption observed",
-                "details": (
-                    f"{high_entropy_count} encrypted payloads and "
-                    f"{plain_count} plaintext payloads detected."
-                ),
-            })
+        high_entropy_count = sum(1 for p in per_packet if p["entropy"] >= HIGH_ENTROPY_THRESHOLD)
+        low_entropy_count = sum(1 for p in per_packet if p["entropy"] < LOW_ENTROPY_THRESHOLD)
 
         return {
             "metadata": {
@@ -77,19 +45,19 @@ class EntropyAnalyzer:
                 "stream_classification": classification,
             },
             "summary": {
-                "encrypted_payload_count": high_entropy_count,
-                "compressed_payload_count": sum(
+                "high_entropy_payload_count": high_entropy_count,
+                "elevated_entropy_payload_count": sum(
                     1 for p in per_packet
-                    if COMPRESSED_THRESHOLD <= p["entropy"] < ENCRYPTED_THRESHOLD
+                    if ELEVATED_ENTROPY_THRESHOLD <= p["entropy"] < HIGH_ENTROPY_THRESHOLD
                 ),
-                "plaintext_payload_count": plain_count,
+                "low_entropy_payload_count": low_entropy_count,
                 "anomaly_count": len(anomalies),
                 "avg_entropy": (
                     round(sum(p["entropy"] for p in per_packet) / len(per_packet), 4)
                     if per_packet else 0.0
                 ),
             },
-            "risk_indicators": indicators,
+            "risk_indicators": [],
         }
 
     # -- core methods -------------------------------------------------
@@ -199,30 +167,8 @@ class EntropyAnalyzer:
         return buckets
 
     def _detect_anomalies(self, per_packet: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        anomalies: List[Dict[str, Any]] = []
-        for p in per_packet:
-            dst_port = p.get("dst_port") or 0
-            src_port = p.get("src_port") or 0
-            # Low entropy on a port that should be encrypted
-            if p["entropy"] < PLAINTEXT_THRESHOLD:
-                if dst_port in ENCRYPTED_PORTS or src_port in ENCRYPTED_PORTS:
-                    anomalies.append({
-                        "type": "low_entropy_on_secure_port",
-                        "src_ip": p["src_ip"],
-                        "dst_ip": p["dst_ip"],
-                        "port": dst_port if dst_port in ENCRYPTED_PORTS else src_port,
-                        "entropy": p["entropy"],
-                    })
-            # Extremely uniform byte distribution (possible XOR with single key)
-            if 7.99 <= p["entropy"] <= 8.0 and p.get("length", 0) > 100:
-                anomalies.append({
-                    "type": "perfectly_uniform",
-                    "src_ip": p["src_ip"],
-                    "dst_ip": p["dst_ip"],
-                    "entropy": p["entropy"],
-                    "details": "Near-perfect entropy may indicate XOR encryption.",
-                })
-        return anomalies
+        # Entropy is a distribution statistic, not a protocol or crypto detector.
+        return []
 
     def _classify_streams(
         self, stream_entropy: List[Dict[str, Any]]
@@ -234,10 +180,10 @@ class EntropyAnalyzer:
 
     @staticmethod
     def _classify_entropy(ent: float) -> str:
-        if ent >= ENCRYPTED_THRESHOLD:
-            return "encrypted"
-        if ent >= COMPRESSED_THRESHOLD:
-            return "compressed"
-        if ent >= PLAINTEXT_THRESHOLD:
-            return "structured"
-        return "plaintext"
+        if ent >= HIGH_ENTROPY_THRESHOLD:
+            return "high_entropy"
+        if ent >= ELEVATED_ENTROPY_THRESHOLD:
+            return "elevated_entropy"
+        if ent >= LOW_ENTROPY_THRESHOLD:
+            return "moderate_entropy"
+        return "low_entropy"

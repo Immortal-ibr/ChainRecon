@@ -1,22 +1,37 @@
 """Configuration management for ChainRecon.
 
 Loads settings with cascading priority:
-  defaults -> config/default.yaml -> user YAML (--config) -> env vars
+  packaged defaults -> per-user local.yaml -> explicit YAML -> env vars
 """
 
 from __future__ import annotations
 
 import os
-from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_CONFIG_DIR = _PROJECT_ROOT / "config"
-_DEFAULT_CONFIG = _CONFIG_DIR / "default.yaml"
-_DEVICE_PROFILE_DIR = _CONFIG_DIR.parent / "profiles" / "devices"
+def user_config_dir() -> Path:
+    if os.environ.get("CHAINRECON_CONFIG_HOME"):
+        return Path(os.environ["CHAINRECON_CONFIG_HOME"]).expanduser()
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "ChainRecon"
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "chainrecon"
+
+
+def user_data_dir() -> Path:
+    if os.environ.get("CHAINRECON_DATA_HOME"):
+        return Path(os.environ["CHAINRECON_DATA_HOME"]).expanduser()
+    if os.name == "nt":
+        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "ChainRecon"
+    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "chainrecon"
+
+
+_RESOURCE_DIR = Path(__file__).resolve().parents[1] / "resources"
+_CONFIG_DIR = user_config_dir()
+_DEFAULT_CONFIG = _RESOURCE_DIR / "config" / "default.yaml"
+_DEVICE_PROFILE_DIR = _RESOURCE_DIR / "profiles"
 
 # Singleton cache
 _loaded_config: Optional[Dict[str, Any]] = None
@@ -43,7 +58,7 @@ def load_config(user_config_path: Optional[str] = None, *, force_reload: bool = 
         When True, bypass the singleton cache and reload from disk.
     """
     global _loaded_config
-    if _loaded_config is not None and not force_reload and user_config_path is None:
+    if _loaded_config is not None and not force_reload and user_config_path is None and not os.environ.get("CHAINRECON_CONFIG_FILE"):
         return _loaded_config
 
     # 1. Built-in defaults
@@ -52,31 +67,37 @@ def load_config(user_config_path: Optional[str] = None, *, force_reload: bool = 
         with open(_DEFAULT_CONFIG, encoding="utf-8") as f:
             config = yaml.safe_load(f) or {}
 
-    # 1.5. Local overrides (config/local.yaml) -- always applied automatically
+    # 1.5. Per-user local overrides -- never stored in the installed package.
     _local_config = _CONFIG_DIR / "local.yaml"
     if _local_config.exists():
         try:
             with open(_local_config, encoding="utf-8") as f:
                 local_data = yaml.safe_load(f) or {}
+            if not isinstance(local_data, dict):
+                raise ValueError("local.yaml must be a YAML mapping")
             _deep_merge(config, local_data)
-        except yaml.YAMLError as exc:
+        except (yaml.YAMLError, ValueError) as exc:
             import warnings
             warnings.warn(
-                f"config/local.yaml has invalid YAML (skipping): {exc}\n"
+                    f"user local.yaml has invalid YAML (skipping): {exc}\n"
                 "Tip: Use single quotes for Windows paths, e.g.  jadx: 'C:\\path\\to\\jadx.bat'",
                 RuntimeWarning,
                 stacklevel=3,
             )
 
-    # 2. User / device profile override
+    # 2. User / device profile override. An environment-selected file makes a
+    #    portable project configuration usable without changing global state.
+    user_config_path = user_config_path or os.environ.get("CHAINRECON_CONFIG_FILE")
     if user_config_path:
         path = Path(user_config_path)
         if path.exists():
             try:
                 with open(path, encoding="utf-8") as f:
                     user_data = yaml.safe_load(f) or {}
+                if not isinstance(user_data, dict):
+                    raise ValueError("Explicit config must be a YAML mapping")
                 _deep_merge(config, user_data)
-            except yaml.YAMLError as exc:
+            except (yaml.YAMLError, ValueError) as exc:
                 import warnings
                 warnings.warn(
                     f"{user_config_path} has invalid YAML (skipping): {exc}",
@@ -87,7 +108,8 @@ def load_config(user_config_path: Optional[str] = None, *, force_reload: bool = 
     # 3. Environment variable overrides
     _apply_env_overrides(config)
 
-    _loaded_config = config
+    if user_config_path is None and not os.environ.get("CHAINRECON_CONFIG_FILE"):
+        _loaded_config = config
     return config
 
 
@@ -161,6 +183,24 @@ def get_output_config() -> Dict[str, Any]:
     return cfg.get("output") or {}
 
 
+def get_case_directory() -> Path | None:
+    """Return the configured default case, if any."""
+    raw = (get_config().get("case") or {}).get("directory")
+    if not raw:
+        return None
+    if not isinstance(raw, str):
+        raise ValueError("case.directory must be a path string")
+    return Path(os.path.expandvars(raw)).expanduser().resolve()
+
+
+def get_firmware_mode() -> str:
+    """Default extraction mode; trusted modes require explicit selection."""
+    mode = (get_config().get("firmware") or {}).get("mode", "container")
+    if mode not in {"container", "trusted-wsl", "trusted-host"}:
+        raise ValueError("firmware.mode must be container, trusted-wsl, or trusted-host")
+    return str(mode)
+
+
 def get_network_config() -> Dict[str, Any]:
     """Return saved network setup values."""
     cfg = get_config()
@@ -186,9 +226,9 @@ def _validate_device_profile(payload: Dict[str, Any], path: Path) -> Dict[str, A
 
 def list_device_profiles() -> list[Dict[str, Any]]:
     profiles = []
-    if not _DEVICE_PROFILE_DIR.exists():
-        return profiles
-    for path in sorted(_DEVICE_PROFILE_DIR.glob("*.yaml")):
+    paths = {path.stem: path for path in _DEVICE_PROFILE_DIR.glob("*.yaml")}
+    paths.update({path.stem: path for path in (_CONFIG_DIR / "profiles" / "devices").glob("*.yaml")})
+    for path in sorted(paths.values()):
         try:
             payload = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace")) or {}
         except yaml.YAMLError:
@@ -210,7 +250,9 @@ def load_device_profile(profile_name_or_path: Optional[str]) -> Dict[str, Any]:
     if requested.exists():
         path = requested
     else:
-        candidate = _DEVICE_PROFILE_DIR / f"{requested.stem}.yaml"
+        candidate = _CONFIG_DIR / "profiles" / "devices" / f"{requested.stem}.yaml"
+        if not candidate.exists():
+            candidate = _DEVICE_PROFILE_DIR / f"{requested.stem}.yaml"
         if not candidate.exists():
             raise FileNotFoundError(f"Device profile not found: {profile_name_or_path}")
         path = candidate
@@ -247,14 +289,13 @@ def get_output_dir() -> Path:
     raw = (cfg.get("output") or {}).get("directory", "output")
     path = Path(raw).expanduser()
     if not path.is_absolute():
-        # Resolve relative to the project root (where config/ lives)
-        path = (_CONFIG_DIR.parent / path).resolve()
+        path = (user_data_dir() / path).resolve()
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def save_network_config(data: Dict[str, Any]) -> None:
-    """Persist network setup values to config/local.yaml."""
+    """Persist network setup values to per-user local.yaml."""
     local_path = _CONFIG_DIR / "local.yaml"
     existing: Dict[str, Any] = {}
     if local_path.exists():
@@ -269,7 +310,7 @@ def save_network_config(data: Dict[str, Any]) -> None:
 
 
 def save_frida_config(data: Dict[str, Any]) -> None:
-    """Persist Frida-related values to config/local.yaml."""
+    """Persist Frida-related values to per-user local.yaml."""
     local_path = _CONFIG_DIR / "local.yaml"
     existing: Dict[str, Any] = {}
     if local_path.exists():
@@ -285,7 +326,7 @@ def save_frida_config(data: Dict[str, Any]) -> None:
 
 
 def save_scan_config(data: Dict[str, Any]) -> None:
-    """Persist scan-related values to config/local.yaml."""
+    """Persist scan-related values to per-user local.yaml."""
     local_path = _CONFIG_DIR / "local.yaml"
     existing: Dict[str, Any] = {}
     if local_path.exists():

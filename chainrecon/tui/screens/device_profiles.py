@@ -5,9 +5,10 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Label, Select, Static
+from textual.widgets import Button, Header, Label, Select, Static
 
 from chainrecon.tui.screens.help_screen import HelpScreen
+from chainrecon.tui.widgets.help_footer import HelpFooter
 from chainrecon.tui.widgets.log_viewer import LogActionBar, LogViewer
 
 HELP_TEXT = """[bold underline]Device Profiles[/]
@@ -17,18 +18,18 @@ IoT device: its expected ports, protocols, default scan settings, Frida
 target, firmware analysis rules, and report metadata.
 
 [bold]Profile schema[/]
-  name              -- display name (e.g. "Nooie Lab Device")
+  name              -- display name (e.g. "Generic Camera")
   vendor            -- manufacturer name
   model             -- device model
   target            -- default IP or hostname
   ports             -- list of expected open ports
   expected_protocols -- list of expected protocols (http, mqtt, rtsp ...)
   scan_defaults     -- {profile: iot, interface: Ethernet}
-  frida_defaults    -- {target: com.nooie.home}
+  frida_defaults    -- {target: com.example.camera}
   firmware_rules    -- {keywords: [...], domains: [...], urls: [...]}
 
 [bold]How profiles are used[/]
-  - Workflow engine: pass --device-profile nooie to inject defaults
+  - Workflow engine: pass --device-profile generic_camera to inject defaults
   - Firmware screen: profile firmware_rules match against extracted content
   - Workflow screen: device-profile selector pulls from this list
   - Reports: device_profile section records which profile was active
@@ -43,9 +44,8 @@ target, firmware analysis rules, and report metadata.
 
 [bold]Sharing profiles[/]
   Profiles should NOT contain secrets (passwords, API keys, private IPs
-  that could identify your internal network).  The sample profiles use
-  192.168.123.99 as a placeholder -- change it to your actual device before
-  running live tests, and do not commit real IPs to a public repository.
+  that could identify your internal network). Keep actual lab addresses in
+  per-user profiles outside a public repository.
 
 [dim]To edit this screen: tui/screens/device_profiles.py[/]
 """
@@ -71,7 +71,7 @@ class DeviceProfilesScreen(Screen):
                 yield Button("Back", id="back-btn")
             yield LogActionBar()
             yield LogViewer(id="profiles-log")
-        yield Footer()
+        yield HelpFooter()
 
     def on_mount(self) -> None:
         self._profiles: list = []

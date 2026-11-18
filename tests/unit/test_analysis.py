@@ -91,7 +91,6 @@ class TrafficAnalyzerBasicTests(unittest.TestCase):
 
         analyzer = TrafficAnalyzer(capture_factory=bad_factory)
         # Patch extract_dns to raise after _load_packets succeeds
-        original = analyzer.extract_dns
         def boom(packets):
             raise RuntimeError("boom")
         analyzer.extract_dns = boom
@@ -106,10 +105,11 @@ class TrafficDnsTests(unittest.TestCase):
         return TrafficAnalyzer(capture_factory=lambda _: MockCapture(packets))
 
     def test_extracts_unique_dns_queries(self):
-        pkt = lambda name: MockPacket("DNS", {
-            "dns": MockLayer(qry_name=name, qry_type="A"),
-            "ip": MockLayer(src="10.0.0.1", dst="8.8.8.8"),
-        })
+        def pkt(name):
+            return MockPacket("DNS", {
+                "dns": MockLayer(qry_name=name, qry_type="A"),
+                "ip": MockLayer(src="10.0.0.1", dst="8.8.8.8"),
+            })
         analyzer = self._analyzer([pkt("a.example.com"), pkt("b.example.com"), pkt("a.example.com")])
         result = analyzer.analyze_pcap("test.pcap")
         queries = result["findings"]["dns_queries"]
@@ -194,10 +194,11 @@ class TrafficTlsSniTests(unittest.TestCase):
         self.assertEqual(result["findings"]["tls_sni"][0]["server_name"], "mqtt.vendor.com")
 
     def test_deduplicates_sni_entries(self):
-        mk = lambda: MockPacket("TLS", {
-            "tls": MockLayer(handshake_extensions_server_name="repeated.example.com"),
-            "ip": MockLayer(src="10.0.0.1", dst="1.2.3.4"),
-        })
+        def mk():
+            return MockPacket("TLS", {
+                "tls": MockLayer(handshake_extensions_server_name="repeated.example.com"),
+                "ip": MockLayer(src="10.0.0.1", dst="1.2.3.4"),
+            })
         analyzer = self._analyzer([mk(), mk(), mk()])
         result = analyzer.analyze_pcap("test.pcap")
         self.assertEqual(result["summary"]["tls_sni_count"], 1)
@@ -249,10 +250,11 @@ class TrafficExternalIpTests(unittest.TestCase):
 
 class TrafficConversationTests(unittest.TestCase):
     def test_groups_conversations_by_tuple(self):
-        mk = lambda: MockPacket("TCP", {
-            "tcp": MockLayer(srcport="50000", dstport="80"),
-            "ip": MockLayer(src="10.0.0.1", dst="1.2.3.4"),
-        })
+        def mk():
+            return MockPacket("TCP", {
+                "tcp": MockLayer(srcport="50000", dstport="80"),
+                "ip": MockLayer(src="10.0.0.1", dst="1.2.3.4"),
+            })
         analyzer = TrafficAnalyzer(capture_factory=lambda _: MockCapture([mk(), mk()]))
         result = analyzer.analyze_pcap("test.pcap")
         convos = result["findings"]["conversations"]
@@ -844,14 +846,15 @@ class ScannerIotIdentificationTests(unittest.TestCase):
         self.assertEqual(len(result), 0)
 
 
-class ScannerCveHintTests(unittest.TestCase):
-    """Tests for CVE hint correlation."""
+class ScannerServiceReviewHintTests(unittest.TestCase):
+    """Service labels are review hints, not CVE matches."""
 
     def test_telnet_gets_hint(self):
         services = [{"port": 23, "service": "telnet"}]
         hints = ScannerAnalyzer().correlate_cves(services)
         self.assertEqual(len(hints), 1)
-        self.assertIn("Cleartext", hints[0]["details"])
+        self.assertIn("Nmap identified Telnet", hints[0]["details"])
+        self.assertNotIn("CVE", hints[0]["details"])
 
     def test_ftp_gets_hint(self):
         services = [{"port": 21, "service": "ftp"}]
@@ -878,7 +881,7 @@ class ScannerCveHintTests(unittest.TestCase):
         hints = ScannerAnalyzer().correlate_cves(services)
         self.assertEqual(len(hints), 0)
 
-    def test_risk_indicators_match_hints(self):
+    def test_service_hints_are_observations_not_vulnerability_findings(self):
         xml = """<?xml version="1.0"?>
 <nmaprun>
   <host>
@@ -893,7 +896,8 @@ class ScannerCveHintTests(unittest.TestCase):
             f.write(xml)
             path = f.name
         result = ScannerAnalyzer().parse_nmap_output(path)
-        self.assertEqual(len(result["risk_indicators"]), 2)
+        self.assertEqual(len(result["findings"]["service_review_hints"]), 2)
+        self.assertEqual(result["risk_indicators"], [])
 
 
 class ScannerShodanTests(unittest.TestCase):

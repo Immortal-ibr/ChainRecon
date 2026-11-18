@@ -7,7 +7,6 @@ IoT cameras and video doorbells that use WebRTC for streaming.
 
 from __future__ import annotations
 
-import collections
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -40,9 +39,9 @@ class WebRTCAnalyzer:
             })
         if not dtls_handshakes and srtp_streams:
             indicators.append({
-                "severity": "high",
-                "title": "SRTP without DTLS handshake",
-                "details": "Media traffic may not be properly encrypted.",
+                "severity": "info",
+                "title": "DTLS handshake absent from this capture",
+                "details": "The capture may have started after key exchange or may contain RTP rather than SRTP; encryption is undetermined.",
             })
 
         return {

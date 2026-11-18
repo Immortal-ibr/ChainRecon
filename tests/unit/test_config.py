@@ -3,7 +3,6 @@
 import os
 import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from chainrecon.utils.config import (
@@ -163,7 +162,7 @@ class SaveScanConfigTests(unittest.TestCase):
 
 class DeviceProfileValidationTests(unittest.TestCase):
     def test_builtin_profile_contains_required_schema_fields(self):
-        profile = load_device_profile("nooie")
+        profile = load_device_profile("generic_camera")
         self.assertIn("vendor", profile)
         self.assertIn("model", profile)
         self.assertIsInstance(profile["ports"], list)

@@ -9,15 +9,23 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Label, Select
+from textual.widgets import Button, Collapsible, Header, Label, Select, Static
 
 from chainrecon.runners.base import ToolNotFoundError
-from chainrecon.runners.frida_runner import FRIDA_SCRIPT_GUIDE, FRIDA_SCRIPTS, FridaDeviceError, FridaRunner
+from chainrecon.runners.frida_runner import (
+    FRIDA_SCRIPT_GUIDE,
+    FRIDA_SCRIPTS,
+    FridaDeviceError,
+    FridaRunner,
+)
 from chainrecon.tui.screens.help_screen import HelpScreen
+from chainrecon.tui.widgets.help_footer import HelpFooter
 from chainrecon.tui.widgets.log_viewer import LogActionBar, LogViewer
 from chainrecon.tui.widgets.pasteable_input import PasteableInput as Input
 from chainrecon.utils.artifacts import artifact_path, safe_token, write_json_artifact
 from chainrecon.utils.config import get_frida_config, get_output_dir, save_frida_config
+from chainrecon.utils.frida_utils import _extract_frida_log_events
+
 
 def _build_help_text() -> str:
     sections = [
@@ -89,6 +97,9 @@ class FridaScreen(Screen):
     BINDINGS = [("escape", "app.pop_screen", "Back"), ("question_mark", "toggle_help", "Help")]
 
     DEFAULT_CSS = """
+    FridaScreen #frida-form { padding: 0 2; }
+    FridaScreen #device-note { display: none; }
+    FridaScreen #frida-form Collapsible { margin: 1 0; }
     #custom-section {
         display: none;
         height: auto;
@@ -117,53 +128,55 @@ class FridaScreen(Screen):
         self._selected_serial = str(selected_serial) if selected_serial else None
         yield Header()
         with VerticalScroll(id="frida-form"):
-            yield Label("[bold]Frida Instrumentation[/]")
-            yield Label("Selected device:")
-            yield Select([("Auto-select online device", "__auto__")], value="__auto__", id="device-select")
-            yield Label(
-                "[dim]Use List Devices to load connected phones and local AVDs. Selecting a live device saves it for later Frida runs.[/]",
-                id="device-note",
-            )
-            yield Label("APK directory for managed setup [dim](optional)[/]:")
-            yield Input(
-                placeholder="Folder containing APKs to install during setup",
-                value=str(frida_cfg.get("apk_directory") or ""),
-                id="apk-directory",
-            )
-            yield Label("frida-server path or directory [dim](optional)[/]:")
-            yield Input(
-                placeholder="File or directory containing matching frida-server binary",
-                value=str(frida_cfg.get("frida_server_path") or frida_cfg.get("frida_server_directory") or ""),
-                id="frida-server-path",
-            )
-            yield Label("Preferred AVD [dim](optional, used by auto-setup)[/]:")
-            yield Input(
-                placeholder="e.g. ChainRecon_API35",
-                value=str(frida_cfg.get("preferred_avd") or ""),
-                id="preferred-avd",
-            )
-            yield Label("Target process / package:")
-            yield Input(placeholder="com.nooie.home", value="com.nooie.home", id="target")
-            yield Label("Script:")
+            yield Label("Frida session", id="title")
+            yield Label("Device")
+            with Horizontal():
+                yield Select([("Auto-select online device", "__auto__")], value="__auto__", id="device-select")
+                yield Button("List devices", id="btn-devices")
+            yield Label("Auto-select uses the only online device.", id="device-note")
+            yield Label("Target package or process")
+            yield Input(placeholder="com.example.camera", id="target")
+            yield Label("Script")
             frida_opts = [(v["label"], k) for k, v in FRIDA_SCRIPTS.items()] + [("Custom Frida JS...", "custom")]
             yield Select(frida_opts, value="list_classes", id="script")
-            with Vertical(id="param-section"):
-                pass
             with Vertical(id="custom-section"):
-                yield Label("[dim]-- Custom Frida JS --[/]")
-                yield Label("Script path:")
+                yield Label("Custom script path")
                 yield Input(placeholder=r"C:\scripts\hook.js", id="custom-path")
             with Horizontal():
                 yield Button("Run", variant="primary", id="btn-run")
                 yield Button("Stop Hook", id="btn-stop")
-                yield Button("List Devices", id="btn-devices")
-                yield Button("Boot Device", id="btn-boot")
-                yield Button("Setup Device", id="btn-setup")
-                yield Button("List Processes", id="btn-procs")
                 yield Button("Back", id="btn-back")
+            with Collapsible(title="Script parameters", collapsed=True, id="params-collapsible"):
+                with Vertical(id="param-section"):
+                    pass
+            with Collapsible(title="About selected script", collapsed=True):
+                yield Static("", id="script-info")
+            with Collapsible(title="Managed device setup", collapsed=True):
+                yield Label("APK directory (optional)")
+                yield Input(
+                    placeholder="Folder containing APKs to install",
+                    value=str(frida_cfg.get("apk_directory") or ""),
+                    id="apk-directory",
+                )
+                yield Label("frida-server file or directory (optional)")
+                yield Input(
+                    placeholder="Matching frida-server binary",
+                    value=str(frida_cfg.get("frida_server_path") or frida_cfg.get("frida_server_directory") or ""),
+                    id="frida-server-path",
+                )
+                yield Label("Preferred AVD (optional)")
+                yield Input(
+                    placeholder="e.g. ChainRecon_API35",
+                    value=str(frida_cfg.get("preferred_avd") or ""),
+                    id="preferred-avd",
+                )
+                with Horizontal():
+                    yield Button("Boot device", id="btn-boot")
+                    yield Button("Setup device", id="btn-setup")
+                    yield Button("List processes", id="btn-procs")
             yield LogActionBar()
             yield LogViewer(id="frida-log")
-        yield Footer()
+        yield HelpFooter()
 
     def on_mount(self) -> None:
         log = self.query_one("#frida-log", LogViewer)
@@ -200,6 +213,8 @@ class FridaScreen(Screen):
             self._start_managed_session(log)
         elif event.button.id == "btn-stop":
             self._stop_managed_session(log)
+        if event.button.id in {"btn-run", "btn-stop", "btn-boot", "btn-setup", "btn-procs"}:
+            self.call_after_refresh(self.query_one("#frida-form", VerticalScroll).scroll_to_widget, log, animate=False)
 
     def _refresh_script_inputs(self) -> None:
         container = self.query_one("#param-section", Vertical)
@@ -208,24 +223,22 @@ class FridaScreen(Screen):
         params = metadata.get("params", [])
         script_key_text = str(script_key)
         signature = (script_key_text, tuple(str(param["name"]) for param in params))
-        if self._param_signature == signature and list(container.children):
+        if self._param_signature == signature:
             return
         for child in list(container.children):
             child.remove()
+        param_panel = self.query_one("#params-collapsible", Collapsible)
+        info = self.query_one("#script-info", Static)
         if not script_key or script_key == "custom" or script_key == Select.BLANK:
+            param_panel.display = False
+            info.update("Use a JavaScript file for a custom Frida session.")
             self._param_signature = None
             return
-        description = metadata.get("description")
-        if description:
-            container.mount(Label(f"[dim]{description}[/]"))
+        description = metadata.get("description", "")
         guide = FRIDA_SCRIPT_GUIDE.get(script_key_text, {})
-        if guide:
-            container.mount(Label(f"[dim]When to use: {guide.get('when_to_use', '')}[/]"))
-        if not params:
-            container.mount(Label("[dim]Selected script has no extra parameters.[/]"))
-            self._param_signature = signature
-            return
-        container.mount(Label("[bold]Script parameters[/]"))
+        info.update(f"{description}\n\nWhen to use: {guide.get('when_to_use', '')}")
+        param_panel.display = bool(params)
+        param_panel.collapsed = not any(param.get("required") for param in params)
         for param in params:
             label = str(param.get("label", param["name"]))
             required = " [red]*[/]" if param.get("required") else ""
@@ -396,6 +409,13 @@ class FridaScreen(Screen):
             "risk_indicators": _frida_risk_indicators(summary),
         }
         report_path = self._record_frida_report(report_payload)
+        case_run_id = None
+        case_path = getattr(self.app, "_case_path", None)
+        if case_path:
+            try:
+                case_run_id = _record_case_frida_session(summary, case_path)
+            except (OSError, RuntimeError, ValueError) as exc:
+                log.append(f"[yellow]Case import failed: {exc}[/]")
         if summary.get("summary_path"):
             log.set_last_output_path(summary["summary_path"])
         lines = [
@@ -406,6 +426,8 @@ class FridaScreen(Screen):
         ]
         if report_path:
             lines.append(f"[dim]Report artifact: {report_path}[/]")
+        if case_run_id:
+            lines.append(f"[dim]Case Frida run: {case_run_id}[/]")
         log.append("\n".join(lines))
 
     def _boot_selected_device(self, log: LogViewer) -> None:
@@ -614,11 +636,13 @@ class FridaScreen(Screen):
             payload["metadata"]["source_filename"] = Path(report_path).name
         except Exception:
             report_path = None
-        if not hasattr(self.app, "_report_gen"):
+        report_gen = getattr(self.app, "_report_gen", None)
+        if report_gen is None:
             from chainrecon.analysis.report_generator import ReportGenerator
 
-            self.app._report_gen = ReportGenerator()
-        self.app._report_gen.add_results("frida", payload, mode="append")
+            report_gen = ReportGenerator()
+            setattr(self.app, "_report_gen", report_gen)
+        report_gen.add_results("frida", payload, mode="append")
         return report_path
 
     def _safe_call_from_thread(self, callback, *args) -> None:
@@ -626,24 +650,6 @@ class FridaScreen(Screen):
             self.app.call_from_thread(callback, *args)
         except Exception:
             return
-
-
-def _extract_frida_log_events(path: str | None, *, prefixes: tuple[str, ...], limit: int = 50) -> list[str]:
-    if not path:
-        return []
-    try:
-        lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return []
-    matched = []
-    for line in lines:
-        stripped = line.strip()
-        normalized = stripped
-        if normalized.startswith("[stdout] "):
-            normalized = normalized[len("[stdout] "):]
-        if any(normalized.startswith(prefix) or stripped.startswith(prefix) for prefix in prefixes):
-            matched.append(stripped)
-    return matched[-limit:]
 
 
 def _frida_risk_indicators(summary: dict) -> list[dict]:
@@ -658,3 +664,22 @@ def _frida_risk_indicators(summary: dict) -> list[dict]:
             "details": reason or status,
         }]
     return []
+
+
+def _record_case_frida_session(summary: dict, case_path: str) -> str:
+    """Import a session log and summary as case evidence."""
+    from chainrecon.case_analysis import CaseAnalysisService
+    from chainrecon.case_model import Case
+
+    log_path = Path(str(summary.get("log_path") or ""))
+    if not log_path.is_file():
+        raise FileNotFoundError(f"Frida session log missing: {log_path}")
+    case = Case.open(case_path)
+    log_ref = case.add_evidence(log_path, kind="frida_log")
+    summary_path = Path(str(summary.get("summary_path") or ""))
+    if summary_path.is_file():
+        case.add_evidence(summary_path, kind="frida_summary")
+    run = CaseAnalysisService(case).run(log_ref.id, "frida_log")
+    if run.status == "failed":
+        raise RuntimeError(f"Case Frida analysis failed: {'; '.join(run.warnings)}")
+    return run.id
