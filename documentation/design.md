@@ -1,93 +1,35 @@
-## What ChainRecon is
+# Design: case-first investigations
 
-ChainRecon is an IoT security analysis tool. The core idea is that when you're researching an IoT device, you always end up running the same set of tools in the same order -- nmap to find open ports, tshark to capture traffic, jadx to look at the APK, frida to hook interesting functions at runtime. Doing that manually for every new device is tedious, so ChainRecon ties it all together into a single TUI that keeps results organized and lets you jump between analysis steps without having to remember every command.
+ChainRecon 2.0 is in development. The Python API is the source of truth; the CLI and TUI call it. A case folder is a movable directory with a versioned `case.json`, content-addressed raw evidence, append-only run documents, manifest snapshots, review history, derived artifacts, and a rebuildable SQLite index. Absolute source-machine paths are not stored in the case manifest. `case verify` rehashes raw evidence. The index is a query cache, not evidence.
 
-The tool is designed to be used with a physical man-in-the-middle setup: the IoT device connects through a router, the router connects to your computer over Ethernet, and your computer bridges to Wi-Fi. That puts you in a position to see everything the device sends and receives without modifying it.
+## Record model
 
-## Requirements
+`EvidenceRef` identifies a copied raw file by SHA-256. `Observation` describes one verifiable fact with an evidence ID and locator. `Finding` references observations and starts as `candidate`; the researcher can confirm or reject it with a recorded decision. `RunRecord` stores the input evidence IDs, analyzer, status, times, tool versions, settings, warnings, coverage, observations, findings, and derived artifact paths. The four statuses are `complete`, `partial`, `failed`, and `needs_input`.
 
-**Core behavior:**
-- Accept a target device IP, router IP, and network interface names from the user (with sensible defaults where possible)
-- Support four main modes: network setup, device scanning, traffic capture/analysis, and SSL/TLS analysis
-- Operate without root for most analysis tasks; only the network setup requires elevated privileges
-- Gracefully handle missing tools -- warn the user and skip that feature rather than crashing
-- Save all output to timestamped directories so nothing gets overwritten
+Case writes check the manifest revision before saving, so a stale reader receives a conflict instead of silently replacing another writer's work. This is optimistic conflict detection, not multiwriter transaction support; reopen the case and retry after a conflict.
 
-**Traffic analysis must produce:**
-- DNS queries and the IPs they resolve to
-- TLS SNI hostnames from HTTPS connections
-- Any plaintext HTTP traffic (headers, bodies, anything unencrypted)
-- Protocol distribution statistics
-- List of external IPs with cloud provider attribution
-- Conversation-level view (who talked to whom, how much data)
+The model intentionally separates a signature, package version, credential-like string, account database, or protocol label from a confirmed vulnerability. Missing data is represented in coverage and warnings. A finding should include affected component/version, reproduction, impact, remediation, and references before disclosure.
 
-**APK analysis must produce:**
-- Declared permissions from the manifest, flagging dangerous ones
-- Exported components (activities, services, receivers, providers) that could be entry points
-- Whether cleartext traffic is permitted
-- Any certificate pinning found in the code
-- Hardcoded credentials, API keys, AWS config in the Java source
-- Third-party SDKs detected (Tuya, Firebase, AWS IoT, etc.)
+## Firmware trust boundary
 
-**SSL/TLS analysis must produce:**
-- Certificate chain details (CN, SANs, expiry, key size)
-- Cipher suite support with flags for weak/deprecated ciphers
-- TLS version support (flag anything below TLS 1.2)
+Identification reads bounded signatures and MBR metadata before extraction. The default Binwalk path runs in a locally built OCI image with no network, a read-only root filesystem, dropped capabilities, and resource limits. The input is mounted read-only and the output in a dedicated run directory. A researcher may explicitly choose trusted WSL or host execution. The inventory walks regular files without following symlinks, hashes each file, caps file and text inspection, and reports any incomplete coverage. The ELF parser reads bounded headers and tables; it does not execute binaries. Guided emulation selects one Linux ELF and a matching extracted root filesystem and invokes QEMU user mode in the isolated environment. It does not emulate the full device.
 
-**Reports:**
-- XLSX as the default user-facing report format, with JSON still available for automation
-- HTML and CSV outputs through the plugin system
-- The TUI report screen must let users choose current-session results or top-level ChainRecon JSON analysis files in the configured output directory; generated multi-section reports and decompiled APK asset JSON files must not be recursively imported
-- Reports are still not a finished surface. They work, but they still need improvement in formatting, cross-session comparison, and large-result navigation.
+Current firmware observations map to [OWASP ISTG firmware areas](https://github.com/OWASP/owasp-istg/blob/main/src/03_test_cases/firmware/README.md): information gathering, configuration and patch management, secrets, and cryptography. A local advisory snapshot can match an exact package version. A match remains a candidate until configuration, reachability, and exploitability are reviewed. External enrichment is not automatic.
 
-**Frida runtime analysis must produce:**
-- A default class-discovery path when the Frida screen opens
-- Managed attach/spawn behavior that launches app packages when they are not running
-- A stoppable device-wide class census that records a clean user stop instead of `unexpected_exit`
-- A live loaded-class monitor for classes loaded or requested through `Class.forName(...)` after hook start
-- Networking and storage hooks that keep their default Android/OkHttp/MQTT/SharedPreferences coverage while accepting user-added classes
+## Other analyzers
 
-## Non-functional requirements
+The scan parser treats Nmap XML as authoritative. The primary packet path streams with bounded retained results and reports DNS answers, IPv6 endpoints, TCP flows, TLS metadata, MQTT events, and media indicators when observable. Specialist analyzers use a streaming reader with a 10,000-packet batch limit; truncation is recorded and stops a critical workflow step as partial. It does not infer secure transport from port 8883 or infer anonymous access from a missing MQTT CONNECT packet. A self-issued certificate name is not counted as a verified self-signature; certificate observations require client-behavior review before a vulnerability claim. APK inspection records permissions and components as leads; absence of a pinning heuristic is inconclusive. Frida session output is structured and redacted by default.
 
-- Modular design so analyzers can be used independently from the CLI or imported as a library
-- The TUI should work in Windows Terminal and admin PowerShell
-- Tests should run offline with no real network access or external tools required
-- Config should cascade: built-in defaults < local overrides < environment variables
+The evidence-to-analyzer catalog is shared by the case API, CLI, and TUI. An analyzer must accept the imported evidence type before a run directory is created. The TUI calls a case folder an investigation. Its home names the supported analysis types, and each analysis screen filters the imported-file list to that type. The investigation screen handles import and finding review; Reports is a separate visible entry and defaults to the active investigation. Firmware extraction settings appear only for firmware. UART logs, Frida summaries, and other attachments are explicitly marked for manual review. Specialist packet and APK tools remain available from their type-specific screens for exploratory work outside an investigation run.
 
-## Architecture
+## Workflows
 
-The tool has three layers:
+YAML steps have unique IDs and supported types. Conditions are parsed into a data-only subset with Boolean operators, comparisons, membership, and dotted lookups. Function calls, indexing, and private attributes are rejected across the entire syntax tree. Inputs can be typed. Dry runs render without creating artifacts. A review step pauses execution; each non-dry step is atomically checkpointed, and resume requires the same pipeline SHA-256, execution context hash, and artifact directory. Interrupted steps rerun while completed steps are preserved. Executable community plugins require `trusted: true`. A case-bound workflow copies the pipeline as evidence, records relative artifact paths, and can resume after the case folder moves. Firmware steps use the case firmware engine and link to imported firmware evidence. Other input evidence must be imported and named explicitly.
 
-**Bash scripts** (`scripts/`) handle anything that needs system-level access on Linux: setting up iptables rules, enabling IP forwarding, running tshark captures. These are intentionally separate from the Python code so the analysis layer can run on Windows without needing bash.
+## Privacy and exports
 
-**Python analysis layer** (`analysis/`, `runners/`) does all the heavy lifting. Each analyzer takes either a file (pcap, nmap XML, APK) or a network target and returns a structured dict. The `runners/` directory wraps subprocess calls to external tools so that the timeout handling, encoding, and error handling is consistent everywhere.
+Raw evidence is intentionally preserved. Derived exports redact recognized secrets and local home paths, escape HTML, and prefix spreadsheet formula-looking text. These safeguards reduce accidental disclosure; the analyst still reviews a report before sharing. Public CI never runs against a device or uploads lab artifacts. Personal settings and device profiles belong in user application-data directories.
 
-**TUI** (`tui/`) is a Textual application that wraps the analysis layer. Each screen corresponds to one analysis mode and runs its work in a background thread, streaming output to a LogViewer widget as it comes in.
+## Release gates
 
-The report plugin system (`plugins/`) sits at the end of the pipeline. The `ReportGenerator` collects results from whichever analyzers were run and passes them to whatever output plugin is selected.
-
-Device profiles live outside normal runtime config. `profiles/devices/nooie.yaml` is the source of truth for the Nooie profile used by the Profiles, Workflow, and Firmware screens. `config/default.yaml` and `config/local.yaml` hold local runtime defaults such as output directory, interface names, tool paths, and the preferred Frida device.
-
-## Configuration
-
-Config is stored in YAML under `config/`. `default.yaml` has the full set of keys with conservative defaults. Users create `config/local.yaml` with just their overrides -- tool paths, interface names, API keys, etc. Environment variables (e.g. `CHAINRECON_JADX_PATH`) override everything.
-
-## Decisions made along the way
-
-**Scapy instead of pyshark for traffic analysis:** pyshark requires tshark to be installed and is much slower for offline pcap analysis. Scapy is pure Python, faster for packet-by-packet inspection, and handles the same protocols we care about (DNS, TLS, HTTP, STUN/WebRTC).
-
-**Streaming jadx output:** jadx on a large APK can take several minutes and generates a lot of console output. Running it with `subprocess.run(capture_output=True)` fills the pipe buffer and deadlocks on Windows. The fix is to use `Popen` and read line-by-line, forwarding each line to the TUI log viewer so the user can see progress.
-
-**ASCII border fallback for conhost.exe:** Textual uses Unicode box-drawing characters for widget borders. These don't render in Windows admin PowerShell (conhost.exe) even with VT mode enabled. The app detects this by checking whether `WT_SESSION` is set (Windows Terminal sets it, conhost does not) and applies a CSS class that switches all borders to ASCII (`+`, `-`, `|`).
-
-**PasteableInput widget:** On conhost.exe, Ctrl+V may be consumed by the terminal and never reach the Textual app. The `PasteableInput` widget reads from the Win32 clipboard directly via ctypes so pasting always works in input fields.
-
-**Bounded output boxes:** Long jadx, nmap, and Frida output can make a terminal UI sluggish. The LogViewer keeps the visible/retained log bounded, tells the user when old lines are dropped, and relies on analyzer output files for full artifacts. The saved log files are important because they preserve the full execution stream even when the visible TUI log is intentionally capped.
-
-**No stale live-tool results:** Scan and Frida features must distinguish live observations from cached or assumed state. ARP-table fallback is labeled as cached local data, nmap `-Pn` is labeled as "assume host up", and Frida validates an online adb device before listing processes or injecting scripts.
-
-**SSL reachability wording:** SSL analysis reports reachability per port. A refused or filtered TLS port is not the same as a dead host, and DNS `getaddrinfo` failures are reported as target-name problems rather than generic network failures.
-
-**Frida help rendering:** The Frida help text is intentionally detailed, so the modal renders it as plain read-only text instead of a large Rich `Static`. The content stays available, but opening the help screen no longer forces Textual to parse and lay out a large markup block.
-
-**Firmware scope:** Firmware analysis is intentionally early-stage. It extracts with binwalk when a working extractor is available, falls back to direct image scanning when extraction is not available, and records that state clearly. The module is expected to grow into deeper filesystem unpacking, architecture detection, vendor config parsing, and binary triage.
+The offline suite, lint, focused type checking, dependency audit, source and wheel installation checks, and CLI/TUI smoke tests run in CI. The release coverage targets are 80% overall line coverage and 90% branch coverage for case, firmware, and workflow code. Hardware validation remains a separately invoked local procedure.

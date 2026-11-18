@@ -9,8 +9,10 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from chainrecon.utils.artifacts import safe_token
+from chainrecon.utils.config import user_config_dir
 
-COMMUNITY_PLUGIN_DIR = Path(__file__).resolve().parents[2] / "community_plugins"
+COMMUNITY_PLUGIN_DIR = Path(__file__).resolve().parents[1] / "resources" / "community_plugins"
+USER_PLUGIN_DIR = user_config_dir() / "plugins"
 _REQUIRED_MANIFEST_FIELDS = ("name", "version", "type", "entrypoint", "inputs", "outputs", "description")
 
 
@@ -38,11 +40,9 @@ def _normalize_plugin_manifest(payload: Dict[str, Any], plugin_dir: Path) -> Dic
 
 
 def discover_community_plugins(base_dir: Optional[str | Path] = None) -> List[Dict[str, Any]]:
-    root = Path(base_dir) if base_dir else COMMUNITY_PLUGIN_DIR
-    if not root.exists():
-        return []
+    roots = [Path(base_dir)] if base_dir else [COMMUNITY_PLUGIN_DIR, USER_PLUGIN_DIR]
     plugins: List[Dict[str, Any]] = []
-    for plugin_dir in sorted(path for path in root.iterdir() if path.is_dir()):
+    for plugin_dir in (path for root in roots if root.exists() for path in sorted(root.iterdir()) if path.is_dir()):
         manifest = plugin_dir / "plugin.yaml"
         if not manifest.exists():
             continue
@@ -59,12 +59,16 @@ def discover_community_plugins(base_dir: Optional[str | Path] = None) -> List[Di
     return plugins
 
 
-def load_community_plugin(name: str, base_dir: Optional[str | Path] = None):
+def load_community_plugin(name: str, base_dir: Optional[str | Path] = None, *, trusted: bool = False):
+    if not trusted:
+        raise PermissionError("Executing community plugin code requires explicit trusted=True")
     descriptor = get_community_plugin_descriptor(name, base_dir=base_dir)
     if descriptor is None:
         raise ValueError(f"Unknown community plugin: {name}")
     plugin_dir = Path(descriptor["plugin_dir"])
-    module_path = plugin_dir / str(descriptor.get("python_file") or "plugin.py")
+    module_path = (plugin_dir / str(descriptor.get("python_file") or "plugin.py")).resolve()
+    if not module_path.is_relative_to(plugin_dir.resolve()) or module_path.suffix != ".py":
+        raise ValueError("Community plugin entrypoint must be a Python file inside its plugin directory")
     if not module_path.exists():
         raise FileNotFoundError(f"Community plugin module not found: {module_path}")
     module_name = f"chainrecon.community.{safe_token(str(descriptor.get('name') or plugin_dir.name))}"

@@ -1,11 +1,9 @@
 """Tests for analysis.apk_analyzer module."""
 
-import json
-import os
 import textwrap
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from chainrecon.analysis.apk_analyzer import APKAnalyzer, _load_patterns
 
@@ -280,7 +278,7 @@ class RiskIndicatorTests(unittest.TestCase):
         titles = [i["title"] for i in indicators]
         self.assertIn("Application is debuggable", titles)
 
-    def test_no_pinning_generates_medium_risk(self):
+    def test_no_pinning_detection_is_inconclusive(self):
         analyzer = APKAnalyzer(executor=MagicMock())
         indicators = analyzer._build_risk_indicators(
             permissions=[],
@@ -291,7 +289,7 @@ class RiskIndicatorTests(unittest.TestCase):
             pinning={"detected": False},
         )
         titles = [i["title"] for i in indicators]
-        self.assertIn("No certificate pinning detected", titles)
+        self.assertNotIn("No certificate pinning detected", titles)
 
     def test_credentials_generate_risk(self):
         analyzer = APKAnalyzer(executor=MagicMock())

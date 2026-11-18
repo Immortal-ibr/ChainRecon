@@ -1,7 +1,7 @@
 """Tests for utils/platform_info.py — cross-platform tool detection."""
 
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from chainrecon.runners.base import ToolNotFoundError
 from chainrecon.utils import platform_info

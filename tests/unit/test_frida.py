@@ -323,7 +323,8 @@ class RunScriptTests(unittest.TestCase):
             result = self.runner.run_script("Settings", "ssl_pinning_bypass")
         self.assertEqual(result["process"], "Settings")
         self.assertEqual(result["script"], "ssl_pinning_bypass")
-        self.assertIn("Hooked method", result["stdout"])
+        self.assertNotIn("Hooked method", result["stdout"])
+        self.assertIn("CONTENT REDACTED", result["stdout"])
         cmd = self.executor.call_args[0][0]
         self.assertEqual(cmd[0], "frida")
         self.assertIn("-U", cmd)
@@ -342,22 +343,24 @@ class RunScriptTests(unittest.TestCase):
     @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/frida")
     def test_device_class_census_iterates_matching_processes(self, _):
         self.runner.list_processes_structured = MagicMock(return_value=[
-            {"pid": "1", "name": "Nooie", "identifier": "com.nooie.home"},
-            {"pid": "2", "name": "NooiePlugin", "identifier": "com.nooie.plugin"},
+            {"pid": "1", "name": "SampleCam", "identifier": "com.samplecam.home"},
+            {"pid": "2", "name": "SampleCamPlugin", "identifier": "com.samplecam.plugin"},
             {"pid": "3", "name": "Other", "identifier": "com.other.app"},
         ])
         self.executor.side_effect = [
             subprocess.CompletedProcess([], 0, "[CLASS] total=4\n", ""),
             subprocess.CompletedProcess([], 0, "[CLASS] total=7\n", ""),
         ]
-        result = self.runner.run_script("nooie", "device_class_census")
+        with patch.object(self.runner, "ensure_online_device", return_value={"serial": "emulator-5554"}):
+            result = self.runner.run_script("samplecam", "device_class_census")
         self.assertEqual(result["returncode"], 0)
-        self.assertIn("[PROCESS] com.nooie.home", result["stdout"])
-        self.assertIn("[PROCESS] com.nooie.plugin", result["stdout"])
+        self.assertIn("[PROCESS] com.samplecam.home", result["stdout"])
+        self.assertIn("[PROCESS] com.samplecam.plugin", result["stdout"])
         first_cmd = self.executor.call_args_list[0][0][0]
         second_cmd = self.executor.call_args_list[1][0][0]
-        self.assertIn("com.nooie.home", first_cmd)
-        self.assertIn("com.nooie.plugin", second_cmd)
+        self.assertEqual(first_cmd[:3], ["frida", "-D", "emulator-5554"])
+        self.assertIn("com.samplecam.home", first_cmd)
+        self.assertIn("com.samplecam.plugin", second_cmd)
 
     def test_normalize_hook_all_methods_class_names_accepts_semicolons(self):
         normalized = self.runner._normalize_script_parameters(
@@ -372,9 +375,9 @@ class RunScriptTests(unittest.TestCase):
     def test_normalize_list_classes_filter_accepts_multiple_delimiters(self):
         normalized = self.runner._normalize_script_parameters(
             "list_classes",
-            {"class_filter": "com.nooie, com.thingclips; webrtc"},
+            {"class_filter": "com.samplecam, com.thingclips; webrtc"},
         )
-        self.assertEqual(normalized["class_filter"], ["com.nooie", "com.thingclips", "webrtc"])
+        self.assertEqual(normalized["class_filter"], ["com.samplecam", "com.thingclips", "webrtc"])
 
     @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
     def test_setup_device_uses_directory_binary_match_and_installs_apks(self, _):
@@ -572,13 +575,13 @@ class RunScriptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             rendered = self.runner.render_script(
                 "hook_method",
-                {"class_name": "com.nooie.home.Device", "method_name": "connect"},
+                {"class_name": "com.samplecam.home.Device", "method_name": "connect"},
                 td,
             )
             content = rendered.read_text(encoding="utf-8")
             self.assertNotEqual(rendered.parent.resolve(), Path(td).resolve())
         self.assertIn("CHAINRECON_CONFIG", content)
-        self.assertIn('"class_name": "com.nooie.home.Device"', content)
+        self.assertIn('"class_name": "com.samplecam.home.Device"', content)
         self.assertIn('"method_name": "connect"', content)
 
     @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/tool")
@@ -586,7 +589,7 @@ class RunScriptTests(unittest.TestCase):
         with patch.object(self.runner, "_package_installed", return_value=True), \
              patch.object(self.runner, "is_target_running", side_effect=[False, True]), \
              patch.object(self.runner, "launch_target_if_needed", return_value={"launched": True, "details": "ok"}):
-            result = self.runner.resolve_attach_target("com.nooie.home", serial="emulator-5554")
+            result = self.runner.resolve_attach_target("com.samplecam.home", serial="emulator-5554")
         self.assertEqual(result["mode"], "attach")
         self.assertTrue(result["launch_performed"])
 
@@ -626,13 +629,13 @@ class RunScriptTests(unittest.TestCase):
              patch.object(self.runner, "ensure_online_device", return_value={"serial": "emulator-5554", "online": True}), \
              patch.object(self.runner, "list_device_inventory", return_value={"connected_devices": [{"serial": "emulator-5554", "frida_compatible": True}], "local_avds": []}), \
              patch.object(self.runner, "start_frida_server_if_needed", return_value={"running": True, "started": False, "frida_server": "/tmp/frida-server"}), \
-             patch.object(self.runner, "resolve_attach_target", return_value={"mode": "attach", "attach_flag": "-N", "attach_target": "com.nooie.home", "target_running_before": True, "launch_performed": False}), \
+             patch.object(self.runner, "resolve_attach_target", return_value={"mode": "attach", "attach_flag": "-N", "attach_target": "com.samplecam.home", "target_running_before": True, "launch_performed": False}), \
              patch("chainrecon.runners.frida_runner.subprocess.Popen", side_effect=FakeProcess) as mock_popen:
             streamed = []
             result = self.runner.start_session(
-                target="com.nooie.home",
+                target="com.samplecam.home",
                 script_key="list_classes",
-                parameters={"class_filter": "com.nooie"},
+                parameters={"class_filter": "com.samplecam"},
                 output_dir=td,
                 on_output=streamed.append,
             )
@@ -640,7 +643,8 @@ class RunScriptTests(unittest.TestCase):
             self.assertIsNotNone(summary)
             self.assertTrue(Path(result["log_path"]).exists())
             self.assertTrue(Path(result["summary_path"]).exists())
-            self.assertTrue(any("hello" in line for line in streamed))
+            self.assertFalse(any("hello" in line for line in streamed))
+            self.assertTrue(any("CONTENT REDACTED" in line for line in streamed))
             cmd = mock_popen.call_args[0][0]
             self.assertNotIn("--auto-perform", cmd)
             self.assertIn("--stdio", cmd)
@@ -673,10 +677,10 @@ class RunScriptTests(unittest.TestCase):
              patch.object(self.runner, "ensure_online_device", return_value={"serial": "emulator-5554", "online": True}), \
              patch.object(self.runner, "list_device_inventory", return_value={"connected_devices": [{"serial": "emulator-5554", "frida_compatible": True}], "local_avds": []}), \
              patch.object(self.runner, "start_frida_server_if_needed", return_value={"running": True, "started": False}), \
-             patch.object(self.runner, "resolve_attach_target", return_value={"mode": "attach", "attach_flag": "-N", "attach_target": "com.nooie.home", "target_running_before": True, "launch_performed": False}), \
+             patch.object(self.runner, "resolve_attach_target", return_value={"mode": "attach", "attach_flag": "-N", "attach_target": "com.samplecam.home", "target_running_before": True, "launch_performed": False}), \
              patch.object(self.runner, "is_target_running", return_value=True), \
              patch("chainrecon.runners.frida_runner.subprocess.Popen", side_effect=FakeProcess):
-            self.runner.start_session(target="com.nooie.home", script_key="list_classes", output_dir=td)
+            self.runner.start_session(target="com.samplecam.home", script_key="list_classes", output_dir=td)
             active = self.runner.active_session()
             self.assertIsNotNone(active)
             if self.runner._active_session and self.runner._active_session.watcher_thread:
@@ -701,30 +705,34 @@ class RunScriptTests(unittest.TestCase):
                 self.stderr = tempfile.SpooledTemporaryFile(mode="w+t")
                 self.stdin = tempfile.SpooledTemporaryFile(mode="w+t")
                 self.returncode = None
+                self.terminated = threading.Event()
 
             def poll(self):
                 return self.returncode
 
             def wait(self, timeout=None):
                 if self.returncode is None:
-                    self.returncode = 0
+                    if not self.terminated.wait(timeout):
+                        raise subprocess.TimeoutExpired("frida", timeout)
                 return self.returncode
 
             def terminate(self):
                 self.returncode = 0
+                self.terminated.set()
 
             def kill(self):
                 self.returncode = 1
+                self.terminated.set()
 
         with tempfile.TemporaryDirectory() as td, \
              patch.object(self.runner, "is_target_running", return_value=True), \
              patch.object(self.runner, "ensure_online_device", return_value={"serial": "emulator-5554", "online": True}), \
              patch.object(self.runner, "list_device_inventory", return_value={"connected_devices": [{"serial": "emulator-5554", "frida_compatible": True}], "local_avds": []}), \
              patch.object(self.runner, "start_frida_server_if_needed", return_value={"running": True, "started": False, "frida_server": "/tmp/frida-server"}), \
-             patch.object(self.runner, "resolve_attach_target", return_value={"mode": "attach", "attach_flag": "-N", "attach_target": "com.nooie.home", "target_running_before": True, "launch_performed": False}), \
+             patch.object(self.runner, "resolve_attach_target", return_value={"mode": "attach", "attach_flag": "-N", "attach_target": "com.samplecam.home", "target_running_before": True, "launch_performed": False}), \
              patch("chainrecon.runners.frida_runner.subprocess.Popen", return_value=FakeProcess()):
             result = self.runner.start_session(
-                target="com.nooie.home",
+                target="com.samplecam.home",
                 script_key="network_traffic_monitor",
                 output_dir=td,
             )
@@ -737,8 +745,14 @@ class RunScriptTests(unittest.TestCase):
         self.assertEqual(summary["status"], "stopped_by_user")
 
 
-@unittest.skipUnless(os.environ.get("CHAINRECON_LIVE_FRIDA") == "1", "live Frida validation disabled")
-class LiveFridaValidationTests(unittest.TestCase):
+class AdditionalRunScriptTests(unittest.TestCase):
+    def setUp(self):
+        self.executor = MagicMock()
+        self.executor.return_value = subprocess.CompletedProcess([], 0, "", "")
+        self.runner = FridaRunner(executor=self.executor, validate_device=False)
+        self.runner._configured_serial = MagicMock(return_value=None)
+
+    @unittest.skipUnless(os.environ.get("CHAINRECON_LIVE_FRIDA") == "1", "live Frida validation disabled")
     def test_live_chainrecon_api35_setup_and_process_list(self):
         runner = FridaRunner()
         inventory = runner.list_device_inventory()
@@ -771,7 +785,7 @@ class LiveFridaValidationTests(unittest.TestCase):
 
     @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/frida")
     def test_spawn_custom_script(self, _):
-        result = self.runner.spawn_and_run(
+        self.runner.spawn_and_run(
             "com.example.app", "", custom_script_path="/tmp/hook.js"
         )
         cmd = self.executor.call_args[0][0]
@@ -789,8 +803,11 @@ class LiveFridaValidationTests(unittest.TestCase):
             [], 1, "", "Error: process not found"
         )
         result = self.runner.run_script("com.example.app", "list_classes")
-        self.assertIn("Error: process not found", result["stderr"])
+        self.assertIn("CONTENT REDACTED", result["stderr"])
         self.assertEqual(result["returncode"], 1)
+        self.runner.reveal_sensitive = True
+        revealed = self.runner.run_script("com.example.app", "list_classes")
+        self.assertIn("Error: process not found", revealed["stderr"])
 
     @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/frida")
     def test_run_script_uses_current_frida_noninteractive_flags(self, _):
@@ -804,13 +821,19 @@ class LiveFridaValidationTests(unittest.TestCase):
     @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/frida")
     def test_every_builtin_script_builds_attach_command(self, _):
         for key, meta in FRIDA_SCRIPTS.items():
+            if key == "device_class_census":
+                continue  # This mode attaches to each matching process separately.
             with self.subTest(script=key):
                 self.executor.reset_mock()
                 result = self.runner.run_script("com.example.app", key)
                 self.assertEqual(result["script"], key)
                 cmd = self.executor.call_args[0][0]
                 self.assertEqual(cmd[:4], ["frida", "-U", "-N", "com.example.app"])
-                self.assertIn(str(_SCRIPTS_DIR / meta["file"]), cmd)
+                script = Path(cmd[cmd.index("-l") + 1])
+                self.assertTrue(script.is_file())
+                self.assertIn("CHAINRECON_CONFIG", script.read_text(encoding="utf-8"))
+                source = (_SCRIPTS_DIR / meta["file"]).read_text(encoding="utf-8")
+                self.assertIn(source.replace("\n", "\n    "), script.read_text(encoding="utf-8"))
                 self.assertIn("-q", cmd)
                 self.assertIn("-t", cmd)
                 self.assertIn("120", cmd)
@@ -819,17 +842,28 @@ class LiveFridaValidationTests(unittest.TestCase):
     @patch("chainrecon.runners.frida_runner.check_tool", return_value="/usr/bin/frida")
     def test_every_builtin_script_builds_spawn_command(self, _):
         for key, meta in FRIDA_SCRIPTS.items():
+            if key == "device_class_census":
+                continue  # This mode attaches to each matching process separately.
             with self.subTest(script=key):
                 self.executor.reset_mock()
                 result = self.runner.spawn_and_run("com.example.app", key)
                 self.assertEqual(result["script"], key)
                 cmd = self.executor.call_args[0][0]
                 self.assertEqual(cmd[:4], ["frida", "-U", "-f", "com.example.app"])
-                self.assertIn(str(_SCRIPTS_DIR / meta["file"]), cmd)
+                script = Path(cmd[cmd.index("-l") + 1])
+                self.assertTrue(script.is_file())
+                self.assertIn("CHAINRECON_CONFIG", script.read_text(encoding="utf-8"))
+                source = (_SCRIPTS_DIR / meta["file"]).read_text(encoding="utf-8")
+                self.assertIn(source.replace("\n", "\n    "), script.read_text(encoding="utf-8"))
                 self.assertIn("-q", cmd)
                 self.assertIn("-t", cmd)
                 self.assertIn("120", cmd)
                 self.assertIn("--exit-on-error", cmd)
+
+    def test_device_census_requires_a_device_serial(self):
+        with patch.object(self.runner, "ensure_online_device", return_value={"serial": None}):
+            with self.assertRaisesRegex(FridaDeviceError, "device serial"):
+                self.runner._run_device_class_census("com.example.app")
 
 
 if __name__ == "__main__":

@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import sys
+import os
+import tempfile
 from pathlib import Path
+
+# Tests must never read or modify an analyst's personal case configuration.
+_test_config_home = tempfile.TemporaryDirectory(prefix="chainrecon-test-config-")
+os.environ["CHAINRECON_CONFIG_HOME"] = _test_config_home.name
+os.environ.pop("CHAINRECON_CONFIG_FILE", None)
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:

@@ -1,10 +1,8 @@
 """Comprehensive tests for the CLI entrypoint (chainrecon.py)."""
 
 import contextlib
-import copy
 import io
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -203,7 +201,7 @@ class ReportCliTests(unittest.TestCase):
                     "traffic": None,
                     "ssl": None,
                     "scan": {
-                        "metadata": {"apk": "nooie.apk", "analyzer": "APKAnalyzer"},
+                        "metadata": {"apk": "samplecam.apk", "analyzer": "APKAnalyzer"},
                         "findings": {"permissions": []},
                         "summary": {},
                         "risk_indicators": [{"severity": "high", "title": "apk", "details": "test"}],
@@ -231,7 +229,7 @@ class ReportCliTests(unittest.TestCase):
 
     def test_report_infers_apk_section(self):
         payload = {
-            "metadata": {"apk": "nooie.apk", "analyzer": "APKAnalyzer"},
+            "metadata": {"apk": "samplecam.apk", "analyzer": "APKAnalyzer"},
             "findings": {"permissions": []},
         }
         self.assertEqual(chainrecon.infer_section(payload, "live_apk.json"), "apk")
@@ -292,6 +290,30 @@ class FirmwareAndWorkflowCliTests(unittest.TestCase):
         self.assertEqual(args.firmware_path, "firmware.bin")
         self.assertEqual(args.extract_dir, "out")
 
+    def test_legacy_firmware_command_uses_case_engine_and_exports_report(self):
+        from chainrecon.case_model import Case
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "image.bin"
+            image.write_bytes(b"firmware fixture")
+            case_path = root / "case"
+            report_path = root / "report.json"
+
+            def extract(_engine, _source, extracted, _mode, _warnings):
+                extracted.mkdir(parents=True)
+                (extracted / "config.txt").write_text("service=local", encoding="utf-8")
+                return "complete", ""
+
+            output = io.StringIO()
+            with patch("chainrecon.firmware_engine.FirmwareEngine._extract", extract), contextlib.redirect_stdout(output):
+                code = chainrecon.main(["firmware", str(image), "--extract-dir", str(case_path), "--format", "json", "--output", str(report_path)])
+            result = json.loads(output.getvalue())
+            self.assertEqual(code, 0)
+            self.assertEqual(result["status"], "complete")
+            self.assertTrue(report_path.exists())
+            self.assertEqual(len(Case.open(case_path).manifest["runs"]), 1)
+
     def test_workflow_run_subcommand_parses(self):
         parser = chainrecon.build_parser()
         args = parser.parse_args(["workflow", "run", "pipeline.yaml", "--target", "10.0.0.1", "--dry-run"])
@@ -349,8 +371,8 @@ class BuildParserTests(unittest.TestCase):
 
     def test_default_ssl_ports(self):
         parser = chainrecon.build_parser()
-        with self.assertRaises(SystemExit):
-            parser.parse_args(["analyze-ssl", "10.0.0.1"])
+        args = parser.parse_args(["analyze-ssl", "10.0.0.1"])
+        self.assertEqual(args.ports, [443])
 
     def test_no_args_gives_none_command(self):
         parser = chainrecon.build_parser()
@@ -413,10 +435,10 @@ class InteractiveModeTests(unittest.TestCase):
 
     def test_interactive_subcommand(self):
         mock_module = MagicMock()
-        with patch.dict("sys.modules", {"chainrecon.interactive": mock_module}):
+        with patch.dict("sys.modules", {"chainrecon.tui.app": mock_module}):
             code = chainrecon.main(["interactive"])
         self.assertEqual(code, 0)
-        mock_module.run_interactive.assert_called_once()
+        mock_module.run_tui.assert_called_once()
 
     def test_tui_subcommand(self):
         mock_module = MagicMock()

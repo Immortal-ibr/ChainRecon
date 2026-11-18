@@ -330,7 +330,7 @@ class XlsxPluginTests(unittest.TestCase):
                 "metadata": {"section": "frida"},
                 "sessions": [
                     {
-                        "target": "com.nooie.home",
+                        "target": "com.samplecam.home",
                         "script": "hook_all_methods",
                         "status": "stopped_by_user",
                         "hook_event_count": 3,

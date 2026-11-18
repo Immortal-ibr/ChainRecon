@@ -10,6 +10,7 @@ from chainrecon.tui.screens.dashboard import DashboardScreen
 from chainrecon.tui.screens.scan import ScanScreen
 from chainrecon.tui.screens.capture import CaptureScreen
 from chainrecon.tui.screens.analyze import AnalyzeScreen
+from chainrecon.tui.screens.case_analysis import CaseAnalysisScreen
 from chainrecon.tui.screens.frida import FridaScreen
 from chainrecon.tui.screens.apk import APKScreen
 from chainrecon.tui.screens.reports import ReportsScreen
@@ -18,7 +19,6 @@ from chainrecon.tui.screens.scan import SCAN_PROFILE_OPTIONS
 from chainrecon.tui.screens.scan import _displayable_output_files
 from chainrecon.tui.screens.scan import _interface_options
 from chainrecon.tui.screens.network_setup import NetworkSetupScreen
-from chainrecon.tui.screens.dashboard import _format_tool_status
 from chainrecon.tui.widgets.findings_table import FindingsTable
 from chainrecon.tui.widgets.log_viewer import LogViewer, _wrap_display_text, sanitize_terminal_controls
 from chainrecon.tui.widgets.pasteable_input import PasteableInput
@@ -43,9 +43,10 @@ class AppRegistrationTests(unittest.TestCase):
             "network_setup",
             "custom_script",
             "workflow",
-            "firmware",
             "plugins",
             "profiles",
+            "case",
+            "case_analysis",
         }
         self.assertEqual(set(ChainReconApp.SCREENS.keys()), expected)
 
@@ -55,6 +56,7 @@ class AppRegistrationTests(unittest.TestCase):
             "scan": ScanScreen,
             "capture": CaptureScreen,
             "analyze": AnalyzeScreen,
+            "case_analysis": CaseAnalysisScreen,
             "frida": FridaScreen,
             "apk": APKScreen,
             "reports": ReportsScreen,
@@ -91,8 +93,8 @@ class WidgetImportTests(unittest.TestCase):
         self.assertIn("three", plain)
 
     def test_sanitizes_leaked_mouse_terminal_sequence(self):
-        text = sanitize_terminal_controls("\x1b[<35;28;21Mcom.nooie.home")
-        self.assertEqual(text, "com.nooie.home")
+        text = sanitize_terminal_controls("\x1b[<35;28;21Mcom.samplecam.home")
+        self.assertEqual(text, "com.samplecam.home")
 
     def test_wrap_display_text_breaks_long_paths(self):
         wrapped = _wrap_display_text("Result saved: C:\\Users\\me\\some\\very\\long\\path\\to\\an\\artifact\\that\\should\\wrap\\output.json", width=40)
@@ -102,10 +104,6 @@ class WidgetImportTests(unittest.TestCase):
         widget = PasteableInput()
         widget.watch_value("C:\\Users\\me\\some\\very\\long\\path\\artifact.json")
         self.assertIn("artifact.json", widget.tooltip)
-
-    def test_dashboard_tool_status_wraps_long_paths(self):
-        formatted = _format_tool_status("adb", "C:\\Users\\me\\very\\long\\path\\to\\platform-tools\\adb.exe", width=20)
-        self.assertIn("\n", formatted)
 
 
 class ReportsHelperTests(unittest.TestCase):
@@ -168,12 +166,12 @@ class TuiRequirementTests(unittest.TestCase):
                 app.push_screen("apk")
                 await pilot.pause()
                 field = app.screen.query_one("#apk-path", PasteableInput)
-                long_path = r"C:\Users\tarok\OneDrive - purdue.edu\Desktop\Engineering\VeryLongDirectoryName\AnotherLongDirectory\nooie_base_apk.apk"
+                long_path = r"C:\Users\Researcher\Documents\Engineering\VeryLongDirectoryName\AnotherLongDirectory\samplecam_base_apk.apk"
                 field.value = long_path
                 field.focus()
                 await pilot.pause()
                 self.assertEqual(field.cursor_position, len(long_path))
-                self.assertIn("nooie_base_apk.apk", field.tooltip)
+                self.assertIn("samplecam_base_apk.apk", field.tooltip)
 
         asyncio.run(_run())
 
@@ -259,7 +257,6 @@ class TuiRequirementTests(unittest.TestCase):
                         "network_traffic_monitor",
                         "crypto_monitor",
                         "shared_preferences_dump",
-                        "nooie_mqtt_trace",
                     ]:
                         select.value = script
                         screen._refresh_script_inputs()
@@ -386,7 +383,6 @@ class TuiRequirementTests(unittest.TestCase):
                     "network_setup",
                     "custom_script",
                     "workflow",
-                    "firmware",
                     "plugins",
                     "profiles",
                 ]:

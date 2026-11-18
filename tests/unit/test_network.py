@@ -97,7 +97,6 @@ class ListInterfacesLinuxTests(unittest.TestCase):
 
     @patch("chainrecon.utils.network.subprocess.run", side_effect=FileNotFoundError)
     def test_sys_class_fallback(self, _):
-        from pathlib import Path
         with patch("pathlib.Path") as mock_path_cls:
             mock_dir = MagicMock()
             fake_eth = MagicMock()

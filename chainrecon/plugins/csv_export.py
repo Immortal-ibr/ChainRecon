@@ -6,6 +6,7 @@ import csv
 
 from chainrecon.plugins.base import ReportPlugin
 from chainrecon.utils.artifacts import write_text_artifact
+from chainrecon.utils.redaction import redact_report_data, spreadsheet_cell
 
 
 class CsvExportPlugin(ReportPlugin):
@@ -13,13 +14,13 @@ class CsvExportPlugin(ReportPlugin):
     description = "Flatten analysis output into CSV rows."
 
     def generate(self, analysis_data, output_path):
-        rows = list(self._flatten_data(analysis_data))
+        rows = list(self._flatten_data(redact_report_data(analysis_data)))
         fieldnames = sorted({key for row in rows for key in row.keys()}) if rows else ["section", "key", "value"]
         def _write(handle):
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
             writer.writeheader()
             if rows:
-                writer.writerows(rows)
+                writer.writerows([{key: spreadsheet_cell(value) for key, value in row.items()} for row in rows])
 
         write_text_artifact(output_path, _write)
         return output_path

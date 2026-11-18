@@ -1,156 +1,213 @@
-"""Dashboard screen -- landing page with tool status and session overview."""
+"""A focused home for the current investigation and daily tools."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from rich.markup import escape
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Footer, Header, Label, Static
+from textual.widgets import Button, Collapsible, Header, Static
 
+from chainrecon.case_model import Case
+from chainrecon.tui.screens.case_analysis import ANALYSIS_VIEWS, CaseAnalysisScreen
+from chainrecon.tui.screens.case_picker import CasePickerScreen
 from chainrecon.tui.screens.help_screen import HelpScreen
-from chainrecon.tui.widgets.log_viewer import _wrap_display_text
-from chainrecon.utils.platform_info import find_tool
+from chainrecon.tui.widgets.help_footer import HelpFooter
 
-HELP_TEXT = """[bold underline]ChainRecon -- How It Works[/]
+HELP_TEXT = """[bold]ChainRecon[/]
 
-ChainRecon is an IoT security assessment framework. It sits between an IoT
-device and the internet so you can capture and inspect every packet the
-device sends or receives.
+[bold]Investigation[/] is one folder for copied source files, analysis runs,
+finding reviews, and reports. Use Files & findings to import files or review
+results. Switch investigation to work in a different folder.
 
-[bold]Physical Setup[/]
-Your IoT device connects to a dedicated router (not your main one). That
-router plugs into your computer via Ethernet. Your computer forwards the
-router's traffic out through your WiFi (or another connection) to the
-internet. This is standard NAT -- the same thing your home router does,
-except now you control the pipe and can see everything.
+[bold]Analysis[/] starts with the file type: firmware, packet capture, Android
+APK, Nmap XML, or Frida log. Import that file first. Packet and APK screens
+also link to optional standalone specialist tools.
 
-[bold]What the Tools Do[/]
-  - nmap      -- Scans the device for open ports and running services
-  - tshark    -- Captures packets (Windows + Linux, comes with Wireshark)
-  - adb       -- Connects to Android devices/emulators for Frida injection
-  - frida     -- Injects JavaScript into running Android apps at runtime
-  - jadx      -- Decompiles APK files to Java source code
-  - binwalk   -- Extracts and inspects firmware images
+[bold]Reports[/] exports the active investigation by default. You can choose
+session or saved standalone results there instead.
 
-[bold]Navigation[/]
-  n = Network Setup   s = Scan         c = Capture     a = Analyze
-  k = APK             f = Frida        r = Reports     t = Settings
-  w = Workflow        m = Firmware     p = Plugins     d = Profiles
-  x = Custom Script   q = Quit         ? = Toggle help
+[bold]Live work[/] starts a device scan, traffic capture, or Frida session.
+Use More tools for settings and extensions.
 
-[bold]Tip -- Windows Terminal vs old PowerShell console[/]
-Run ChainRecon from Windows Terminal (wt.exe) or cmd.exe for correct
-Unicode box-drawing. Admin PowerShell ISE / old conhost.exe can show
-garbled characters. Paste paths with Ctrl+Shift+V in Windows Terminal.
+[bold]Keys[/]  i investigation   f firmware   p packets   k APK
+        r reports         s scan       c capture   F1 help   q quit
 
-[dim]To edit this screen: tui/screens/dashboard.py[/]
+Each tool has its own help page. Press Esc to return here.
 """
 
 
-class _ToolStatus(Static):
-    """Single-line tool availability indicator."""
-
-    def __init__(self, tool_name: str) -> None:
-        super().__init__()
-        self.tool_name = tool_name
-
-    def on_mount(self) -> None:
-        path = find_tool(self.tool_name)
-        if path:
-            self.update(_format_tool_status(self.tool_name, path))
-        else:
-            self.update(f"[red]X[/] {self.tool_name}: not found")
-
-
-_MENU_ITEMS = [
-    ("n", "network_setup", "Network Setup  -- configure NAT / routing"),
-    ("s", "scan",          "Scan           -- run nmap against target device"),
-    ("c", "capture",       "Capture        -- record traffic with tshark"),
-    ("a", "analyze",       "Analyze        -- parse pcap / nmap output files"),
-    ("k", "apk",           "APK Analysis   -- static analysis of Android .apk"),
-    ("f", "frida",         "Frida          -- instrument a running Android app"),
-    ("r", "reports",       "Reports        -- generate HTML / JSON / CSV report"),
-    ("t", "settings",      "Settings       -- tool paths, config, API keys"),
-    ("w", "workflow",      "Workflow       -- run YAML-defined scan pipelines"),
-    ("m", "firmware",      "Firmware       -- extract and inspect firmware images"),
-    ("p", "plugins",       "Plugins        -- community analyzer plugins"),
-    ("d", "profiles",      "Profiles       -- shared device profiles"),
-]
+_BUTTON_ROUTES = {
+    "home-case": "case",
+    "home-scan": "scan",
+    "home-capture": "capture",
+    "home-frida": "frida",
+    "home-workflow": "workflow",
+    "home-reports": "reports",
+    "home-network": "network_setup",
+    "home-scripts": "custom_script",
+    "home-plugins": "plugins",
+    "home-profiles": "profiles",
+    "home-settings": "settings",
+}
+_ANALYSIS_BUTTONS = {
+    "home-firmware": "firmware",
+    "home-packets": "packets",
+    "home-android": "apk",
+    "home-nmap": "scan",
+    "home-frida-log": "frida",
+}
 
 
 class DashboardScreen(Screen):
+    """Show the active case first, with specialist tools one step away."""
+
     BINDINGS = [
-        ("n", "app.push_screen('network_setup')", "Network"),
-        ("s", "app.push_screen('scan')", "Scan"),
-        ("c", "app.push_screen('capture')", "Capture"),
-        ("a", "app.push_screen('analyze')", "Analyze"),
-        ("k", "app.push_screen('apk')", "APK"),
-        ("f", "app.push_screen('frida')", "Frida"),
-        ("r", "app.push_screen('reports')", "Reports"),
-        ("t", "app.push_screen('settings')", "Settings"),
-        ("x", "app.push_screen('custom_script')", "Custom Script"),
-        ("w", "app.push_screen('workflow')", "Workflow"),
-        ("m", "app.push_screen('firmware')", "Firmware"),
-        ("p", "app.push_screen('plugins')", "Plugins"),
-        ("d", "app.push_screen('profiles')", "Profiles"),
-        ("question_mark", "toggle_help", "Help"),
-        ("q", "app.quit", "Quit"),
+        Binding("i", "app.push_screen('case')", "Investigation"),
+        Binding("f", "open_view('firmware')", "Firmware", show=False),
+        Binding("p", "open_view('packets')", "Packets", show=False),
+        Binding("k", "open_view('apk')", "APK", show=False),
+        Binding("s", "app.push_screen('scan')", "Scan", show=False),
+        Binding("c", "app.push_screen('capture')", "Capture", show=False),
+        Binding("question_mark", "toggle_help", "Help", show=False),
+        Binding("q", "app.quit", "Quit"),
+        Binding("w", "app.push_screen('workflow')", "Workflow", show=False),
+        Binding("r", "app.push_screen('reports')", "Reports", show=False),
+        Binding("n", "app.push_screen('network_setup')", "Network", show=False),
+        Binding("x", "app.push_screen('custom_script')", "Scripts", show=False),
+        Binding("d", "app.push_screen('profiles')", "Profiles", show=False),
+        Binding("t", "app.push_screen('settings')", "Settings", show=False),
     ]
 
     DEFAULT_CSS = """
-    #dashboard {
-        padding: 1 2;
+    DashboardScreen #dashboard { padding: 0 2; }
+    DashboardScreen #active-case {
+        height: auto; background: $panel; border-left: solid $accent;
+        padding: 0 2; margin: 0;
     }
-    #dashboard #title {
-        text-style: bold;
-        color: $accent;
-        margin-bottom: 1;
+    DashboardScreen #case-eyebrow, DashboardScreen .section-label {
+        color: $text-muted; text-style: bold; height: 1;
     }
-    #menu-section {
-        margin: 0 0 1 0;
-        height: auto;
+    DashboardScreen #case-name { text-style: bold; height: 1; }
+    DashboardScreen #case-meta, DashboardScreen #case-location {
+        color: $text-muted; height: 1; overflow: hidden;
     }
-    #tools-section {
-        height: auto;
-        margin-bottom: 1;
-    }
+    DashboardScreen #case-location { display: none; }
+    DashboardScreen #home-case, DashboardScreen #home-switch { margin: 0 1 0 0; }
+    DashboardScreen .home-row { height: auto; }
+    DashboardScreen #more-tools { margin-top: 0; }
+    DashboardScreen #more-tools .section-label { margin: 1 0 1 0; }
     """
 
     def compose(self) -> ComposeResult:
-        import platform
         yield Header()
-        with Vertical(id="dashboard"):
-            yield Label("[bold]ChainRecon[/] [dim]IoT Security Assessment Framework[/]", id="title")
-            with Vertical(id="menu-section"):
-                yield Label("[bold underline]Menu[/]")
-                for key, _screen, label in _MENU_ITEMS:
-                    yield Label(f"  [bold cyan]{key}[/]  {label}")
-            with Vertical(id="tools-section"):
-                yield Label("[bold underline]Tool Status[/]")
-            # tshark replaces tcpdump on Windows
-            tools = ["nmap", "tshark", "adb", "frida", "jadx", "apktool"]
-            if platform.system() != "Windows":
-                tools.insert(2, "tcpdump")
-            with Horizontal():
-                with Vertical():
-                    for tool in tools:
-                        yield _ToolStatus(tool)
-            yield Label("")
-            yield Label(
-                "[dim]Press a key above to navigate  -  [b]?[/b] help  -  [b]q[/b] quit  -  "
-                "[b]w[/b] workflow  [b]m[/b] firmware  [b]p[/b] plugins  [b]d[/b] profiles  "
-                "[b]x[/b] custom script[/]"
-            )
-        yield Footer()
+        with VerticalScroll(id="dashboard"):
+            with Vertical(id="active-case"):
+                yield Static("INVESTIGATION FOLDER", id="case-eyebrow")
+                yield Static("", id="case-name")
+                yield Static("", id="case-meta")
+                yield Static("", id="case-location")
+                with Horizontal(classes="home-row"):
+                    yield Button("Files & findings", id="home-case", variant="primary")
+                    yield Button("Switch investigation", id="home-switch")
+            yield Static("ANALYSIS", classes="section-label")
+            with Horizontal(classes="home-row"):
+                yield Button("Firmware / flash", id="home-firmware")
+                yield Button("Packet captures", id="home-packets")
+                yield Button("Android APK", id="home-android")
+            with Horizontal(classes="home-row"):
+                yield Button("Nmap XML", id="home-nmap")
+                yield Button("Frida logs", id="home-frida-log")
+            yield Static("REPORTS", classes="section-label")
+            with Horizontal(classes="home-row"):
+                yield Button("Reports", id="home-reports")
+            yield Static("DEVICE WORK & WORKFLOWS", classes="section-label")
+            with Horizontal(classes="home-row"):
+                yield Button("Scan device", id="home-scan")
+                yield Button("Capture traffic", id="home-capture")
+                yield Button("Frida session", id="home-frida")
+                yield Button("Run workflow", id="home-workflow")
+            with Collapsible(title="More tools", collapsed=True, id="more-tools"):
+                yield Static("SETUP AND EXTENSIONS", classes="section-label")
+                with Horizontal(classes="home-row"):
+                    yield Button("Network setup", id="home-network")
+                    yield Button("Custom scripts", id="home-scripts")
+                    yield Button("Plugins", id="home-plugins")
+                with Horizontal(classes="home-row"):
+                    yield Button("Device profiles", id="home-profiles")
+                    yield Button("Settings and tools", id="home-settings")
+        yield HelpFooter()
+
+    def on_mount(self) -> None:
+        self._refresh_case()
+
+    def on_screen_resume(self) -> None:
+        self._refresh_case()
+
+    def _refresh_case(self) -> None:
+        name = self.query_one("#case-name", Static)
+        meta = self.query_one("#case-meta", Static)
+        location = self.query_one("#case-location", Static)
+        button = self.query_one("#home-case", Button)
+        raw_path = getattr(self.app, "_case_path", None)
+        if not raw_path:
+            name.update("No investigation selected")
+            meta.update("Choose a folder to keep imported files, runs, and reports together.")
+            location.update("")
+            button.label = "Files & findings"
+            return
+        path = Path(raw_path).expanduser()
+        location.update(escape(_short_path(path)))
+        location.tooltip = str(path)
+        name.tooltip = str(path)
+        try:
+            case = Case.open(path)
+        except (OSError, ValueError, KeyError):
+            name.update("Investigation folder needs setup")
+            meta.update("Switch investigation to open or create a folder.")
+            button.label = "Files & findings"
+            return
+        manifest = case.manifest
+        name.update(escape(str(manifest["title"])))
+        evidence_count = len(manifest["evidence"])
+        run_count = len(manifest["runs"])
+        meta.update(f"{evidence_count} files  ·  {run_count} runs")
+        button.label = "Files & findings"
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id or ""
+        if button_id in _ANALYSIS_BUTTONS:
+            self.action_open_view(_ANALYSIS_BUTTONS[button_id])
+            return
+        if button_id == "home-switch":
+            self.action_switch_investigation()
+            return
+        route = _BUTTON_ROUTES.get(button_id)
+        if route:
+            self.app.push_screen(route)
+
+    def action_open_view(self, view: str) -> None:
+        if view not in ANALYSIS_VIEWS:
+            raise ValueError(f"Unknown analysis view: {view}")
+        self.app.push_screen(CaseAnalysisScreen(view=view))
+
+    def action_switch_investigation(self) -> None:
+        raw = getattr(self.app, "_case_path", None)
+        current = Path(raw) if raw and (Path(raw) / "case.json").is_file() else None
+        self.app.push_screen(CasePickerScreen(current=current), self._investigation_chosen)
+
+    def _investigation_chosen(self, path: str | None) -> None:
+        if path:
+            setattr(self.app, "_case_path", path)
+            self._refresh_case()
 
     def action_toggle_help(self) -> None:
-        self.app.push_screen(HelpScreen(HELP_TEXT, title="ChainRecon -- How It Works"))
+        self.app.push_screen(HelpScreen(HELP_TEXT, title="ChainRecon"))
 
 
-def _format_tool_status(tool_name: str, path: str, width: int = 78) -> str:
-    prefix = f"[green]OK[/] {tool_name}:"
-    if len(path) <= width:
-        return f"{prefix} {path}"
-    wrapped = _wrap_display_text(path, width=max(24, width - 4))
-    wrapped = wrapped.replace("\n", "\n  ")
-    return f"{prefix}\n  {wrapped}"
+def _short_path(path: Path, *, limit: int = 64) -> str:
+    value = str(path)
+    return value if len(value) <= limit else "…" + value[-(limit - 1):]

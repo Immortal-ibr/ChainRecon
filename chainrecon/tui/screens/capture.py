@@ -11,13 +11,13 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Checkbox, Footer, Header, Label, Select
-
-from chainrecon.tui.widgets.pasteable_input import PasteableInput as Input
+from textual.widgets import Button, Checkbox, Header, Label, Select
 
 from chainrecon.runners.capture_runner import CaptureRunner
 from chainrecon.tui.screens.help_screen import HelpScreen
+from chainrecon.tui.widgets.help_footer import HelpFooter
 from chainrecon.tui.widgets.log_viewer import LogActionBar, LogViewer
+from chainrecon.tui.widgets.pasteable_input import PasteableInput as Input
 from chainrecon.utils.config import get_config, get_network_config
 from chainrecon.utils.network import list_interfaces
 
@@ -44,7 +44,7 @@ you can drag into Wireshark or feed into the Analyze screen.
   IoT Ports     -> -f "port 1883 or port 8883 or port 5353 or port 1900 or port 5683"
 
   If you have a target IP saved from Network Setup, it gets ANDed in:
-    -f "host 192.168.123.99 and (port 1883 or port 8883)"
+    -f "host 10.50.0.254 and (port 1883 or port 8883)"
   This cuts pcap size dramatically and speeds up analysis.
 
 [bold]Interface[/]
@@ -148,7 +148,7 @@ class CaptureScreen(Screen):
                 yield Button("Back", id="btn-back")
             yield LogActionBar()
             yield LogViewer(id="capture-log")
-        yield Footer()
+        yield HelpFooter()
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "mode":
@@ -201,20 +201,24 @@ class CaptureScreen(Screen):
                     target_ip=target_ip, output_dir=output_dir,
                 )
                 pcap_files = result.get("pcap_files", [])
-                self.app.call_from_thread(log.append, "[green]Capture complete.[/]")
+                case_path = getattr(self.app, "_case_path", None)
+                if case_path:
+                    run_ids = _record_case_capture(pcap_files, case_path)
+                    self._post(log.append, f"[dim]Case traffic runs: {', '.join(run_ids)}[/]")
+                self._post(log.append, "[green]Capture complete.[/]")
                 for f in pcap_files:
-                    self.app.call_from_thread(log.append, f"[dim]Saved: {f}[/]")
+                    self._post(log.append, f"[dim]Saved: {f}[/]")
                 if custom_path and pcap_files:
-                    args = " ".join([target_ip or "", pcap_files[0]])
-                    self.app.call_from_thread(
+                    args = [target_ip or "", pcap_files[0]]
+                    self._post(
                         self._run_custom_inline, args, custom_path, custom_interp, log
                     )
             except Exception as exc:
-                self.app.call_from_thread(log.append, f"[red]Error: {exc}[/]")
+                self._post(log.append, f"[red]Error: {exc}[/]")
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _run_custom_inline(self, args: str, script_path: str, interp: str, log: LogViewer) -> None:
+    def _run_custom_inline(self, args: str | list[str], script_path: str, interp: str, log: LogViewer) -> None:
         """Run a user-provided script and append its output to the log."""
         log.append(f"[bold]Running custom script: {script_path}[/]")
 
@@ -225,7 +229,7 @@ class CaptureScreen(Screen):
 
         def _worker() -> None:
             try:
-                arg_list = args.split() if args.strip() else []
+                arg_list = args if isinstance(args, list) else ([args] if args.strip() else [])
                 if interp == "python":
                     cmd = ["python", script_path] + arg_list
                 elif interp == "powershell":
@@ -238,13 +242,13 @@ class CaptureScreen(Screen):
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                 out = result.stdout.strip()
                 if out:
-                    self.app.call_from_thread(log.append, out[:3000])
+                    self._post(log.append, out[:3000])
                 if result.returncode != 0:
-                    self.app.call_from_thread(log.append, f"[yellow]Script exited with code {result.returncode}[/]")
+                    self._post(log.append, f"[yellow]Script exited with code {result.returncode}[/]")
                     if result.stderr:
-                        self.app.call_from_thread(log.append, f"[red]{result.stderr[:500]}[/]")
+                        self._post(log.append, f"[red]{result.stderr[:500]}[/]")
                 else:
-                    self.app.call_from_thread(log.append, "[green]Custom script complete.[/]")
+                    self._post(log.append, "[green]Custom script complete.[/]")
 
                 from chainrecon.utils.config import get_output_dir
                 outdir = get_output_dir()
@@ -253,20 +257,48 @@ class CaptureScreen(Screen):
                 safe = re.sub(r"[^a-z0-9_]", "_", Path(script_path).stem.lower())
                 outfile = outdir / f"custom_capture_{safe}_{ts}.json"
                 outfile.write_text(json.dumps({
-                    "tool": "custom_script", "script": script_path, "args": args,
+                    "tool": "custom_script", "script": script_path, "args": arg_list,
                     "exit_code": result.returncode,
                     "stdout": result.stdout[:5000], "stderr": result.stderr[:2000],
                 }, indent=2))
-                self.app.call_from_thread(log.append, f"[dim]Result saved: {outfile}[/]")
+                self._post(log.append, f"[dim]Result saved: {outfile}[/]")
 
                 if save_to_lib:
                     from chainrecon.utils.custom_scripts import save_to_library
                     save_to_library("capture", script_path, interp)
-                    self.app.call_from_thread(log.append, "[dim]Script saved to library.[/]")
+                    self._post(log.append, "[dim]Script saved to library.[/]")
             except Exception as exc:
-                self.app.call_from_thread(log.append, f"[red]Custom script error: {exc}[/]")
+                self._post(log.append, f"[red]Custom script error: {exc}[/]")
 
         threading.Thread(target=_worker, daemon=True).start()
 
     def action_toggle_help(self) -> None:
         self.app.push_screen(HelpScreen(HELP_TEXT, title="Traffic Capture"))
+
+    def _post(self, callback, *args) -> None:
+        try:
+            self.app.call_from_thread(callback, *args)
+        except RuntimeError:
+            # A capture may finish after the user closes the TUI.
+            pass
+
+
+def _record_case_capture(paths: list[str], case_path: str) -> list[str]:
+    """Preserve captured bytes and run bounded traffic analysis in the case."""
+    from chainrecon.case_analysis import CaseAnalysisService
+    from chainrecon.case_model import Case
+
+    case = Case.open(case_path)
+    run_ids = []
+    for name in paths:
+        path = Path(name)
+        if not path.is_file():
+            raise FileNotFoundError(f"Capture output missing: {path}")
+        evidence = case.add_evidence(path, kind="pcap")
+        run = CaseAnalysisService(case).run(evidence.id, "traffic")
+        if run.status == "failed":
+            raise RuntimeError(f"Case traffic analysis {run.id} failed: {'; '.join(run.warnings)}")
+        run_ids.append(run.id)
+    if not run_ids:
+        raise ValueError("Capture produced no PCAP files")
+    return run_ids

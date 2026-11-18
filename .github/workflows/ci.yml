@@ -2,116 +2,85 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   offline-tests:
-    name: Offline Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    name: Offline tests / ${{ matrix.os }} / Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-        python-version:
-          - "3.11"
-          - "3.13"
-
+        os: [ubuntu-latest, windows-latest]
+        python-version: ['3.11', '3.12', '3.13']
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-
-      - name: Install dependencies
+      - name: Install source and test tools
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e .[dev,tui]
-
-      - name: Compile-check all Python sources
+          python -m pip install -e ".[dev,tui]"
+      - name: Check installed dependencies
+        run: python -m pip check
+      - name: Lint source and tests
+        run: python -m ruff check chainrecon tests scripts --select E4,E7,E9,F
+      - name: Type check case, firmware, workflow, and TUI routes
+        run: python -m mypy chainrecon/analysis_catalog.py chainrecon/case_model.py chainrecon/case_analysis.py chainrecon/case_reporting.py chainrecon/elf_inspection.py chainrecon/firmware_engine.py chainrecon/v2_cli.py chainrecon/tui/app.py chainrecon/tui/screens/help_screen.py chainrecon/tui/screens/case_picker.py chainrecon/tui/screens/case.py chainrecon/tui/screens/case_analysis.py chainrecon/tui/screens/dashboard.py chainrecon/tui/screens/analyze.py chainrecon/tui/screens/apk.py chainrecon/tui/screens/reports.py chainrecon/tui/widgets/help_footer.py chainrecon/tui/widgets/path_input.py chainrecon/runners/workflow_runner.py chainrecon/utils/redaction.py --ignore-missing-imports --follow-imports=silent
+      - name: Compile Python source
+        run: python -m compileall -q chainrecon
+      - name: Source CLI smoke
+        run: python -I -m chainrecon --help
+      - name: Run all offline tests with branch coverage
         env:
-          PYTHONUTF8: "1"
-        run: python -m compileall -q analysis runners tui plugins utils chainrecon.py
-
-      - name: Collect-only debug
-        if: runner.os == 'Linux'
-        env:
-          PYTHONUTF8: "1"
-        run: python -m pytest -m "unit or integration or requirement" --collect-only -q 2>&1 | tail -50
-
-      - name: Run offline pytest suite (Linux)
-        if: runner.os == 'Linux'
-        id: pytest_run_linux
-        env:
-          PYTHONUTF8: "1"
+          PYTHONUTF8: '1'
+        run: python -m pytest tests --cov=chainrecon --cov-branch --cov-report=xml:coverage.xml --cov-report=term --junitxml=test-results.xml
+      - name: Check release coverage gates
         run: |
-          python -m pytest -m "unit or integration or requirement" --tb=long --junitxml=test-results.xml 2>&1 | tee pytest-output.txt
-          exit ${PIPESTATUS[0]}
+          python -m coverage json -o coverage.json
+          python scripts/check_coverage.py coverage.json
 
-      - name: Print pytest output (Linux)
-        if: runner.os == 'Linux' && always()
-        run: |
-          echo "=== PYTEST OUTPUT ==="
-          cat pytest-output.txt 2>/dev/null || echo "No output file"
-
-      - name: Run offline pytest suite (Windows)
-        if: runner.os == 'Windows'
-        id: pytest_run_windows
-        env:
-          PYTHONUTF8: "1"
-        run: python -m pytest -m "unit or integration or requirement" --tb=short --junitxml=test-results.xml
-
-      - name: Dump test failures to step summary
-        if: always()
-        shell: python
-        run: |
-          import xml.etree.ElementTree as ET, os, sys
-          results_path = "test-results.xml"
-          if not os.path.exists(results_path):
-              print("::warning::No test-results.xml found")
-              sys.exit(0)
-          try:
-              tree = ET.parse(results_path)
-              root = tree.getroot()
-              failures = []
-              for tc in root.iter("testcase"):
-                  err = tc.find("failure") or tc.find("error")
-                  if err is not None:
-                      name = tc.get("classname", "") + "." + tc.get("name", "")
-                      text = (err.text or "")[:3000]
-                      failures.append((name, text))
-              summary_file = os.environ.get("GITHUB_STEP_SUMMARY", "")
-              if summary_file and failures:
-                  with open(summary_file, "a", encoding="utf-8") as f:
-                      f.write("# Failed Tests\n\n")
-                      for name, text in failures:
-                          f.write(f"### {name}\n```\n{text}\n```\n\n")
-              if failures:
-                  print(f"Found {len(failures)} failure(s):")
-                  for name, text in failures:
-                      # Emit as GitHub Actions error annotation (visible in logs)
-                      safe = text.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-                      print(f"::error title={name}::{safe}")
-              else:
-                  print("All tests passed.")
-          except Exception as exc:
-              print(f"::error::Parse error: {exc}")
-
-      - name: Upload artifacts on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
+  package-smoke:
+    name: Source and wheel install / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          name: test-results-${{ matrix.os }}-py${{ matrix.python-version }}
-          path: |
-            test-results.xml
-            pytest-output.txt
-          if-no-files-found: ignore
+          python-version: '3.12'
+      - name: Install build tools
+        run: python -m pip install --upgrade pip build wheel
+      - name: Build clean source and wheel distributions
+        run: python scripts/build_clean.py --outdir dist
+      - name: Check package metadata
+        run: |
+          python -m pip install twine
+          python scripts/check_dist.py
+      - name: Smoke clean wheel and source installs
+        run: |
+          python scripts/smoke_install.py dist/chainrecon-*.whl
+          python scripts/smoke_install.py dist/chainrecon-*.tar.gz
+
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Audit declared dependencies
+        run: |
+          python -m pip install pip-audit
+          python -m pip_audit . --strict

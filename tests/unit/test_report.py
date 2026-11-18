@@ -133,7 +133,7 @@ class ReportGeneratorOutputTests(unittest.TestCase):
     def test_normalize_frida_section_adds_sessions_shape(self):
         gen = ReportGenerator()
         gen.add_results("frida", {
-            "metadata": {"target": "com.nooie.home", "script": "network_traffic_monitor", "source_file": "session.json"},
+            "metadata": {"target": "com.samplecam.home", "script": "network_traffic_monitor", "source_file": "session.json"},
             "summary": {"status": "stopped_by_user"},
             "findings": {"events_by_tag": {"HOOK": 3}, "hook_events": ["[HOOK] socket.connect"]},
         }, mode="append")

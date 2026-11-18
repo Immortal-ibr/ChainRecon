@@ -10,7 +10,9 @@ try:
 except ImportError:
     yaml = None  # type: ignore
 
-_LIBRARY_FILE = Path(__file__).resolve().parent.parent / "config" / "custom_scripts.yaml"
+from chainrecon.utils.config import user_config_dir
+
+_LIBRARY_FILE = user_config_dir() / "custom_scripts.yaml"
 
 
 def load_library() -> List[Dict[str, Any]]:

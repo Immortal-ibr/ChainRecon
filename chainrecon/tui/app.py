@@ -19,17 +19,18 @@ from chainrecon.analysis.report_generator import ReportGenerator
 from chainrecon.tui.screens.analyze import AnalyzeScreen
 from chainrecon.tui.screens.apk import APKScreen
 from chainrecon.tui.screens.capture import CaptureScreen
+from chainrecon.tui.screens.case import CaseScreen
+from chainrecon.tui.screens.case_analysis import CaseAnalysisScreen
 from chainrecon.tui.screens.community_plugins import CommunityPluginsScreen
 from chainrecon.tui.screens.custom_script import CustomScriptScreen
 from chainrecon.tui.screens.dashboard import DashboardScreen
 from chainrecon.tui.screens.device_profiles import DeviceProfilesScreen
-from chainrecon.tui.screens.firmware import FirmwareScreen
 from chainrecon.tui.screens.frida import FridaScreen
+from chainrecon.tui.screens.help_screen import HelpScreen
 from chainrecon.tui.screens.network_setup import NetworkSetupScreen
 from chainrecon.tui.screens.reports import ReportsScreen
 from chainrecon.tui.screens.scan import ScanScreen
 from chainrecon.tui.screens.settings import SettingsScreen
-from chainrecon.tui.screens.welcome import WelcomeScreen
 from chainrecon.tui.screens.workflow import WorkflowScreen
 from chainrecon.tui.widgets.log_viewer import (
     LOG_CLEAR_ID,
@@ -63,7 +64,7 @@ Screen {
 }
 #dashboard, #scan-form, #capture-form, #analyze-form, #frida-form,
 #apk-form, #reports-form, #settings, #network-setup-form,
-#custom-script-form, #workflow-form, #firmware-form, #plugins-form,
+#custom-script-form, #workflow-form, #plugins-form,
 #profiles-form {
     padding: 1 6 1 2;
 }
@@ -113,6 +114,19 @@ Button {
 Button.primary {
     color: $text;
 }
+#reports-form { padding: 0 2 1 2; }
+#reports-form Input, #reports-form Select { margin-bottom: 0; }
+#reports-form Button { margin: 0 1 0 0; }
+#report-source-detail { height: 1; color: $text-muted; overflow: hidden; }
+DashboardScreen .home-row Button {
+    width: 1fr;
+    min-width: 0;
+    margin: 0 1 0 0;
+}
+FridaScreen #frida-form { padding: 0 2; }
+FridaScreen #title, FridaScreen #frida-form Input,
+FridaScreen #frida-form Select { margin-bottom: 0; }
+FridaScreen #frida-form Button { margin: 0 1 0 0; }
 Label {
     margin-bottom: 0;
 }
@@ -133,7 +147,7 @@ Horizontal {
 VerticalScroll {
     height: 1fr;
     width: 1fr;
-    padding-right: 7;
+    padding-right: 1;
     scrollbar-gutter: stable;
     overflow-x: hidden;
 }
@@ -158,10 +172,17 @@ Label {
 Footer {
     overflow-x: hidden;
 }
+HelpFooter HelpShortcut {
+    dock: right;
+    width: 9;
+    min-width: 9;
+    height: 1;
+    padding: 0 1;
+    color: $footer-foreground;
+    background: $footer-description-background;
+}
 
-/* Admin PowerShell / conhost.exe ASCII fallback.
-   conhost.exe can render borders poorly. When WT_SESSION is missing we
-   add .ascii-mode on the App root and force bordered widgets to ASCII. */
+/* Optional ASCII fallback for terminals that cannot render box characters. */
 .ascii-mode * {
     scrollbar-size: 1 1;
 }
@@ -206,9 +227,6 @@ Footer {
 .ascii-mode Static {
     border: none;
 }
-.ascii-mode #welcome-box {
-    border: ascii $accent;
-}
 .ascii-mode #modal-box {
     border: ascii $accent;
 }
@@ -228,9 +246,11 @@ class ChainReconApp(App):
     """The ChainRecon TUI."""
 
     TITLE = "ChainRecon"
-    SUB_TITLE = "IoT Security Assessment Framework"
+    SUB_TITLE = "Investigation workspace"
     CSS = CSS
     BINDINGS = [
+        Binding("tab", "focus_next", "Next field"),
+        Binding("f1", "keyboard_help", "Help", show=False, priority=True),
         Binding("ctrl+c", "copy_focused", "Copy", show=False, priority=True),
         Binding("ctrl+shift+c", "copy_focused", "Copy", show=False, priority=True),
         Binding("ctrl+q", "quit", "Quit", show=False, priority=True),
@@ -248,13 +268,21 @@ class ChainReconApp(App):
         "network_setup": NetworkSetupScreen,
         "custom_script": CustomScriptScreen,
         "workflow": WorkflowScreen,
-        "firmware": FirmwareScreen,
         "plugins": CommunityPluginsScreen,
         "profiles": DeviceProfilesScreen,
+        "case": CaseScreen,
+        "case_analysis": CaseAnalysisScreen,
     }
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, case_path: str | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
+        self._open_case_on_start = bool(case_path)
+        if case_path is None:
+            from chainrecon.utils.config import get_case_directory
+
+            configured = get_case_directory()
+            case_path = str(configured) if configured is not None else None
+        self._case_path = case_path
         self._report_gen = ReportGenerator()
         self._active_device_profile: str | None = None
         self.os_mode: str = platform.system() if platform.system() in ("Windows", "Linux") else "Linux"
@@ -264,10 +292,21 @@ class ChainReconApp(App):
         import sys
 
         disable_terminal_mouse_reporting()
-        if sys.platform == "win32" and not os.environ.get("WT_SESSION"):
+        if sys.platform == "win32" and os.environ.get("CHAINRECON_ASCII_UI") == "1":
             self.add_class("ascii-mode")
         self.push_screen("dashboard")
-        self.push_screen(WelcomeScreen())
+        if self._open_case_on_start:
+            self.push_screen("case")
+
+    def action_keyboard_help(self) -> None:
+        """Show navigation keys and the active screen's contextual help."""
+        if isinstance(self.screen, HelpScreen):
+            return
+        show_help = getattr(self.screen, "action_toggle_help", None)
+        if callable(show_help):
+            show_help()
+        else:
+            self.push_screen(HelpScreen("", title="Keyboard guide"))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle shared log action buttons that bubble up from screens."""
@@ -304,7 +343,7 @@ class ChainReconApp(App):
         if isinstance(focused, TextArea):
             focused.action_copy()
             return
-        if hasattr(focused, "action_copy"):
+        if focused is not None and hasattr(focused, "action_copy"):
             try:
                 focused.action_copy()  # type: ignore[attr-defined]
                 return
@@ -325,7 +364,7 @@ class ChainReconApp(App):
             return None
 
 
-def run_tui() -> None:
+def run_tui(case_path: str | None = None) -> None:
     """Entry point called from the CLI."""
     import os
     import signal
@@ -334,11 +373,13 @@ def run_tui() -> None:
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     if sys.platform == "win32":
         os.environ.setdefault("PYTHONIOENCODING", "utf-8")
-        try:
-            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-        except (AttributeError, IOError):
-            pass
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                reconfigure = getattr(stream, "reconfigure", None)
+                if reconfigure is not None:
+                    reconfigure(encoding="utf-8", errors="replace")
+            except IOError:
+                pass
         try:
             import ctypes
 
@@ -360,5 +401,5 @@ def run_tui() -> None:
             pass
         os.system("cls")
     disable_terminal_mouse_reporting()
-    ChainReconApp().run()
+    ChainReconApp(case_path=case_path).run()
     disable_terminal_mouse_reporting()

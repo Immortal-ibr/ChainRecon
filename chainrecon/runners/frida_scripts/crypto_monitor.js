@@ -2,6 +2,7 @@ Java.perform(function () {
   const config = typeof CHAINRECON_CONFIG !== "undefined" ? CHAINRECON_CONFIG : {};
   const algorithmFilter = String(config.algorithm_filter || "").toLowerCase();
   const maxBytes = Math.max(parseInt(config.max_bytes || "64", 10) || 64, 8);
+  const revealSensitive = config.reveal_sensitive === true || String(config.reveal_sensitive || "").toLowerCase() === "true";
 
   const shouldLogAlgorithm = function (algorithm) {
     const normalized = String(algorithm || "").toLowerCase();
@@ -10,6 +11,7 @@ Java.perform(function () {
 
   const bytesToHex = function (bytes) {
     if (!bytes) return "(null)";
+    if (!revealSensitive) return "[redacted]";
     const arr = Java.array("byte", bytes);
     let hex = "";
     for (let i = 0; i < arr.length && i < maxBytes; i++) {
@@ -22,6 +24,7 @@ Java.perform(function () {
   };
 
   const describeValue = function (value) {
+    if (!revealSensitive) return "[redacted]";
     try {
       if (value === null || value === undefined) return "null";
       return value.toString();
@@ -71,7 +74,7 @@ Java.perform(function () {
       const modeText = mode === 1 ? "ENCRYPT" : mode === 2 ? "DECRYPT" : "mode=" + mode;
       console.log("[CRYPTO-INIT] " + modeText + " alg=" + algorithm);
       try {
-        console.log("[CRYPTO-KEY] " + bytesToHex(key.getEncoded()));
+        console.log("[CRYPTO-KEY] " + (revealSensitive ? bytesToHex(key.getEncoded()) : "[redacted]"));
       } catch (e) {
         console.log("[CRYPTO-KEY] <not exportable>");
       }

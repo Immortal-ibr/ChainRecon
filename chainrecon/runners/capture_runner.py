@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -55,6 +56,13 @@ class CaptureRunner:
     ) -> Dict[str, Any]:
         if mode not in CAPTURE_MODES:
             raise ValueError(f"Unknown capture mode: {mode}")
+        if not 1 <= duration <= 86_400:
+            raise ValueError("Capture duration must be 1 to 86400 seconds")
+        if target_ip:
+            try:
+                target_ip = str(ipaddress.ip_address(target_ip))
+            except ValueError as exc:
+                raise ValueError("Capture target must be one IPv4 or IPv6 address") from exc
 
         # Resolve tool to its full path -- try tshark first (preferred on all platforms),
         # fall back to tcpdump on Linux/Mac only.
@@ -97,7 +105,7 @@ class CaptureRunner:
         cmd = [tool_path, "-i", interface, "-s", "0", "-G", str(duration), "-W", "1", "-w", pcap]
         if bpf_filter:
             cmd.append(bpf_filter)  # BPF filter is trailing positional arg for tcpdump
-        self._executor(cmd, timeout=duration + 30)
+        _check_capture_result(self._executor(cmd, timeout=duration + 30), pcap)
         return {"pcap_files": [pcap], "output_dir": str(out_dir), "mode": mode, "stdout": ""}
 
     def _capture_tshark(self, tool_path: str, interface, duration, bpf_filter, out_dir, mode):
@@ -105,5 +113,14 @@ class CaptureRunner:
         cmd = [tool_path, "-i", interface, "-a", f"duration:{duration}", "-w", pcap]
         if bpf_filter:
             cmd.extend(["-f", bpf_filter])
-        self._executor(cmd, timeout=duration + 30)
+        _check_capture_result(self._executor(cmd, timeout=duration + 30), pcap)
         return {"pcap_files": [pcap], "output_dir": str(out_dir), "mode": mode, "stdout": ""}
+
+
+def _check_capture_result(result: Any, pcap: str) -> None:
+    returncode = getattr(result, "returncode", None)
+    if isinstance(returncode, int) and returncode != 0:
+        stderr = str(getattr(result, "stderr", "") or "")
+        raise RuntimeError(f"Capture tool exited with status {returncode}: {stderr[:500] or 'no stderr'}")
+    if isinstance(returncode, int) and not Path(pcap).is_file():
+        raise RuntimeError("Capture tool exited successfully but produced no PCAP file")

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import platform
 import subprocess
 import threading
 from pathlib import Path
@@ -10,12 +9,12 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Label, Select
-
-from chainrecon.tui.widgets.pasteable_input import PasteableInput as Input
+from textual.widgets import Button, Header, Label, Select
 
 from chainrecon.tui.screens.help_screen import HelpScreen
+from chainrecon.tui.widgets.help_footer import HelpFooter
 from chainrecon.tui.widgets.log_viewer import LogActionBar, LogViewer
+from chainrecon.tui.widgets.pasteable_input import PasteableInput as Input
 from chainrecon.utils.config import get_network_config, save_network_config
 from chainrecon.utils.network import list_interfaces
 
@@ -39,7 +38,7 @@ an IoT device connected through a dedicated physical router.
   - Ethernet Interface -- The adapter connected to the IoT router.
   - Internet Interface -- The adapter with active internet (usually Wi-Fi).
   - Static IP -- IP to assign to the Ethernet adapter. Must be in the same
-    subnet as the router (e.g. 192.168.123.100 if router is .99).
+    subnet as the router (e.g. 10.50.0.1 if the router is 10.50.0.254).
   - Subnet Prefix -- Usually 24 for a /24 (255.255.255.0) network.
   - Target IP -- IP of the IoT device (for capture BPF filters).
   - Router IP -- IP of the dedicated router.
@@ -51,6 +50,7 @@ an IoT device connected through a dedicated physical router.
   - Remove -- Tears down the NAT and removes the static IP.
 
 [bold]Platform[/]
+  Choose the operating system on this screen before applying the setup.
   Windows: scripts/network_setup.ps1 (PowerShell, requires Run As Admin)
   Linux:   scripts/network_setup.sh (bash, requires sudo)
 
@@ -59,7 +59,7 @@ Config: config/local.yaml -> network section
 To edit this screen: tui/screens/network_setup.py[/]
 """
 
-_SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
+_SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "resources" / "scripts"
 
 
 class NetworkSetupScreen(Screen):
@@ -84,6 +84,12 @@ class NetworkSetupScreen(Screen):
             yield Label(
                 "[dim]Interfaces are detected from your OS each time you open this screen.[/]"
             )
+            yield Label("System running the network setup:")
+            yield Select(
+                [("Windows", "Windows"), ("Linux", "Linux")],
+                value=getattr(self.app, "os_mode", "Windows"),
+                id="os-mode",
+            )
 
             # Detect interfaces live every time this screen is opened
             opts, iface_names = self._build_iface_options()
@@ -102,8 +108,8 @@ class NetworkSetupScreen(Screen):
             yield Select(opts, value=inet_saved, id="inet-iface")
             yield Label("Static IP for Ethernet adapter:")
             yield Input(
-                value=saved.get("static_ip", "192.168.123.100/24"),
-                placeholder="192.168.123.100/24",
+                value=saved.get("static_ip", "10.50.0.1/24"),
+                placeholder="10.50.0.1/24",
                 id="static-ip",
             )
             yield Label("Target IP (IoT device):")
@@ -125,7 +131,7 @@ class NetworkSetupScreen(Screen):
                 yield Button("Back", id="btn-back")
             yield LogActionBar()
             yield LogViewer(id="net-log")
-        yield Footer()
+        yield HelpFooter()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         btn = event.button.id
@@ -137,6 +143,10 @@ class NetworkSetupScreen(Screen):
             self._run_script(remove=False)
         elif btn == "btn-remove":
             self._run_script(remove=True)
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "os-mode" and event.value in {"Windows", "Linux"}:
+            setattr(self.app, "os_mode", event.value)
 
     def _gather_values(self) -> dict:
         eth = self.query_one("#eth-iface", Select).value
@@ -178,7 +188,7 @@ class NetworkSetupScreen(Screen):
         else:
             ip_part, prefix = static_raw, "24"
 
-        is_win = getattr(self.app, "os_mode", "Windows") == "Windows"
+        is_win = self.query_one("#os-mode", Select).value == "Windows"
         action = "Removing" if remove else "Applying"
         log.append(f"[bold]{action} network configuration...[/]")
 

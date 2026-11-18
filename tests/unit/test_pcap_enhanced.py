@@ -1,7 +1,5 @@
 """Tests for enhanced PCAP analysis modules (Phase 2.2)."""
 
-import collections
-import json
 import os
 import unittest
 from types import SimpleNamespace
@@ -191,14 +189,14 @@ class WebRTCAnalyzerTests(unittest.TestCase):
         result = analyzer.analyze([pkt])
         self.assertGreaterEqual(result["summary"]["srtp_count"], 1)
 
-    def test_risk_for_srtp_without_dtls(self):
+    def test_srtp_without_dtls_in_capture_is_inconclusive(self):
         rtp_payload = b"\x80\x60" + b"\x00" * 10
         udp_layer = SimpleNamespace(payload=rtp_payload.hex())
         pkt = _make_packet(proto="UDP", layers=["RTP"], udp=udp_layer)
         analyzer = WebRTCAnalyzer()
         result = analyzer.analyze([pkt])
         risks = [r for r in result["risk_indicators"] if "SRTP without DTLS" in r.get("title", "")]
-        self.assertGreater(len(risks), 0)
+        self.assertEqual(len(risks), 0)
 
 
 # ===========================================================================
@@ -241,11 +239,12 @@ class MQTTAnalyzerTests(unittest.TestCase):
         self.assertGreater(len(payloads), 0)
         self.assertTrue(payloads[0]["is_json"])
 
-    def test_plaintext_mqtt_risk(self):
+    def test_decoded_plaintext_mqtt_is_observed_without_overstating_risk(self):
         analyzer = MQTTAnalyzer()
         result = analyzer.analyze([self._mqtt_pkt(port="1883")])
         risks = [r for r in result["risk_indicators"] if "not encrypted" in r.get("title", "")]
-        self.assertGreater(len(risks), 0)
+        self.assertEqual(len(risks), 0)
+        self.assertGreater(len(result["findings"]["topics"]), 0)
 
     def test_encrypted_mqtt_no_risk(self):
         pkt = self._mqtt_pkt(port="8883")
@@ -271,7 +270,9 @@ class MQTTAnalyzerTests(unittest.TestCase):
         )
         analyzer = MQTTAnalyzer()
         result = analyzer.analyze([pkt])
-        self.assertTrue(result["findings"]["authentication"]["authenticated"])
+        self.assertTrue(result["findings"]["authentication"]["connect_observed"])
+        self.assertTrue(result["findings"]["authentication"]["username_present"])
+        self.assertIsNone(result["findings"]["authentication"]["authenticated"])
 
 
 if __name__ == "__main__":

@@ -5,471 +5,36 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-import tempfile
 import threading
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from chainrecon.runners.base import ToolNotFoundError, check_tool, run_subprocess
 from chainrecon.utils.artifacts import artifact_path, safe_token
 from chainrecon.utils.logging_config import get_logger
+from chainrecon.frida_events import parse_event_line, redact_frida_output
+from chainrecon.utils.redaction import redact_report_data, redact_text
+
+from chainrecon.runners.frida_catalog import (
+    FRIDA_SCRIPT_GUIDE as FRIDA_SCRIPT_GUIDE, FRIDA_SCRIPTS as FRIDA_SCRIPTS,
+    _ANSI_CONTROL_RE, _SCRIPTS_DIR, _expected_long_running,
+    _normalize_optional_filter_value, _runtime_script_dir,
+    _script_filename_from_label as _script_filename_from_label, _split_parameter_values,
+)
+from chainrecon.runners.frida_session import FridaSession as FridaSession
+
 
 logger = get_logger("frida")
-
-_SCRIPTS_DIR = Path(__file__).parent / "frida_scripts"
-_ANSI_CONTROL_RE = re.compile(
-    r"(?:\x1b\[[0-?]*[ -/]*[@-~])"
-    r"|(?:\x1b\][^\x07]*(?:\x07|\x1b\\))"
-    r"|(?:\x1b[@-Z\\-_])"
-)
-
-
-def _runtime_script_dir() -> Path:
-    """Return the runtime-only directory for rendered Frida wrappers."""
-    path = Path(tempfile.gettempdir()) / "chainrecon" / "frida_scripts"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def _script_filename_from_label(label: str) -> str:
-    token = safe_token(label, "frida_script")
-    return f"{token}.js"
-
-
-def _expected_long_running(script_key: str) -> bool:
-    runtime = FRIDA_SCRIPTS.get(script_key, {}).get("runtime", {})
-    return bool(runtime.get("expected_long_running", runtime.get("expect_long_running_output", False)))
-
-
-def _split_parameter_values(value: str) -> list[str]:
-    pieces = re.split(r"[\r\n,;]+", value)
-    return [piece.strip() for piece in pieces if piece.strip()]
-
-
-def _normalize_optional_filter_value(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text or text.lower() in {"*", "any", "all"}:
-        return None
-    return text
-
-
-FRIDA_SCRIPTS: Dict[str, Dict[str, Any]] = {
-    "list_classes": {
-        "label": "List App Loaded Classes",
-        "description": "Enumerate loaded Java classes in the attached app process. Filters accept comma, semicolon, or newline-separated terms.",
-        "file": _script_filename_from_label("List App Loaded Classes"),
-        "target_type": "package",
-        "params": [
-            {
-                "name": "class_filter",
-                "label": "Class filter",
-                "placeholder": "com.nooie; com.thingclips",
-                "default": "*",
-                "required": False,
-            }
-        ],
-        "runtime": {"launch_if_needed": True, "expect_long_running_output": False},
-    },
-    "device_class_census": {
-        "label": "Device-Wide Class Census",
-        "description": "Iterate matching device processes explicitly and run a census-style class dump for each one so the result is device-scoped rather than a single attached-process snapshot.",
-        "file": _script_filename_from_label("Device-Wide Class Census"),
-        "target_type": "package",
-        "params": [
-            {
-                "name": "class_filter",
-                "label": "Class filter",
-                "placeholder": "com.nooie.home, mqtt, token",
-                "default": "*",
-                "required": False,
-            }
-        ],
-        "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
-    },
-    "live_class_monitor": {
-        "label": "Live Loaded Class Monitor",
-        "description": "Continuously log newly loaded Java classes and Class.forName requests after the hook starts. Use a package/class filter to keep output manageable.",
-        "file": _script_filename_from_label("Live Loaded Class Monitor"),
-        "target_type": "package",
-        "params": [
-            {
-                "name": "class_filter",
-                "label": "Class filter",
-                "placeholder": "com.nooie; com.thingclips; mqtt",
-                "default": "*",
-                "required": False,
-            },
-            {
-                "name": "max_events_per_second",
-                "label": "Max events/sec",
-                "placeholder": "50",
-                "default": "50",
-                "required": False,
-            },
-        ],
-        "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
-    },
-    "hook_all_methods": {
-        "label": "Hook Selected Class Methods",
-        "description": "Hook every overload for one or more selected classes and stream calls live. Use package/class filters from the class-listing tools first, then paste the exact classes you want.",
-        "file": _script_filename_from_label("Hook Selected Class Methods"),
-        "target_type": "package",
-        "params": [
-            {
-                "name": "class_names",
-                "label": "Class names",
-                "placeholder": "One class per line, or comma / semicolon separated",
-                "required": True,
-            },
-            {
-                "name": "max_events_per_second",
-                "label": "Max events/sec",
-                "placeholder": "50",
-                "default": "50",
-                "required": False,
-            }
-        ],
-        "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
-    },
-    "hook_method": {
-        "label": "Hook Single Method",
-        "description": "Hook one method and log arguments and return values.",
-        "file": _script_filename_from_label("Hook Single Method"),
-        "target_type": "package",
-        "params": [
-            {
-                "name": "class_name",
-                "label": "Class name",
-                "placeholder": "com.nooie.home.SomeClass",
-                "required": True,
-            },
-            {
-                "name": "method_name",
-                "label": "Method name",
-                "placeholder": "someMethod",
-                "required": True,
-            },
-        ],
-        "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
-    },
-    "ssl_pinning_bypass": {
-        "label": "SSL Pinning Bypass",
-        "description": "Attempt common TrustManager, OkHttp, and WebView pinning bypasses.",
-        "file": _script_filename_from_label("SSL Pinning Bypass"),
-        "target_type": "package",
-        "params": [],
-        "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
-    },
-    "http_intercept": {
-        "label": "HTTP Trace",
-        "description": "Trace Java/Android HTTP requests through URLConnection, HttpURLConnection, WebView, and OkHttp hooks without injecting a new interceptor into the target app.",
-        "file": _script_filename_from_label("HTTP Trace"),
-        "target_type": "package",
-        "params": [
-            {
-                "name": "host_filter",
-                "label": "Host filter",
-                "placeholder": "api.nooie.com",
-                "default": "*",
-                "required": False,
-            },
-            {
-                "name": "additional_classes",
-                "label": "Additional classes",
-                "placeholder": "One class per line, or comma / semicolon separated",
-                "default": "",
-                "required": False,
-            }
-        ],
-        "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
-    },
-    "network_traffic_monitor": {
-        "label": "Socket and URL Monitor",
-        "description": "Trace URLConnection, Socket, and OkHttp traffic with concise event tags. Prefer this for long-running network activity when you need lower-overhead output than the HTTP trace.",
-        "file": _script_filename_from_label("Socket and URL Monitor"),
-        "target_type": "package",
-        "params": [
-            {
-                "name": "host_filter",
-                "label": "Host filter",
-                "placeholder": "mqtt, nooie, or leave blank",
-                "default": "*",
-                "required": False,
-            },
-            {
-                "name": "additional_classes",
-                "label": "Additional classes",
-                "placeholder": "One class per line, or comma / semicolon separated",
-                "default": "",
-                "required": False,
-            }
-        ],
-        "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
-    },
-    "crypto_monitor": {
-        "label": "Crypto Monitor",
-        "description": "Log selected Cipher, MessageDigest, and MAC operations.",
-        "file": _script_filename_from_label("Crypto Monitor"),
-        "target_type": "package",
-        "params": [
-            {
-                "name": "algorithm_filter",
-                "label": "Algorithm filter",
-                "placeholder": "AES, HmacSHA256, SHA-256",
-                "default": "*",
-                "required": False,
-            },
-            {
-                "name": "max_bytes",
-                "label": "Hex preview bytes",
-                "placeholder": "64",
-                "default": "64",
-                "required": False,
-            },
-            {
-                "name": "additional_classes",
-                "label": "Additional classes",
-                "placeholder": "One class per line, or comma / semicolon separated",
-                "default": "",
-                "required": False,
-            }
-        ],
-        "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
-    },
-    "shared_preferences_dump": {
-        "label": "Shared Preferences Watch",
-        "description": "Dump and watch SharedPreferences reads and writes.",
-        "file": _script_filename_from_label("Shared Preferences Watch"),
-        "target_type": "package",
-        "params": [
-            {
-                "name": "key_filter",
-                "label": "Key filter",
-                "placeholder": "token, mqtt, user",
-                "default": "*",
-                "required": False,
-            },
-            {
-                "name": "additional_classes",
-                "label": "Additional classes",
-                "placeholder": "One class per line, or comma / semicolon separated",
-                "default": "",
-                "required": False,
-            }
-        ],
-        "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
-    },
-    "database_dump": {
-        "label": "Database Monitor",
-        "description": "Trace SQLite queries, inserts, and updates.",
-        "file": _script_filename_from_label("Database Monitor"),
-        "target_type": "package",
-        "params": [
-            {
-                "name": "query_filter",
-                "label": "Query filter",
-                "placeholder": "device, mqtt, token",
-                "default": "*",
-                "required": False,
-            }
-        ],
-        "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
-    },
-    "certificate_pinning_detect": {
-        "label": "Certificate Pinning Detection",
-        "description": "Detect common pinning implementations without modifying behavior.",
-        "file": _script_filename_from_label("Certificate Pinning Detection"),
-        "target_type": "package",
-        "params": [],
-        "runtime": {"launch_if_needed": True, "expect_long_running_output": False},
-    },
-    "nooie_mqtt_trace": {
-        "label": "Nooie MQTT and Token Trace",
-        "description": "Watch MQTT token fetches, connects, publishes, and subscription events. Good for correlating login, token refresh, and broker activity in one long-running hook.",
-        "file": _script_filename_from_label("Nooie MQTT and Token Trace"),
-        "target_type": "package",
-        "params": [
-            {
-                "name": "class_filter",
-                "label": "Class filter",
-                "placeholder": "com.thingclips or com.nooie",
-                "default": "*",
-                "required": False,
-            },
-            {
-                "name": "additional_classes",
-                "label": "Additional classes",
-                "placeholder": "One class per line, or comma / semicolon separated",
-                "default": "",
-                "required": False,
-            }
-        ],
-        "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
-    },
-    "nooie_stream_trace": {
-        "label": "Nooie Stream and WebRTC Trace",
-        "description": "Trace stream lifecycle and WebRTC-related classes used by Nooie. Use after identifying the app-side stream classes from the class-listing tools.",
-        "file": _script_filename_from_label("Nooie Stream and WebRTC Trace"),
-        "target_type": "package",
-        "params": [
-            {
-                "name": "class_filter",
-                "label": "Class filter",
-                "placeholder": "webrtc, player, stream",
-                "default": "*",
-                "required": False,
-            }
-        ],
-        "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
-    },
-    "nooie_runtime_config": {
-        "label": "Nooie Runtime Config",
-        "description": "Dump runtime preferences, token-like values, and selected config accesses so report artifacts preserve the configuration state seen during a session.",
-        "file": _script_filename_from_label("Nooie Runtime Config"),
-        "target_type": "package",
-        "params": [
-            {
-                "name": "key_filter",
-                "label": "Key filter",
-                "placeholder": "token, mqtt, stream",
-                "default": "*",
-                "required": False,
-            }
-        ],
-        "runtime": {"launch_if_needed": True, "expect_long_running_output": True},
-    },
-}
-
-
-FRIDA_SCRIPT_GUIDE: Dict[str, Dict[str, Any]] = {
-    "list_classes": {
-        "when_to_use": "Use first when you need app-process class discovery before choosing narrower hooks.",
-        "expected_tags": ["[STATUS]", "[CLASS]"],
-        "limitations": "Current attached app process only; not device-wide.",
-    },
-    "device_class_census": {
-        "when_to_use": "Use when you want a broader census across matching device processes, not just one app attachment.",
-        "expected_tags": ["[PROCESS]", "[STATUS]", "[CLASS]"],
-        "limitations": "Runs each matching process sequentially, so large filters take longer and system processes can still be missed if Frida cannot attach.",
-    },
-    "live_class_monitor": {
-        "when_to_use": "Use when you want to watch class loading activity from the moment the hook starts until you stop it.",
-        "expected_tags": ["[STATUS]", "[CLASS-SEED]", "[CLASS-LOAD]", "[CLASS-FORNAME]", "[HOOK]", "[WARN]"],
-        "limitations": "Safe mode logs class load and Class.forName activity; it does not auto-hook every method on every class.",
-    },
-    "hook_all_methods": {
-        "when_to_use": "Use after class discovery when you need broad call tracing for a short list of exact classes.",
-        "expected_tags": ["[HOOK]", "[CALL]", "[RET]", "[WARN]"],
-        "limitations": "High-volume classes can flood output; keep class selection tight and use the rate limit.",
-    },
-    "hook_method": {
-        "when_to_use": "Use when you already know the exact class and method you want to inspect.",
-        "expected_tags": ["[HOOK]", "[CALL]", "[RET]", "[ERROR]"],
-        "limitations": "Only hooks one method definition at a time and depends on the class being loaded.",
-    },
-    "ssl_pinning_bypass": {
-        "when_to_use": "Use before HTTP or socket tracing when the target app enforces certificate pinning.",
-        "expected_tags": ["[STATUS]", "[HOOK]", "[WARN]"],
-        "limitations": "Common Android pinning patterns only; native or heavily obfuscated flows may still fail.",
-    },
-    "http_intercept": {
-        "when_to_use": "Use for request and response tracing in Java HTTP stacks such as URLConnection, HttpURLConnection, WebView, and OkHttp.",
-        "expected_tags": ["[HTTP-BUILD]", "[HTTP-REQ]", "[HTTP-RESP]", "[WEBVIEW]", "[HOOK]", "[WARN]"],
-        "limitations": "Java-side traffic only; native sockets and custom transports can bypass these hooks.",
-    },
-    "network_traffic_monitor": {
-        "when_to_use": "Use for lower-overhead long-running monitoring of sockets and URL opens.",
-        "expected_tags": ["[SOCKET]", "[URL]", "[HTTP]", "[HOOK]", "[WARN]"],
-        "limitations": "Less protocol detail than the HTTP trace and still limited to hookable Java networking APIs.",
-    },
-    "crypto_monitor": {
-        "when_to_use": "Use when you need to confirm when ciphers, digests, or MACs are exercised at runtime.",
-        "expected_tags": ["[CRYPTO-INIT]", "[CRYPTO-IN]", "[CRYPTO-OUT]", "[HASH-IN]", "[HASH-OUT]", "[HMAC-IN]", "[HMAC-OUT]", "[HOOK]", "[WARN]"],
-        "limitations": "Does not decrypt payloads; it only traces selected crypto API usage.",
-    },
-    "shared_preferences_dump": {
-        "when_to_use": "Use to observe preference reads and writes for tokens, broker settings, or feature flags.",
-        "expected_tags": ["[PREF-GET]", "[PREF-PUT]", "[HOOK]", "[WARN]"],
-        "limitations": "SharedPreferences only; Room, SQLite, and file-backed settings are outside this script.",
-    },
-    "database_dump": {
-        "when_to_use": "Use to trace SQLite queries and narrow on tables related to devices, auth, or messaging.",
-        "expected_tags": ["[DB-QUERY]", "[DB-EXEC]", "[DB-INSERT]", "[DB-UPDATE]", "[HOOK]", "[WARN]"],
-        "limitations": "SQLite-focused; custom native storage and encrypted wrappers can reduce visibility.",
-    },
-    "certificate_pinning_detect": {
-        "when_to_use": "Use when you want to detect likely pinning libraries before attempting a bypass.",
-        "expected_tags": ["[STATUS]", "[PINNING]", "[WARN]"],
-        "limitations": "Detection only; it does not alter behavior or guarantee every pinning path is found.",
-    },
-    "nooie_mqtt_trace": {
-        "when_to_use": "Use on Nooie builds when you want MQTT token, connect, publish, and subscribe activity in one session.",
-        "expected_tags": ["[MQTT-CALL]", "[MQTT-RET]", "[MQTT-TOKEN]", "[MQTT-CONNECT]", "[MQTT-PUBLISH]", "[MQTT-SUBSCRIBE]", "[HOOK]", "[WARN]"],
-        "limitations": "Tailored to the observed Nooie/Tuya class patterns and may need a class filter on new builds.",
-    },
-    "nooie_stream_trace": {
-        "when_to_use": "Use on Nooie builds to trace stream lifecycle, player setup, and WebRTC-related classes.",
-        "expected_tags": ["[STREAM]", "[WEBRTC]", "[HOOK]", "[WARN]"],
-        "limitations": "Best-effort hooks around known app-side classes; native media paths can remain opaque.",
-    },
-    "nooie_runtime_config": {
-        "when_to_use": "Use to preserve runtime config state such as token-like values and stream or broker settings.",
-        "expected_tags": ["[CONFIG]", "[HOOK]", "[WARN]"],
-        "limitations": "Focused on observed runtime config access paths and preference-like storage patterns.",
-    },
-}
-
-
-@dataclass
-class FridaSession:
-    session_id: str
-    serial: str
-    target: str
-    attach_target: str
-    attach_flag: str
-    script_key: str
-    parameters: Dict[str, Any]
-    command: List[str]
-    process: Optional[subprocess.Popen[str]]
-    log_path: Path
-    summary_path: Path
-    rendered_script_path: Path
-    start_time: float
-    mode: str
-    target_running_before: bool
-    launch_performed: bool
-    frida_server_started: bool
-    frida_server_path: Optional[str]
-    api_device: Any = None
-    api_session: Any = None
-    api_script: Any = None
-    session_backend: str = "cli"
-    health_checks: Dict[str, Any] = field(default_factory=dict)
-    summary_written: threading.Event = field(default_factory=threading.Event)
-    stop_event: threading.Event = field(default_factory=threading.Event)
-    output_line_count: int = 0
-    error_line_count: int = 0
-    exit_code: Optional[int] = None
-    stop_requested: bool = False
-    status_reason: str = ""
-    reattach_count: int = 0
-    events_by_tag: Dict[str, int] = field(default_factory=dict)
-    dropped_event_count: int = 0
-    target_alive_at_exit: Optional[bool] = None
-    reader_threads: List[threading.Thread] = field(default_factory=list)
-    watcher_thread: Optional[threading.Thread] = None
 
 
 class FridaRunner:
     """Manage Frida setup and long-running instrumentation sessions."""
 
-    def __init__(self, executor: Optional[Callable] = None, validate_device: bool = True):
+    def __init__(self, executor: Optional[Callable] = None, validate_device: bool = True, reveal_sensitive: bool = False):
         self._executor = executor or run_subprocess
         self._validate_device = validate_device
+        self.reveal_sensitive = reveal_sensitive
         self._host_frida_version_cache: Optional[str] = None
         self._session_lock = threading.Lock()
         self._active_session: Optional[FridaSession] = None
@@ -571,7 +136,7 @@ class FridaRunner:
                     "online": False,
                     "state": "ambiguous",
                     "devices": devices,
-                    "message": "Multiple adb devices are connected. Set frida.device_serial in config/local.yaml.",
+                    "message": "Multiple adb devices are connected. Set frida.device_serial in your user settings.",
                 }
 
         if selected is None:
@@ -611,13 +176,20 @@ class FridaRunner:
             self._adb_cmd(serial, "shell", "pidof", "frida-server"),
             self._adb_cmd(serial, "shell", "sh", "-c", "ps -A | grep frida-server"),
         ]
-        for cmd in commands:
+        for index, cmd in enumerate(commands):
             try:
                 result = self._executor(cmd, timeout=10)
             except Exception:
                 continue
-            output = f"{result.stdout or ''}\n{result.stderr or ''}".strip()
-            if output:
+            if result.returncode != 0:
+                continue
+            output = (result.stdout or "").strip()
+            if index == 0 and output:
+                return True
+            if index == 1 and any(
+                "frida-server" in line and "grep frida-server" not in line
+                for line in output.splitlines()
+            ):
                 return True
         return False
 
@@ -628,9 +200,10 @@ class FridaRunner:
         frida_server_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         serial = serial or str(self.ensure_online_device().get("serial"))
-        privilege = self._prepare_frida_server_privilege(serial)
         if self.is_frida_server_running(serial=serial):
-            return {"running": True, "started": False, "frida_server": None, "resolution": {}, "privilege": privilege}
+            return {"running": True, "started": False, "frida_server": None, "resolution": {}, "privilege": {"status": "not_needed"}}
+
+        privilege = self._prepare_frida_server_privilege(serial)
 
         configured_path = frida_server_path or self._configured_frida_server_path()
         server_binary, resolution = self._resolve_frida_server_path(configured_path, serial=serial)
@@ -666,7 +239,7 @@ class FridaRunner:
         if "." in target:
             try:
                 result = self._executor(self._adb_cmd(serial, "shell", "pidof", target), timeout=10)
-                if (result.stdout or "").strip():
+                if result.returncode == 0 and (result.stdout or "").strip():
                     return True
             except Exception:
                 pass
@@ -1331,9 +904,6 @@ class FridaRunner:
         else:
             line = str(payload)
         self._append_session_line(session, line, channel, on_output)
-        tag = _event_tag(line)
-        if tag:
-            session.events_by_tag[tag] = session.events_by_tag.get(tag, 0) + 1
         if isinstance(payload, dict) and "dropped_event_count" in payload:
             try:
                 session.dropped_event_count += int(payload["dropped_event_count"])
@@ -1464,8 +1034,8 @@ class FridaRunner:
             return {
                 "process": process_name,
                 "script": script_key,
-                "stdout": census["stdout"],
-                "stderr": census["stderr"],
+                "stdout": redact_frida_output(census["stdout"], reveal_sensitive=self.reveal_sensitive),
+                "stderr": redact_frida_output(census["stderr"], reveal_sensitive=self.reveal_sensitive),
                 "returncode": census["returncode"],
             }
         selector = self._frida_selector()
@@ -1480,8 +1050,8 @@ class FridaRunner:
         return {
             "process": process_name,
             "script": script_key or custom_script_path,
-            "stdout": result.stdout or "",
-            "stderr": result.stderr or "",
+            "stdout": redact_frida_output(result.stdout or "", reveal_sensitive=self.reveal_sensitive),
+            "stderr": redact_frida_output(result.stderr or "", reveal_sensitive=self.reveal_sensitive),
             "returncode": result.returncode,
         }
 
@@ -1505,8 +1075,8 @@ class FridaRunner:
         return {
             "package": package_name,
             "script": script_key or custom_script_path,
-            "stdout": result.stdout or "",
-            "stderr": result.stderr or "",
+            "stdout": redact_frida_output(result.stdout or "", reveal_sensitive=self.reveal_sensitive),
+            "stderr": redact_frida_output(result.stderr or "", reveal_sensitive=self.reveal_sensitive),
             "returncode": result.returncode,
         }
 
@@ -1759,7 +1329,9 @@ class FridaRunner:
         serial: Optional[str] = None,
     ) -> Dict[str, Any]:
         state = self.ensure_online_device()
-        selected_serial = serial or str(state.get("serial"))
+        selected_serial = str(serial or state.get("serial") or "").strip()
+        if not selected_serial:
+            raise FridaDeviceError("Device-wide class census requires an online device serial.")
         try:
             if "." in target_filter and self._package_installed(selected_serial, target_filter):
                 self.launch_target_if_needed(target_filter, serial=selected_serial)
@@ -1833,14 +1405,15 @@ class FridaRunner:
             if match:
                 class_count = int(match.group(1))
             for line in stdout.splitlines():
-                normalized = line.strip()
+                normalized = redact_frida_output(self._clean_session_line(line.strip()), reveal_sensitive=self.reveal_sensitive).strip()
                 if not normalized:
                     continue
                 output_lines.append(normalized)
                 if on_output is not None:
                     on_output(normalized)
             if stderr.strip():
-                warning = f"[WARN] {candidate['attach_target']}: {stderr.strip()}"
+                safe_stderr = redact_frida_output(stderr.strip(), reveal_sensitive=self.reveal_sensitive).strip()
+                warning = f"[WARN] {candidate['attach_target']}: {safe_stderr}"
                 output_lines.append(warning)
                 error_lines.append(warning)
                 if on_output is not None:
@@ -2057,25 +1630,10 @@ class FridaRunner:
     ) -> None:
         if pipe is None:
             return
-        with session.log_path.open("a", encoding="utf-8") as handle:
-            for raw_line in iter(pipe.readline, ""):
-                line = self._clean_session_line(raw_line.rstrip("\r\n"))
-                if not line:
-                    continue
-                captured.append(line)
-                tag = "[stderr]" if channel == "stderr" else "[stdout]"
-                formatted = f"{tag} {line}"
-                handle.write(formatted + "\n")
-                handle.flush()
-                if channel == "stderr":
-                    session.error_line_count += 1
-                else:
-                    session.output_line_count += 1
-                event_tag = _event_tag(line)
-                if event_tag:
-                    session.events_by_tag[event_tag] = session.events_by_tag.get(event_tag, 0) + 1
-                if on_output is not None:
-                    on_output(formatted)
+        for raw_line in iter(pipe.readline, ""):
+            safe_line = self._append_session_line(session, raw_line, channel, on_output)
+            if safe_line:
+                captured.append(safe_line)
         try:
             pipe.close()
         except Exception:
@@ -2116,7 +1674,7 @@ class FridaRunner:
             "attach_target": target_filter,
             "attach_flag": "multi",
             "script": "device_class_census",
-            "parameters": parameters,
+            "parameters": redact_report_data(parameters),
             "command": ["frida", "-D", serial, "--device-census", target_filter],
             "mode": "census",
             "target_running_before": True,
@@ -2354,24 +1912,8 @@ class FridaRunner:
     ) -> None:
         if pipe is None:
             return
-        with session.log_path.open("a", encoding="utf-8") as handle:
-            for raw_line in iter(pipe.readline, ""):
-                line = self._clean_session_line(raw_line.rstrip("\r\n"))
-                if not line:
-                    continue
-                tag = "[stderr]" if channel == "stderr" else "[stdout]"
-                formatted = f"{tag} {line}"
-                handle.write(formatted + "\n")
-                handle.flush()
-                if channel == "stderr":
-                    session.error_line_count += 1
-                else:
-                    session.output_line_count += 1
-                event_tag = _event_tag(line)
-                if event_tag:
-                    session.events_by_tag[event_tag] = session.events_by_tag.get(event_tag, 0) + 1
-                if on_output is not None:
-                    on_output(formatted)
+        for raw_line in iter(pipe.readline, ""):
+            self._append_session_line(session, raw_line, channel, on_output)
         try:
             pipe.close()
         except Exception:
@@ -2436,15 +1978,19 @@ class FridaRunner:
         line: str,
         channel: str,
         on_output: Optional[Callable[[str], None]],
-    ) -> None:
+    ) -> Optional[str]:
         cleaned = self._clean_session_line(line.rstrip("\r\n"))
         if not cleaned:
-            return
+            return None
+        event = parse_event_line(cleaned, channel=channel, reveal_sensitive=self.reveal_sensitive)
+        cleaned = f"[{event['tag']}] {event['message']}" if event["tag"] != "LOG" else event["message"]
         tag = "[stderr]" if channel == "stderr" else "[stdout]"
         formatted = f"{tag} {cleaned}"
         with session.log_path.open("a", encoding="utf-8") as handle:
             handle.write(formatted + "\n")
             handle.flush()
+        with session.log_path.with_suffix(".events.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
         if channel == "stderr":
             session.error_line_count += 1
         else:
@@ -2454,6 +2000,7 @@ class FridaRunner:
             session.events_by_tag[event_tag] = session.events_by_tag.get(event_tag, 0) + 1
         if on_output is not None:
             on_output(formatted)
+        return cleaned
 
     def _write_session_summary(self, session: FridaSession, *, exit_code: int) -> Dict[str, Any]:
         session.exit_code = exit_code
@@ -2464,7 +2011,7 @@ class FridaRunner:
             "attach_target": session.attach_target,
             "attach_flag": session.attach_flag,
             "script": session.script_key,
-            "parameters": session.parameters,
+            "parameters": redact_report_data(session.parameters),
             "command": session.command,
             "mode": session.mode,
             "target_running_before": session.target_running_before,
@@ -2472,7 +2019,7 @@ class FridaRunner:
             "frida_server_started": session.frida_server_started,
             "frida_server_path": session.frida_server_path,
             "session_backend": session.session_backend,
-            "health_checks": session.health_checks,
+            "health_checks": redact_report_data(session.health_checks),
             "rendered_script_path": str(session.rendered_script_path),
             "log_path": str(session.log_path),
             "summary_path": str(session.summary_path),
@@ -2482,7 +2029,7 @@ class FridaRunner:
             "stopped_by_user": session.stop_requested,
             "stdout_lines": session.output_line_count,
             "stderr_lines": session.error_line_count,
-            "status_reason": session.status_reason or ("stopped_by_user" if session.stop_requested else "completed"),
+            "status_reason": redact_text(session.status_reason or ("stopped_by_user" if session.stop_requested else "completed")),
             "reattach_count": session.reattach_count,
             "events_by_tag": dict(sorted(session.events_by_tag.items())),
             "dropped_event_count": session.dropped_event_count,

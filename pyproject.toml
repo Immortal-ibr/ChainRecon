@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chainrecon"
-version = "1.0.0"
+version = "2.0.0"
 description = "Cross-platform IoT security reconnaissance framework"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 
 dependencies = [
@@ -15,7 +15,7 @@ dependencies = [
     "jinja2>=3.1",
     "requests>=2.31",
     "defusedxml>=0.7",
-    "cryptography>=41.0",
+    "cryptography>=42.0",
     "pyyaml>=6.0",
     "rich>=13.0",
     "openpyxl>=3.1",
@@ -37,6 +37,12 @@ full = [
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
+    "scapy>=2.5",
+    "ruff>=0.8",
+    "mypy>=1.10",
+    "build>=1.2",
+    "twine>=5.0",
+    "pip-audit>=2.7",
 ]
 
 [project.scripts]
@@ -56,4 +62,13 @@ markers = [
 include = ["chainrecon*"]
 
 [tool.setuptools.package-data]
+"chainrecon" = [
+    "resources/config/*.yaml",
+    "resources/profiles/*.yaml",
+    "resources/scripts/*.ps1",
+    "resources/scripts/*.sh",
+    "resources/workflows/*.yaml",
+    "resources/community_plugins/*/*.py",
+    "resources/community_plugins/*/*.yaml",
+]
 "chainrecon.runners" = ["frida_scripts/*.js"]

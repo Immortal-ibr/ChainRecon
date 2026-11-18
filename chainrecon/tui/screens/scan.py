@@ -11,16 +11,20 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Checkbox, Footer, Header, Label, Select
+from textual.widgets import Button, Checkbox, Collapsible, Header, Label, Select
 
-from chainrecon.tui.widgets.pasteable_input import PasteableInput as Input
-
-from chainrecon.runners.nmap_runner import NmapRunner
-from chainrecon.runners.nmap_runner import NmapInterfaceMismatchError
+from chainrecon.runners.nmap_runner import NmapInterfaceMismatchError, NmapRunner
 from chainrecon.tui.screens.help_screen import HelpScreen
+from chainrecon.tui.widgets.help_footer import HelpFooter
 from chainrecon.tui.widgets.log_viewer import LogActionBar, LogViewer
+from chainrecon.tui.widgets.pasteable_input import PasteableInput as Input
 from chainrecon.utils.artifacts import artifact_path, safe_token
-from chainrecon.utils.config import get_network_config, get_output_dir, get_scan_config, save_scan_config
+from chainrecon.utils.config import (
+    get_network_config,
+    get_output_dir,
+    get_scan_config,
+    save_scan_config,
+)
 from chainrecon.utils.network import list_scan_interfaces, resolve_scan_interface
 
 HELP_TEXT = """[bold underline]Network Scan[/]
@@ -69,17 +73,17 @@ tool for port scanning -- every pentester has used it, it's been around since
     the server will accept. Specifically look for:
       - RC4 or DES in the cipher list (both broken)
       - RSA key size < 2048 bits (weak, increasingly breakable)
-      - Self-signed or private CA cert (e.g. "Apeman CA" on the Nooie device)
+      - Self-signed or private CA cert, reviewed against the device trust model
       - Certificate validity > 1 year on a private CA cert (red flag)
-    On the Nooie we found a 100-year cert from "Apeman CA" -- if that private
-    key is ever stolen it can never be revoked in practice.
+    A long-lived certificate is a review lead; verify its deployment and
+    rotation mechanism before making a security claim.
 
 [bold]Target field[/]
 
   Anything nmap accepts works:
-    Single IP    ->  192.168.123.99
-    Subnet       ->  192.168.123.0/24
-    IP range     ->  192.168.123.1-254
+    Single IP    ->  192.0.2.10
+    Subnet       ->  192.0.2.0/24
+    IP range     ->  192.0.2.1-20
 
   For a device behind a dedicated router: your PC talks to the router's
   Ethernet-side IP (e.g. .99), not to the IoT device directly. The device
@@ -100,15 +104,14 @@ To edit profiles: runners/nmap_runner.py -> SCAN_PROFILES dict[/]
 
 
 SCAN_PROFILE_OPTIONS = [
-    ("ARP Discovery  --  local host discovery via nmap -sn -PR", "arp"),
-    ("Quick  --  top 1000 ports, -sV -T4", "quick"),
-    ("Gentle  --  full TCP connect, slow (-T2)", "gentle"),
-    ("Full  --  all 65535 ports + OS detect (-A)", "full"),
-    ("IoT  --  ports 80,443,1883,8883,5353,1900 + UDP", "iot"),
-    ("Vuln  --  NSE --script vuln", "vuln"),
-    ("SSL / Cert  --  ssl-cert + ssl-enum-ciphers scripts", "ssl"),
-    ("Service Fingerprint  --  deep banner/probe on IoT ports", "fingerprint"),
-    ("Custom Script...", "custom"),
+    ("ARP discovery", "arp"),
+    ("Quick: common ports", "quick"),
+    ("Gentle: slower TCP", "gentle"),
+    ("Full: all TCP ports", "full"),
+    ("IoT: common device ports", "iot"),
+    ("Vulnerability scripts", "vuln"),
+    ("TLS certificates and ciphers", "ssl"),
+    ("Custom script", "custom"),
 ]
 
 
@@ -116,6 +119,9 @@ class ScanScreen(Screen):
     BINDINGS = [("escape", "app.pop_screen", "Back"), ("question_mark", "toggle_help", "Help")]
 
     DEFAULT_CSS = """
+    ScanScreen #scan-form { padding: 0 2; }
+    ScanScreen #scan-form Button { margin: 0 1 0 0; }
+    ScanScreen #scan-form Collapsible { margin: 1 0; }
     #custom-section {
         display: none;
         height: auto;
@@ -134,22 +140,15 @@ class ScanScreen(Screen):
 
         yield Header()
         with VerticalScroll(id="scan-form"):
-            yield Label("[bold]Network Scan[/]")
-            yield Label("Target (IP / CIDR)  [dim]-- single IP, range, or subnet; press [b]?[/b] for help[/]")
-            if saved_target:
-                yield Label("[dim]^ Pre-loaded from saved config -- change if needed[/]")
+            yield Label("Network scan", id="title")
+            yield Label("Target IP or subnet")
             yield Input(placeholder="e.g. 192.168.1.0/24", id="target", value=saved_target)
-            yield Label("Scan interface [dim](host machine interface for nmap -e)[/]:")
-            with Horizontal():
-                yield Select(interface_options, value=selected_interface, id="scan-interface")
-                yield Button("Refresh Interfaces", id="btn-refresh-ifaces")
-            yield Label("Scan Profile:")
+            yield Label("Scan profile")
             yield Select(SCAN_PROFILE_OPTIONS, value="iot", id="profile")
             with Vertical(id="custom-section"):
-                yield Label("[dim]-- Custom Script --[/]")
-                yield Label("Script path:")
+                yield Label("Script path")
                 yield Input(placeholder="e.g. C:\\scripts\\my_scan.py", id="custom-path")
-                yield Label("Interpreter:")
+                yield Label("Interpreter")
                 yield Select(
                     [("Python", "python"), ("PowerShell", "powershell"), ("Bash / sh", "bash"), ("Executable", "exe")],
                     value="python",
@@ -159,9 +158,14 @@ class ScanScreen(Screen):
             with Horizontal():
                 yield Button("Run Scan", variant="primary", id="btn-scan")
                 yield Button("Back", id="btn-back")
+            with Collapsible(title="Interface and options", collapsed=True):
+                yield Label("Use automatic routing unless this scan needs a specific adapter.")
+                with Horizontal():
+                    yield Select(interface_options, value=selected_interface, id="scan-interface")
+                    yield Button("Refresh interfaces", id="btn-refresh-ifaces")
             yield LogActionBar()
             yield LogViewer(id="scan-log")
-        yield Footer()
+        yield HelpFooter()
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "profile":
@@ -185,10 +189,15 @@ class ScanScreen(Screen):
         # Strip surrounding quotes -- common when pasting Windows paths
         target = self.query_one("#target", Input).value.strip().strip('"\'')
         interface_value = self.query_one("#scan-interface", Select).value
-        profile = self.query_one("#profile", Select).value
+        profile_value = self.query_one("#profile", Select).value
         log = self.query_one("#scan-log", LogViewer)
         custom_path = self.query_one("#custom-path", Input).value.strip().strip('"\'')
-        custom_interp = self.query_one("#custom-interp", Select).value
+        custom_interp_value = self.query_one("#custom-interp", Select).value
+        if not isinstance(profile_value, str):
+            log.append("[red]Choose a scan profile.[/]")
+            return
+        profile = profile_value
+        custom_interp = custom_interp_value if isinstance(custom_interp_value, str) else "python"
 
         scan_cfg = get_scan_config()
         interface_config_value = scan_cfg.get("interface_name") or scan_cfg.get("interface")
@@ -226,11 +235,6 @@ class ScanScreen(Screen):
             self._run_custom_inline(target, custom_path, custom_interp, log)
             return
 
-        # Extended scans (no nmap required)
-        if profile == "fingerprint":
-            self._run_extended_scan(target, profile, log, custom_path, custom_interp)
-            return
-
         if profile == "full":
             log.append("[yellow]Full scan scans all 65535 ports -- this can take 20-40 minutes on a home network. "
                        "If it times out, run nmap directly from the command line.[/]")
@@ -245,30 +249,34 @@ class ScanScreen(Screen):
             try:
                 runner = NmapRunner()
                 result = runner.run_scan(target, profile, output_dir=output_dir, interface=interface or None)
-                self.app.call_from_thread(log.append, _describe_nmap_run(result, interface_label=interface_label))
+                self._post(log.append, _describe_nmap_run(result, interface_label=interface_label))
 
                 # Store in app-level report generator
                 _ensure_report_generator(self.app)
                 structured = _build_scan_report_payload(result)
-                self.app._report_gen.add_results("scan", structured)
+                getattr(self.app, "_report_gen").add_results("scan", structured)
 
                 structured_path = artifact_path(output_dir, f"scan_{safe_token(str(profile), 'scan')}", ".json")
                 structured_path.write_text(json.dumps(structured, indent=2, default=str), encoding="utf-8")
+                case_path = getattr(self.app, "_case_path", None)
+                if case_path:
+                    run_ids = _record_case_scan(result, case_path)
+                    self._post(log.append, f"[dim]Case scan runs: {', '.join(run_ids)}[/]")
 
-                self.app.call_from_thread(log.append, "[green]Scan complete.[/]")
-                self.app.call_from_thread(log.append, f"[dim]Result saved: {structured_path.resolve()}[/]")
+                self._post(log.append, "[green]Scan complete.[/]")
+                self._post(log.append, f"[dim]Result saved: {structured_path.resolve()}[/]")
                 for fpath in result.get("output_files", []):
-                    self.app.call_from_thread(log.append, f"[dim]Saved: {fpath}[/]")
+                    self._post(log.append, f"[dim]Saved: {fpath}[/]")
                 for fpath in _displayable_output_files(result.get("output_files", [])):
                     try:
                         lines = Path(fpath).read_text(encoding="utf-8", errors="replace").strip().splitlines()
-                        self.app.call_from_thread(log.append, "\n".join(lines[-60:]))
+                        self._post(log.append, "\n".join(lines[-60:]))
                     except Exception:
                         pass
                 if custom_path:
-                    self.app.call_from_thread(self._run_custom_inline, target, custom_path, custom_interp, log)
+                    self._post(self._run_custom_inline, target, custom_path, custom_interp, log)
             except subprocess.TimeoutExpired:
-                self.app.call_from_thread(
+                self._post(
                     log.append,
                     f"[red]Scan timed out. Full scans on all 65535 ports can take over an hour. "
                     f"Run nmap directly:\n  nmap -Pn -A -p- -T4 {target}[/]"
@@ -281,9 +289,9 @@ class ScanScreen(Screen):
                 if suggestion:
                     message += f"\n[yellow]Recommended interface: {suggestion}[/]"
                 message += "\n[dim]Refresh interfaces and select the route-matching interface, or use the CLI --allow-interface-mismatch for intentional advanced use.[/]"
-                self.app.call_from_thread(log.append, message)
+                self._post(log.append, message)
             except Exception as exc:
-                self.app.call_from_thread(log.append, f"[red]Error: {exc}[/]")
+                self._post(log.append, f"[red]Error: {exc}[/]")
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -311,13 +319,13 @@ class ScanScreen(Screen):
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                 out = result.stdout.strip()
                 if out:
-                    self.app.call_from_thread(log.append, out[:3000])
+                    self._post(log.append, out[:3000])
                 if result.returncode != 0:
-                    self.app.call_from_thread(log.append, f"[yellow]Script exited with code {result.returncode}[/]")
+                    self._post(log.append, f"[yellow]Script exited with code {result.returncode}[/]")
                     if result.stderr:
-                        self.app.call_from_thread(log.append, f"[red]{result.stderr[:500]}[/]")
+                        self._post(log.append, f"[red]{result.stderr[:500]}[/]")
                 else:
-                    self.app.call_from_thread(log.append, "[green]Custom script complete.[/]")
+                    self._post(log.append, "[green]Custom script complete.[/]")
 
                 from chainrecon.utils.config import get_output_dir
                 outdir = get_output_dir()
@@ -328,56 +336,26 @@ class ScanScreen(Screen):
                     "exit_code": result.returncode,
                     "stdout": result.stdout[:5000], "stderr": result.stderr[:2000],
                 }, indent=2))
-                self.app.call_from_thread(log.append, f"[dim]Result saved: {outfile}[/]")
+                self._post(log.append, f"[dim]Result saved: {outfile}[/]")
 
                 if save_to_lib:
                     from chainrecon.utils.custom_scripts import save_to_library
                     save_to_library("scan", script_path, interp)
-                    self.app.call_from_thread(log.append, "[dim]Script saved to library.[/]")
+                    self._post(log.append, "[dim]Script saved to library.[/]")
             except Exception as exc:
-                self.app.call_from_thread(log.append, f"[red]Custom script error: {exc}[/]")
-
-        threading.Thread(target=_worker, daemon=True).start()
-
-    def _run_extended_scan(self, target: str, profile: str, log: LogViewer, custom_path: str, custom_interp: str) -> None:
-        """Run Python-native scans (no nmap dependency)."""
-        log.append(f"[bold]Starting {profile} scan on {target}...[/]")
-        log.append("[yellow]This profile is Python-native and does not invoke nmap.[/]")
-
-        def _progress(msg: str) -> None:
-            self.app.call_from_thread(log.append, msg)
-
-        def _worker() -> None:
-            try:
-                from chainrecon.runners.extended_scanner import ExtendedScanner
-                scanner = ExtendedScanner(progress_cb=_progress)
-
-                if profile == "fingerprint":
-                    from chainrecon.runners.extended_scanner import IOT_PORTS
-                    result = scanner.fingerprint_services(target, IOT_PORTS)
-                else:
-                    self.app.call_from_thread(log.append, f"[red]Unknown extended profile: {profile}[/]")
-                    return
-
-                # Save output
-                outdir = get_output_dir()
-                outfile = artifact_path(outdir, f"scan_{safe_token(profile, 'scan')}", ".json")
-                outfile.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")
-                _ensure_report_generator(self.app)
-                self.app._report_gen.add_results("scan", _normalize_extended_scan_report(target, profile, result, outfile))
-
-                text = json.dumps(result, indent=2, default=str)[:4000]
-                self.app.call_from_thread(log.append, f"[green]Done. Saved: {outfile}[/]\n{text}")
-
-                if custom_path:
-                    self.app.call_from_thread(self._run_custom_inline, target, custom_path, custom_interp, log)
-            except Exception as exc:
-                self.app.call_from_thread(log.append, f"[red]Error: {exc}[/]")
+                self._post(log.append, f"[red]Custom script error: {exc}[/]")
 
         threading.Thread(target=_worker, daemon=True).start()
 
     def action_toggle_help(self) -> None:
         self.app.push_screen(HelpScreen(HELP_TEXT, title="Network Scan"))
+
+    def _post(self, callback, *args) -> None:
+        try:
+            self.app.call_from_thread(callback, *args)
+        except RuntimeError:
+            # The user may close the TUI while an external scan is finishing.
+            pass
 
     def _refresh_interfaces(self) -> None:
         scan_cfg = get_scan_config()
@@ -392,18 +370,41 @@ class ScanScreen(Screen):
 
 def _build_scan_report_payload(run_result: dict) -> dict:
     """Combine nmap runner metadata with parsed nmap outputs."""
-    from chainrecon.analysis.scanner import ScannerAnalyzer
     from chainrecon import combine_scan_results
+    from chainrecon.analysis.scanner import ScannerAnalyzer
 
     analyzer = ScannerAnalyzer()
     parsed_results = []
-    for fpath in _displayable_output_files(run_result.get("output_files", [])):
+    for fpath in run_result.get("output_files", []):
         path = Path(fpath)
-        if path.exists() and path.stat().st_size > 0:
+        if path.suffix.lower() == ".xml" and path.exists() and path.stat().st_size > 0:
             parsed_results.append(analyzer.parse_nmap_output(str(path)))
+    if not parsed_results:
+        raise RuntimeError("Nmap scan produced no XML evidence; coverage is unknown")
     payload = combine_scan_results(run_result, parsed_results)
     payload.setdefault("metadata", {})["backend"] = run_result.get("backend", "nmap")
     return payload
+
+
+def _record_case_scan(run_result: dict, case_path: str) -> list[str]:
+    """Copy each Nmap XML artifact into a case before analyzing it."""
+    from chainrecon.case_analysis import CaseAnalysisService
+    from chainrecon.case_model import Case
+
+    case = Case.open(case_path)
+    run_ids = []
+    for name in run_result.get("output_files", []):
+        path = Path(name)
+        if path.suffix.lower() != ".xml" or not path.is_file():
+            continue
+        evidence = case.add_evidence(path, kind="scan_xml")
+        run = CaseAnalysisService(case).run(evidence.id, "scan")
+        if run.status != "complete":
+            raise RuntimeError(f"Case scan analysis {run.id} is {run.status}: {'; '.join(run.warnings)}")
+        run_ids.append(run.id)
+    if not run_ids:
+        raise ValueError("Nmap result did not provide XML evidence for the case")
+    return run_ids
 
 
 def _interface_options(default_interface: str) -> tuple[list[tuple[str, str]], str]:
@@ -466,40 +467,6 @@ def _describe_nmap_run(run_result: dict, *, interface_label: str) -> str:
         cmd = command.get("powershell_command") or " ".join(command.get("command", []))
         lines.append(f"[dim]Command: {cmd}[/]")
     return "\n".join(lines)
-
-
-def _normalize_extended_scan_report(target: str, profile: str, result: dict, outfile: Path) -> dict:
-    metadata = dict(result.get("metadata") or {})
-    metadata.update(
-        {
-            "target": target,
-            "profile": profile,
-            "backend": "python_native",
-            "source_file": str(outfile.resolve()),
-        }
-    )
-    if profile == "arp":
-        summary = dict(result.get("summary") or {})
-        cache_warning = result.get("metadata", {}).get("warning")
-        if cache_warning:
-            summary.setdefault("warning", cache_warning)
-        findings = dict(result.get("findings") or {})
-        if "hosts" in findings:
-            for host in findings.get("hosts", []):
-                if isinstance(host, dict) and host.get("source") == "arp_cache":
-                    host.setdefault("reachability_note", "Local ARP cache entry; not proof of live reachability.")
-        return {
-            "metadata": metadata,
-            "findings": findings,
-            "summary": summary,
-            "risk_indicators": list(result.get("risk_indicators") or []),
-        }
-    return {
-        "metadata": metadata,
-        "findings": dict(result.get("findings") or {}),
-        "summary": dict(result.get("summary") or {}),
-        "risk_indicators": list(result.get("risk_indicators") or []),
-    }
 
 
 def _displayable_output_files(paths: list[str]) -> list[str]:

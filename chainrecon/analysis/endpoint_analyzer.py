@@ -1,12 +1,9 @@
-"""Endpoint extraction and attribution for ChainRecon.
-
-Extracts all unique IP endpoints from a pcap, identifies cloud providers,
-performs reverse-DNS lookups, and maps well-known ports to services.
-"""
+"""Endpoint inventory from observed packet addresses and transport ports."""
 
 from __future__ import annotations
 
 import collections
+import ipaddress
 import socket
 from typing import Any, Dict, List, Optional
 
@@ -14,17 +11,7 @@ from chainrecon.utils.logging_config import get_logger
 
 logger = get_logger("endpoint")
 
-# Cloud provider IP prefix heuristics
-_CLOUD_PREFIXES: Dict[str, List[str]] = {
-    "AWS": ["3.", "13.", "15.", "18.", "34.", "35.", "52.", "54.", "99.", "100.20.", "100.21."],
-    "GCP": ["8.34.", "8.35.", "34.64.", "34.65.", "34.66.", "34.67.", "34.80.", "34.96.", "35."],
-    "Azure": ["20.", "40.", "51.", "52."],
-    "Cloudflare": ["104.16.", "104.17.", "104.18.", "104.19.", "172.64.", "172.65.", "1.1.1.", "1.0.0."],
-    "Akamai": ["23.", "96.", "104.", "184.", "2.16.", "2.17.", "2.18.", "2.19.", "2.20.", "2.21.", "2.22."],
-    "Fastly": ["151.101.", "199.27.", "23.235."],
-}
-
-# Common port -> service name
+# Common port -> service hint; the packet payload may use another protocol.
 _PORT_SERVICES: Dict[int, str] = {
     21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
     80: "HTTP", 110: "POP3", 143: "IMAP", 443: "HTTPS", 445: "SMB",
@@ -34,30 +21,21 @@ _PORT_SERVICES: Dict[int, str] = {
     8883: "MQTT/TLS", 1900: "UPnP/SSDP", 9000: "HTTP-api", 9001: "HTTP-api",
 }
 
-# Private IP ranges (CIDR prefix)
-_PRIVATE_PREFIXES = (
-    "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.",
-    "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.",
-    "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
-    "192.168.", "127.", "169.254.", "::1", "fc", "fd",
-)
-
-
 def _is_private(ip: str) -> bool:
-    return any(ip.startswith(p) for p in _PRIVATE_PREFIXES)
+    """Compatibility field: true for every address that is not global."""
+    try:
+        return not ipaddress.ip_address(ip).is_global
+    except ValueError:
+        return True
 
 
 def _identify_cloud(ip: str) -> Optional[str]:
-    for provider, prefixes in _CLOUD_PREFIXES.items():
-        for prefix in prefixes:
-            if ip.startswith(prefix):
-                return provider
+    """Cloud ownership needs an attributed, dated registry; prefixes are insufficient."""
     return None
 
 
 def _reverse_dns(ip: str, timeout: float = 1.0) -> Optional[str]:
     """Best-effort reverse DNS lookup (returns None on failure)."""
-    import socket
     old_timeout = socket.getdefaulttimeout()
     try:
         socket.setdefaulttimeout(timeout)
@@ -91,7 +69,7 @@ class EndpointAnalyzer:
         port_set: Dict[str, set] = collections.defaultdict(set)
 
         for pkt in packets:
-            ip_layer = getattr(pkt, "ip", None)
+            ip_layer = getattr(pkt, "ip", None) or getattr(pkt, "ipv6", None)
             if ip_layer is None:
                 continue
             src = str(getattr(ip_layer, "src", "") or "")
@@ -101,16 +79,22 @@ class EndpointAnalyzer:
             for ip in (src, dst):
                 if not ip:
                     continue
+                try:
+                    ipaddress.ip_address(ip)
+                except ValueError:
+                    continue
                 if ip not in ip_stats:
                     ip_stats[ip] = {
                         "ip": ip,
                         "packet_count": 0,
                         "bytes": 0,
                         "is_private": _is_private(ip),
+                        "is_global": not _is_private(ip),
                         "cloud_provider": _identify_cloud(ip),
                         "hostname": None,
                         "ports": [],
                         "services": [],
+                        "service_hints": [],
                     }
                 ip_stats[ip]["packet_count"] += 1
                 ip_stats[ip]["bytes"] += pkt_len
@@ -128,11 +112,11 @@ class EndpointAnalyzer:
                         except (TypeError, ValueError):
                             pass
 
-        # Attach ports and services
+        # A port name is a hint, not protocol identification.
         for ip, ports in port_set.items():
             if ip in ip_stats:
                 ip_stats[ip]["ports"] = sorted(ports)
-                ip_stats[ip]["services"] = [
+                ip_stats[ip]["service_hints"] = [
                     _PORT_SERVICES[p] for p in sorted(ports) if p in _PORT_SERVICES
                 ]
 
@@ -171,20 +155,5 @@ class EndpointAnalyzer:
                 "cloud_providers": list(cloud_summary.keys()),
                 "top_external": external[0]["ip"] if external else None,
             },
-            "risk_indicators": self._assess_risks(external),
+            "risk_indicators": [],
         }
-
-    @staticmethod
-    def _assess_risks(external_endpoints: List[Dict[str, Any]]) -> List[Dict[str, str]]:
-        risks = []
-        unencrypted_ports = {80, 23, 21, 1883}
-        for ep in external_endpoints:
-            risky = [p for p in ep.get("ports", []) if p in unencrypted_ports]
-            if risky:
-                services = [_PORT_SERVICES.get(p, str(p)) for p in risky]
-                risks.append({
-                    "severity": "medium",
-                    "title": f"Unencrypted protocol to external IP {ep['ip']}",
-                    "details": f"Ports used: {', '.join(map(str, risky))} ({', '.join(services)})",
-                })
-        return risks

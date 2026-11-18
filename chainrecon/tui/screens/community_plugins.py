@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import json
 import threading
+from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Label, Select, Static
+from textual.widgets import Button, Checkbox, Header, Label, Select, Static
 
 from chainrecon.tui.screens.help_screen import HelpScreen
+from chainrecon.tui.widgets.help_footer import HelpFooter
 from chainrecon.tui.widgets.log_viewer import LogActionBar, LogViewer
 from chainrecon.tui.widgets.pasteable_input import PasteableInput as Input
+from chainrecon.utils.redaction import redact_report_data, redact_text
 
 HELP_TEXT = """[bold underline]Community Plugins[/]
 
@@ -47,11 +50,11 @@ plugin.yaml manifest and a Python module.
 
 [bold]Running a plugin[/]
   Select the plugin, enter an input path (file or directory the plugin reads),
-  and press Run Plugin.  Output is shown in the log and added to the session
+  explicitly trust its code, and press Run Plugin. Output is shown in the log and added to the session
   report under the "community" section.
 
 [bold]Validation status[/]
-  OK      -- manifest is valid and entrypoint loads successfully
+  OK      -- manifest is valid and entrypoint file exists; code is not loaded
   INVALID -- a required field is missing or malformed (field shown in log)
   ERROR   -- manifest valid but Python module/class failed to import
 
@@ -77,13 +80,14 @@ class CommunityPluginsScreen(Screen):
             yield Input(placeholder="/path/to/file or directory", id="plugin-input")
             yield Label("Output Directory (optional)")
             yield Input(placeholder="leave empty for session output dir", id="plugin-output-dir")
+            yield Checkbox("I trust this plugin's Python code to run locally", id="plugin-trusted")
             with Horizontal():
                 yield Button("Run Plugin", id="run-plugin", variant="primary")
                 yield Button("Validate All", id="validate-plugins")
                 yield Button("Back", id="back-btn")
             yield LogActionBar()
             yield LogViewer(id="plugins-log")
-        yield Footer()
+        yield HelpFooter()
 
     def on_mount(self) -> None:
         self._plugin_running = False
@@ -102,8 +106,9 @@ class CommunityPluginsScreen(Screen):
         if self._descriptors:
             options = [(f"{d['name']} v{d.get('version', '?')} -- {d.get('description', '')[:50]}", d["name"]) for d in self._descriptors]
             select = self.query_one("#plugin-select", Select)
+            current = select.value
             select.set_options([("(select a plugin)", "__none__"), *options])
-            select.value = "__none__"
+            select.value = current if current in {value for _, value in options} else "__none__"
         else:
             log.append("[dim]No community plugins found in community_plugins/.[/]")
 
@@ -145,16 +150,21 @@ class CommunityPluginsScreen(Screen):
                 return
             for d in descriptors:
                 name = d.get("name", "?")
-                missing = [f for f in ("name", "version", "type", "entrypoint", "inputs", "outputs", "description") if not d.get(f)]
+                missing = [
+                    field for field in ("name", "version", "type", "entrypoint", "inputs", "outputs", "description")
+                    if field not in d or d[field] in (None, "")
+                ]
                 if missing:
                     log.append(f"[red]INVALID[/] {name} -- missing fields: {', '.join(missing)}")
                     continue
-                try:
-                    from chainrecon.utils.community_plugins import load_community_plugin
-                    load_community_plugin(name)
-                    log.append(f"[green]OK     [/] {name} v{d.get('version', '?')}")
-                except Exception as exc:
-                    log.append(f"[yellow]ERROR  [/] {name} -- {exc}")
+                plugin_dir = Path(str(d["plugin_dir"])).resolve()
+                module_path = (plugin_dir / str(d["python_file"])).resolve()
+                if not module_path.is_relative_to(plugin_dir) or module_path.suffix != ".py":
+                    log.append(f"[red]INVALID[/] {name} -- entrypoint leaves plugin directory")
+                elif not module_path.is_file():
+                    log.append(f"[yellow]ERROR  [/] {name} -- module file is missing")
+                else:
+                    log.append(f"[green]OK     [/] {name} v{d.get('version', '?')} (manifest and file only)")
         except Exception as exc:
             log.append(f"[red]Validation error:[/] {exc}")
 
@@ -169,6 +179,9 @@ class CommunityPluginsScreen(Screen):
         if not input_path:
             self.query_one(LogViewer).append("[red]Input path is required.[/]")
             return
+        if not self.query_one("#plugin-trusted", Checkbox).value:
+            self.query_one(LogViewer).append("[red]Explicitly trust this plugin's code before running it.[/]")
+            return
         output_dir = self.query_one("#plugin-output-dir", Input).value.strip() or None
 
         log = self.query_one(LogViewer)
@@ -182,15 +195,16 @@ class CommunityPluginsScreen(Screen):
         log = self.query_one(LogViewer)
         emit = self.app.call_from_thread
         try:
-            from chainrecon.utils.community_plugins import load_community_plugin
-            from chainrecon.utils.config import get_output_dir as _get_out
-            from chainrecon.utils.artifacts import artifact_path
             from pathlib import Path
 
-            plugin = load_community_plugin(plugin_name)
+            from chainrecon.utils.artifacts import artifact_path
+            from chainrecon.utils.community_plugins import load_community_plugin
+            from chainrecon.utils.config import get_output_dir as _get_out
+
+            plugin = load_community_plugin(plugin_name, trusted=True)
             final_output_dir = output_dir or str(_get_out() / "community_plugins")
             kwargs = {"input_path": input_path, "output_dir": final_output_dir}
-            result = plugin.analyze(**kwargs)
+            result = redact_report_data(plugin.analyze(**kwargs))
             descriptor = getattr(plugin, "descriptor", {})
             metadata = dict(result.get("metadata") or {})
             metadata.setdefault("section", "community")
@@ -200,14 +214,14 @@ class CommunityPluginsScreen(Screen):
             metadata.setdefault("plugin_description", descriptor.get("description"))
             result["metadata"] = metadata
             summary = result.get("summary", {})
-            emit(log.append, f"[green]Plugin completed.[/]")
+            emit(log.append, "[green]Plugin completed.[/]")
             for k, v in summary.items():
-                emit(log.append, f"  {k}: {v}")
+                emit(log.append, f"  {k}: {redact_text(str(v))}")
             risk = result.get("risk_indicators", [])
             for ri in risk:
                 sev = ri.get("severity", "info").upper()
                 sev_color = "red" if sev == "HIGH" else ("yellow" if sev == "MEDIUM" else "cyan")
-                emit(log.append, f"  [{sev_color}][{sev}][/] {ri.get('title', '')}")
+                emit(log.append, f"  [{sev_color}][{sev}][/] {redact_text(str(ri.get('title', '')))}")
             Path(final_output_dir).mkdir(parents=True, exist_ok=True)
             report_path = artifact_path(Path(final_output_dir), f"community_{plugin_name}", ".json")
             report_path.write_text(json.dumps(result, indent=2, default=str), encoding="utf-8")

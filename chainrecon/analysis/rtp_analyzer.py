@@ -1,16 +1,10 @@
-"""RTP / SRTP / protocol identification module for ChainRecon.
-
-Classifies UDP payloads by first-byte patterns to identify STUN, DTLS,
-RTP/SRTP, and custom IoT protocols.  Extracts RTP payload types, SSRC
-values, codec identification (H.264, Opus, PCMU, etc.), and detects
-whether media streams are encrypted (SRTP) or plaintext (RTP).
-"""
+"""Packet header hints for RTP-like media without inferring encryption."""
 
 from __future__ import annotations
 
 import collections
 import struct
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional
 
 from chainrecon.utils.logging_config import get_logger
 
@@ -21,31 +15,13 @@ _PT_CODECS = {
     0: "PCMU", 3: "GSM", 4: "G.723", 8: "PCMA", 9: "G.722",
     10: "L16-stereo", 11: "L16-mono", 14: "MPA", 26: "JPEG",
     31: "H.261", 32: "MPV", 33: "MP2T", 34: "H.263",
-    # Dynamic (96-127): negotiated via SDP -- could be H.264, H.265, Opus, etc.
-    # Common assignments for IoT cameras:
-    #   96 = H.264 (most common for legacy cameras)
-    #   97 = H.265/HEVC (modern cameras -- same header byte range as H.264 range)
-    #   98 = H.265 alt / VP8 / AAC
-    #   100 = H.264 + B-frames
-    #   111 = Opus
-    # Without SDP negotiation we can only say "Dynamic" and flag ambiguity.
-    96: "Dynamic-PT96 (H.264/H.265?)", 97: "Dynamic-PT97 (H.265/Opus?)",
-    98: "Dynamic-PT98", 99: "Dynamic-PT99", 100: "Dynamic-PT100 (H.264?)",
-    101: "Dynamic-PT101", 102: "Dynamic-PT102", 103: "Dynamic-PT103",
-    104: "Dynamic-PT104", 105: "Dynamic-PT105", 106: "Dynamic-PT106",
-    107: "Dynamic-PT107", 108: "Dynamic-PT108", 109: "Dynamic-PT109",
-    110: "Dynamic-PT110", 111: "Dynamic-PT111 (Opus?)", 112: "Dynamic-PT112",
 }
 
 # STUN magic cookie (RFC 5389)
 _STUN_MAGIC = bytes.fromhex("2112a442")
 
-# H.264 NAL unit start codes
-_H264_START = (b"\x00\x00\x00\x01", b"\x00\x00\x01")
-
-
 class RTPAnalyzer:
-    """Detect and classify RTP/SRTP streams and identify protocols."""
+    """Extract RTP-like header evidence; SRTP needs negotiation evidence."""
 
     def analyze(self, packets: Iterable[Any]) -> Dict[str, Any]:
         packet_list = list(packets)
@@ -55,42 +31,6 @@ class RTPAnalyzer:
         rtp_streams = self._extract_rtp_streams(packet_list)
         protocol_dist = self._protocol_distribution(classified)
         h264_indicators = self._detect_h264(packet_list)
-
-        indicators: List[Dict[str, str]] = []
-        plaintext_rtp = [s for s in rtp_streams if not s.get("likely_srtp")]
-        if plaintext_rtp:
-            indicators.append({
-                "severity": "high",
-                "title": "Unencrypted RTP streams detected",
-                "details": (
-                    f"{len(plaintext_rtp)} RTP stream(s) appear unencrypted. "
-                    "Video/audio may be interceptable."
-                ),
-            })
-        srtp_streams = [s for s in rtp_streams if s.get("likely_srtp")]
-        if srtp_streams:
-            indicators.append({
-                "severity": "info",
-                "title": "SRTP encryption detected",
-                "details": (
-                    f"{len(srtp_streams)} stream(s) use SRTP. "
-                    "Passive decryption requires key material from DTLS-SRTP."
-                ),
-            })
-        if h264_indicators:
-            h265_count = sum(1 for p in h264_indicators if p.get("codec_hint") == "H.265")
-            h264_count = len(h264_indicators) - h265_count
-            if h264_count and h265_count:
-                detail = f"{h264_count} H.264 NAL units and {h265_count} possible H.265 NAL units detected."
-            elif h265_count:
-                detail = f"{h265_count} possible H.265/HEVC NAL units detected."
-            else:
-                detail = f"{h264_count} packet(s) contain H.264 NAL units."
-            indicators.append({
-                "severity": "info",
-                "title": "Video NAL units detected (H.264 or H.265)",
-                "details": detail,
-            })
 
         return {
             "metadata": {
@@ -105,12 +45,11 @@ class RTPAnalyzer:
             },
             "summary": {
                 "rtp_stream_count": len(rtp_streams),
-                "srtp_stream_count": len(srtp_streams),
-                "plaintext_rtp_count": len(plaintext_rtp),
+                "unknown_encryption_stream_count": len(rtp_streams),
                 "h264_packet_count": len(h264_indicators),
                 **protocol_dist,
             },
-            "risk_indicators": indicators,
+            "risk_indicators": [],
         }
 
     # -- protocol classification --------------------------------------
@@ -147,9 +86,11 @@ class RTPAnalyzer:
         # DTLS: content type 20-25 (ChangeCipherSpec, Alert, Handshake, AppData)
         if 20 <= first <= 25 and len(data) >= 13:
             return "DTLS"
-        # RTP/SRTP: version 2 -> first byte has upper 2 bits = 10 (0x80-0xBF)
-        if 0x80 <= first <= 0xBF:
-            return "RTP/SRTP"
+        if 0x80 <= first <= 0xBF and len(data) >= 12:
+            if 200 <= data[1] <= 211:
+                return "RTCP candidate"
+            if RTPAnalyzer._parse_rtp_header(data) is not None:
+                return "RTP/SRTP candidate"
         # TURN ChannelData: 0x40-0x4F
         if 0x40 <= first <= 0x4F:
             return "TURN-Channel"
@@ -165,7 +106,7 @@ class RTPAnalyzer:
 
     def _extract_rtp_streams(self, packets) -> List[Dict[str, Any]]:
         """Group RTP packets by SSRC and extract stream metadata."""
-        streams: Dict[int, Dict[str, Any]] = {}
+        streams: Dict[tuple, Dict[str, Any]] = {}
 
         for pkt in packets:
             raw = self._get_udp_payload(pkt)
@@ -175,12 +116,18 @@ class RTPAnalyzer:
             if rtp is None:
                 continue
 
-            ssrc = rtp["ssrc"]
-            if ssrc not in streams:
-                ip = getattr(pkt, "ip", None)
-                udp = getattr(pkt, "udp", None)
-                streams[ssrc] = {
-                    "ssrc": ssrc,
+            ip = getattr(pkt, "ip", None) or getattr(pkt, "ipv6", None)
+            udp = getattr(pkt, "udp", None)
+            key = (
+                str(getattr(ip, "src", "")) if ip else None,
+                str(getattr(ip, "dst", "")) if ip else None,
+                str(getattr(udp, "srcport", "")) if udp else None,
+                str(getattr(udp, "dstport", "")) if udp else None,
+                rtp["ssrc"],
+            )
+            if key not in streams:
+                streams[key] = {
+                    "ssrc": rtp["ssrc"],
                     "src_ip": str(getattr(ip, "src", "")) if ip else None,
                     "dst_ip": str(getattr(ip, "dst", "")) if ip else None,
                     "src_port": int(str(getattr(udp, "srcport", 0))) if udp else None,
@@ -190,21 +137,18 @@ class RTPAnalyzer:
                     "total_bytes": 0,
                     "seq_numbers": [],
                 }
-            s = streams[ssrc]
+            s = streams[key]
             s["payload_types"].add(rtp["pt"])
             s["packet_count"] += 1
             s["total_bytes"] += len(raw)
             s["seq_numbers"].append(rtp["seq"])
 
         results: List[Dict[str, Any]] = []
-        for ssrc, s in streams.items():
-            codecs = [_PT_CODECS.get(pt, f"PT-{pt}") for pt in sorted(s["payload_types"])]
-            seq = sorted(s["seq_numbers"])
-            lost = self._estimate_loss(seq)
-            # SRTP heuristic: payload entropy is high AND DTLS was seen on same flow
-            likely_srtp = s["packet_count"] > 10  # conservative -- refine below
+        for s in streams.values():
+            codecs = [_PT_CODECS.get(pt, f"Dynamic PT {pt} (requires SDP)" if pt >= 96 else f"PT-{pt}") for pt in sorted(s["payload_types"])]
+            gaps = self._observed_sequence_gaps(s["seq_numbers"])
             results.append({
-                "ssrc": hex(ssrc),
+                "ssrc": hex(s["ssrc"]),
                 "src_ip": s["src_ip"],
                 "dst_ip": s["dst_ip"],
                 "src_port": s["src_port"],
@@ -212,8 +156,8 @@ class RTPAnalyzer:
                 "codecs": codecs,
                 "packet_count": s["packet_count"],
                 "total_bytes": s["total_bytes"],
-                "estimated_loss_pct": round(lost, 2),
-                "likely_srtp": likely_srtp,
+                "observed_sequence_gaps": gaps,
+                "encryption_status": "unknown",
             })
         results.sort(key=lambda x: x["packet_count"], reverse=True)
         return results
@@ -227,21 +171,38 @@ class RTPAnalyzer:
         version = (first >> 6) & 0x03
         if version != 2:
             return None
+        if 200 <= data[1] <= 211:
+            return None
+        cc = first & 0x0F
+        offset = 12 + cc * 4
+        if len(data) < offset:
+            return None
+        if first & 0x10:
+            if len(data) < offset + 4:
+                return None
+            extension_words = struct.unpack("!H", data[offset + 2:offset + 4])[0]
+            offset += 4 + extension_words * 4
+            if len(data) < offset:
+                return None
+        if first & 0x20:
+            padding_length = data[-1]
+            if padding_length == 0 or padding_length > len(data) - offset:
+                return None
         pt = data[1] & 0x7F
         seq = struct.unpack("!H", data[2:4])[0]
         timestamp = struct.unpack("!I", data[4:8])[0]
         ssrc = struct.unpack("!I", data[8:12])[0]
-        return {"version": version, "pt": pt, "seq": seq, "timestamp": timestamp, "ssrc": ssrc}
+        return {"version": version, "pt": pt, "seq": seq, "timestamp": timestamp, "ssrc": ssrc, "payload_offset": offset}
 
     @staticmethod
-    def _estimate_loss(seq_numbers: List[int]) -> float:
-        """Estimate packet loss from sequence number gaps."""
-        if len(seq_numbers) < 2:
-            return 0.0
-        expected = seq_numbers[-1] - seq_numbers[0] + 1
-        if expected <= 0:
-            return 0.0
-        return max(0.0, (1 - len(seq_numbers) / expected) * 100)
+    def _observed_sequence_gaps(seq_numbers: List[int]) -> int:
+        """Count forward sequence gaps, including 16-bit wrap, in capture order."""
+        gaps = 0
+        for previous, current in zip(seq_numbers, seq_numbers[1:]):
+            distance = (current - previous) & 0xFFFF
+            if 1 < distance < 0x8000:
+                gaps += distance - 1
+        return gaps
 
     # -- H.264 / H.265 detection --------------------------------------
 
@@ -262,9 +223,7 @@ class RTPAnalyzer:
             rtp = self._parse_rtp_header(raw)
             if rtp is None:
                 continue
-            cc = raw[0] & 0x0F
-            offset = 12 + cc * 4
-            payload = raw[offset:]
+            payload = raw[rtp["payload_offset"]:]
             if len(payload) < 2:
                 continue
             ip = getattr(pkt, "ip", None)
@@ -275,6 +234,7 @@ class RTPAnalyzer:
                     "ssrc": hex(rtp["ssrc"]),
                     "nal_type": h264_nal,
                     "codec_hint": "H.264",
+                    "confidence": "low",
                     "src_ip": str(getattr(ip, "src", "")) if ip else None,
                     "dst_ip": str(getattr(ip, "dst", "")) if ip else None,
                 })
@@ -287,6 +247,7 @@ class RTPAnalyzer:
                         "ssrc": hex(rtp["ssrc"]),
                         "nal_type": h265_nal,
                         "codec_hint": "H.265",
+                        "confidence": "low",
                         "src_ip": str(getattr(ip, "src", "")) if ip else None,
                         "dst_ip": str(getattr(ip, "dst", "")) if ip else None,
                     })
@@ -296,6 +257,8 @@ class RTPAnalyzer:
 
     @staticmethod
     def _get_udp_payload(pkt) -> Optional[bytes]:
+        if getattr(pkt, "udp", None) is None and getattr(pkt, "UDP", None) is None:
+            return None
         for layer_name in ("data", "DATA", "udp", "UDP"):
             layer = getattr(pkt, layer_name, None)
             if layer is None:

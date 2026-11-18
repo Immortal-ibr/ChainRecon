@@ -1,5 +1,12 @@
 # ChainRecon Default Configuration
-# Override any value by creating config/local.yaml or passing --config <path>
+# Default case is optional. Set case.directory in local.yaml or a project
+# configuration selected with CHAINRECON_CONFIG_FILE.
+case:
+  directory: null
+
+firmware:
+  mode: container
+# Override in the per-user ChainRecon configuration directory.
 
 # Tool paths
 # Leave null to auto-detect from PATH or common install directories.
@@ -72,7 +79,7 @@ capture:
 # Scan defaults
 scan:
   # Network interface for nmap -e <interface> (null = let nmap choose)
-  interface: Wi-Fi
+  interface: null
 
 # Frida settings
 frida:
@@ -87,7 +94,7 @@ frida:
 
 # Output settings
 output:
-  directory: "./nooie_analysis"
+  directory: "output"
   default_format: "json"
 
 # Network setup
@@ -95,6 +102,6 @@ output:
 network:
   eth_interface: null
   internet_interface: null
-  static_ip: "192.168.123.100/24"
+  static_ip: "10.50.0.1/24"
   target_ip: null
   router_ip: null

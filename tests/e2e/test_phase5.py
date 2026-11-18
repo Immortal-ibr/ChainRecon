@@ -4,7 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import yaml
 
@@ -175,9 +175,8 @@ class ScreenBindingsTests(unittest.TestCase):
         "chainrecon.tui.screens.settings",
         "chainrecon.tui.screens.network_setup",
         "chainrecon.tui.screens.custom_script",
-        # help_screen and welcome are intentionally excluded:
+        # help_screen is intentionally excluded:
         # HelpScreen is a ModalScreen with no persistent ? binding
-        # WelcomeScreen has no help binding by design
     ]
 
     def test_all_screens_have_help_binding(self):
@@ -223,9 +222,8 @@ class NetworkSetupScreenTests(unittest.TestCase):
         self.assertTrue(ps1.exists(), "network_setup.ps1 not found")
 
     def test_sh_script_exists(self):
-        from pathlib import Path
-        sh = Path("legacy") / "manual_shell_scripts" / "network_setup.sh"
-        self.assertTrue(sh.exists(), "legacy network_setup.sh not found")
+        from chainrecon.tui.screens.network_setup import _SCRIPTS_DIR
+        self.assertTrue((_SCRIPTS_DIR / "network_setup.sh").exists())
 
 
 # ===========================================================================

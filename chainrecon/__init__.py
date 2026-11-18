@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import uuid
 from pathlib import Path
 from typing import Iterable, List
 
-from chainrecon.analysis import FirmwareAnalyzer, ReportGenerator, ScannerAnalyzer, SSLAnalyzer, TrafficAnalyzer
+from chainrecon.analysis import ReportGenerator, ScannerAnalyzer, SSLAnalyzer, TrafficAnalyzer
 from chainrecon.utils.artifacts import safe_token
 from chainrecon.utils.logging_config import get_logger, setup_logging
 
@@ -24,6 +25,14 @@ def build_parser() -> argparse.ArgumentParser:
     traffic_parser.add_argument("--format", choices=["json", "html", "csv", "xlsx"])
     traffic_parser.add_argument("--output")
     traffic_parser.set_defaults(handler=handle_analyze_traffic)
+
+    ssl_parser = subparsers.add_parser("analyze-ssl", help="Explicitly probe TLS certificates and ciphers")
+    ssl_parser.add_argument("target")
+    ssl_parser.add_argument("--ports", type=int, nargs="+", default=[443])
+    ssl_parser.add_argument("--pcap", help="Optional capture for JA3 observations")
+    ssl_parser.add_argument("--format", choices=["json", "html", "csv", "xlsx"])
+    ssl_parser.add_argument("--output")
+    ssl_parser.set_defaults(handler=handle_analyze_ssl)
 
     report_parser = subparsers.add_parser("report", help="Aggregate saved JSON analysis files")
     report_parser.add_argument("inputs", nargs="+")
@@ -81,8 +90,9 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_run.set_defaults(handler=handle_workflow)
 
     # -- TUI ----------------------------------------------------------
-    subparsers.add_parser("tui", help="Launch the interactive TUI")
-    subparsers.add_parser("interactive", help="Launch the legacy interactive menu")
+    tui_parser = subparsers.add_parser("tui", help="Launch the interactive TUI")
+    tui_parser.add_argument("case_path", nargs="?", help="Open a portable investigation case")
+    subparsers.add_parser("interactive", help="Compatibility alias for the case TUI")
     # -- Network config -----------------------------------------------
     net_parser = subparsers.add_parser(
         "network-config",
@@ -90,8 +100,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     net_parser.add_argument("--eth", metavar="ADAPTER", help="Ethernet adapter name (IoT side)")
     net_parser.add_argument("--internet", metavar="ADAPTER", help="Internet adapter name (Wi-Fi)")
-    net_parser.add_argument("--static-ip", default="192.168.123.100/24",
-                            help="Static IP/prefix for Ethernet adapter (default 192.168.123.100/24)")
+    net_parser.add_argument("--static-ip", default="10.50.0.1/24",
+                            help="Static IP/prefix for Ethernet adapter (default 10.50.0.1/24)")
     net_parser.add_argument("--target-ip", help="IoT device IP (used for capture BPF filters)")
     net_parser.add_argument("--router-ip", help="Dedicated router IP")
     net_parser.add_argument("--apply", action="store_true",
@@ -143,7 +153,7 @@ def handle_network_config(args) -> int:
         return 0
 
     # Apply or remove
-    scripts_dir = _Path(__file__).resolve().parent.parent / "scripts"
+    scripts_dir = _Path(__file__).resolve().parent / "resources" / "scripts"
     is_win = platform.system() == "Windows"
 
     if "/" in args.static_ip:
@@ -179,7 +189,7 @@ def handle_network_config(args) -> int:
 
         if _is_admin:
             cmd = ["powershell"] + ps_args
-            print(f"[*] Running (elevated)")
+            print("[*] Running (elevated)")
             result = _sp.run(cmd, timeout=120)
             return result.returncode
         else:
@@ -202,7 +212,7 @@ def handle_network_config(args) -> int:
             log_escaped = str(log_path).replace("'", "''")
             script_call = f"& '{script_escaped}'"
             for a in script_args:
-                script_call += f" {a}" if not " " in str(a) else f" '{a}'"
+                script_call += f" {a}" if " " not in str(a) else f" '{a}'"
             wrapper_content = f"{script_call} *> '{log_escaped}'\n"
             wrapper_path.write_text(wrapper_content, encoding="utf-8")
 
@@ -316,7 +326,7 @@ def handle_scan(args) -> int:
 
     analyzer = ScannerAnalyzer()
     parsed_results = []
-    for output_file in _nmap_text_output_files(scan_result["output_files"]):
+    for output_file in _nmap_xml_output_files(scan_result["output_files"]):
         if Path(output_file).exists() and Path(output_file).stat().st_size > 0:
             parsed_results.append(analyzer.parse_nmap_output(output_file))
 
@@ -582,8 +592,20 @@ def handle_apk(args) -> int:
 
 
 def handle_firmware(args) -> int:
-    result = FirmwareAnalyzer().analyze(args.firmware_path, output_dir=getattr(args, "extract_dir", None))
-    return emit_result(result, "firmware", args.format, args.output)
+    from chainrecon.case_model import Case
+    from chainrecon.case_reporting import export_case_report
+    from chainrecon.firmware_engine import FirmwareEngine
+    from chainrecon.utils.config import get_output_dir
+
+    case_root = (Path(args.extract_dir).expanduser().resolve() if getattr(args, "extract_dir", None)
+                 else get_output_dir() / f"firmware_case_{uuid.uuid4().hex[:8]}")
+    case = Case.open(case_root) if (case_root / "case.json").exists() else Case.create(case_root, "Firmware investigation")
+    evidence = case.add_evidence(args.firmware_path, kind="firmware")
+    run = FirmwareEngine().analyze(case, evidence.id)
+    report_path = str(export_case_report(case, args.format, args.output)) if args.output else None
+    print(json.dumps({"case": str(case.root), "run_id": run.id, "status": run.status,
+                      "evidence_id": evidence.id, "report": report_path}, indent=2))
+    return 0 if run.status == "complete" else 1
 
 
 def handle_workflow(args) -> int:
@@ -712,8 +734,9 @@ def infer_section(payload, filename: str) -> str:
     return "analysis"
 
 
-def _nmap_text_output_files(paths: list[str]) -> list[str]:
-    return [path for path in paths if Path(path).suffix.lower() == ".txt"]
+def _nmap_xml_output_files(paths: list[str]) -> list[str]:
+    """Only Nmap XML is authoritative for parsed live scan results."""
+    return [path for path in paths if Path(path).suffix.lower() == ".xml"]
 
 
 def _aggregate_report_section(section: str, payloads: list[dict]):
@@ -764,18 +787,20 @@ def emit_result(result, section, format_name=None, output_path=None) -> int:
 
 
 def main(argv: List[str] | None = None) -> int:
+    import sys
+    from chainrecon.v2_cli import dispatch
+
+    argv = list(sys.argv[1:] if argv is None else argv)
+    dispatched = dispatch(argv)
+    if dispatched is not None:
+        return dispatched
     parser = build_parser()
     args = parser.parse_args(argv)
     setup_logging(verbose=args.verbose, log_file=getattr(args, "log_file", None))
 
-    if args.command is None or args.command == "tui":
+    if args.command is None or args.command in {"tui", "interactive"}:
         from chainrecon.tui.app import run_tui
-        run_tui()
-        return 0
-
-    if args.command == "interactive":
-        from chainrecon.interactive import run_interactive
-        run_interactive()
+        run_tui(getattr(args, "case_path", None))
         return 0
 
     return args.handler(args)

@@ -4,7 +4,7 @@ set -euo pipefail
 NAT_COMMENT="ChainReconNAT"
 ETH_INTERFACE=""
 INTERNET_INTERFACE=""
-STATIC_IP="192.168.123.100"
+STATIC_IP="10.50.0.1"
 SUBNET_PREFIX="24"
 REMOVE=0
 
@@ -27,7 +27,7 @@ Example:
   sudo bash scripts/network_setup.sh \
     --eth-interface eth0 \
     --internet-interface wlan0 \
-    --static-ip 192.168.123.100 \
+    --static-ip 10.50.0.1 \
     --subnet-prefix 24
 USAGE
 }

@@ -46,6 +46,40 @@ class CertAnalyzerTests(unittest.TestCase):
         self.assertEqual(certificate["subject_components"]["commonName"], "device.local")
         self.assertEqual(certificate["san"], ["device.local"])
         self.assertEqual(certificate["extracted_from"]["protocol"], "tls")
+        self.assertTrue(certificate["self_signed"])
+        self.assertEqual(result["risk_indicators"], [])
+
+    def test_matching_subject_and_issuer_do_not_prove_self_signature(self):
+        public_key_owner = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        other_signer = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "same-name.test")])
+        certificate = (
+            x509.CertificateBuilder().subject_name(name).issuer_name(name)
+            .public_key(public_key_owner.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1))
+            .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=30))
+            .sign(other_signer, hashes.SHA256())
+        )
+        der = certificate.public_bytes(serialization.Encoding.DER)
+        info = CertAnalyzer()._cert_info(certificate, der, {})
+        self.assertTrue(info["self_issued"])
+        self.assertFalse(info["self_signed"])
+
+    def test_expired_certificate_is_review_candidate_not_proven_failure(self):
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "expired.test")])
+        certificate = (
+            x509.CertificateBuilder().subject_name(name).issuer_name(name)
+            .public_key(key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30))
+            .not_valid_after(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1))
+            .sign(key, hashes.SHA256())
+        )
+        result = CertAnalyzer().analyze([SimpleNamespace(tls=SimpleNamespace(handshake_certificate=certificate.public_bytes(serialization.Encoding.DER).hex()))])
+        self.assertEqual(result["summary"]["expired_count"], 1)
+        self.assertEqual(len(result["risk_indicators"]), 1)
+        self.assertEqual(result["risk_indicators"][0]["severity"], "medium")
+        self.assertIn("verify", result["risk_indicators"][0]["details"])
 
 
 class FirmwareAnalyzerTests(unittest.TestCase):
@@ -76,14 +110,14 @@ class FirmwareAnalyzerTests(unittest.TestCase):
             root = extract_dir / "_firmware.bin.extracted"
             root.mkdir(parents=True)
             (root / "endpoints.conf").write_text(
-                "api=https://api.nooie.com\nbroker=broker.nooie.com\npeer=192.168.1.1\n",
+                "api=https://api.example.test\nbroker=broker.example.test\npeer=192.168.1.1\n",
                 encoding="utf-8",
             )
             analyzer._run_binwalk = lambda *_args, **_kwargs: None
             result = analyzer.analyze(
                 str(image),
                 output_dir=str(extract_dir),
-                rules={"domains": ["broker.nooie.com"], "urls": ["https://api.nooie.com"]},
+                rules={"domains": ["broker.example.test"], "urls": ["https://api.example.test"]},
             )
         indicators = result["findings"]["network_indicators"]
         self.assertEqual(result["summary"]["url_count"], 1)

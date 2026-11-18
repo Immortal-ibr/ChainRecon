@@ -5,48 +5,44 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Label, Select
+from textual.widgets import Button, Header, Label, Select, Static
 
+from chainrecon.case_model import Case
+from chainrecon.case_reporting import export_case_report
+from chainrecon.tui.screens.case_picker import CasePickerScreen
 from chainrecon.tui.screens.help_screen import HelpScreen
+from chainrecon.tui.widgets.help_footer import HelpFooter
 from chainrecon.tui.widgets.log_viewer import LogActionBar, LogViewer
 from chainrecon.tui.widgets.pasteable_input import PasteableInput as Input
+from chainrecon.tui.widgets.path_input import PathInput
 from chainrecon.utils.artifacts import artifact_path
+from chainrecon.utils.config import get_case_directory, get_output_dir
 
-HELP_TEXT = """[bold underline]Report Generation[/]
+HELP_TEXT = """[bold]Reports[/]
 
-Combines results from scans, captures, and analysis into a single report.
-By default it uses the current TUI session only. You can also include every
-JSON file from the configured output directory.
+When an investigation is selected, Reports exports its imported-file inventory,
+analysis runs, coverage, findings, and reviewer decisions by default. Choose
+another investigation with the button at the top. You can also export only
+results from this TUI session or saved standalone JSON results.
 
-[bold]Formats[/]
-  - HTML: Human-readable report with risk summary and raw sections.
-  - JSON: Full machine-readable output. Good for scripting.
-  - CSV: Flat tabular export for Excel or Google Sheets.
-  - XLSX: Spreadsheet workbook with a summary sheet and one worksheet per section.
+[bold]Formats[/] HTML, JSON, CSV, and XLSX. Leave Output path empty to save
+inside the investigation's reports folder or the configured output directory.
+The investigation report includes reviewer decisions; session and standalone
+reports use only their selected result source.
 
-[bold]Source files[/]
-Current session mode avoids stale result files. All output files mode loads
-every *.json file from the configured output directory and records each
-source filename in report metadata.
-
-[bold]Reading the report[/]
-  risk_indicators: severity, title, and details. Start here.
-  findings: raw per-analyzer output such as ports, DNS queries, and certs.
-  summary: high-level counts per section.
-
-[dim]Report plugin code: plugins/
-Finding model: models/finding.py
-To edit this screen: tui/screens/reports.py[/]
+Review candidate findings in Files & findings before exporting a disclosure
+report. An unreviewed indicator is not a confirmed vulnerability.
 """
 
 
 def _load_output_files(log_func=None, output_dir: Path | None = None) -> dict:
     """Scan configured output directory for saved JSON analysis files."""
-    from chainrecon.utils.config import get_output_dir
     from chainrecon import load_report_inputs
+    from chainrecon.utils.config import get_output_dir
 
     outdir = output_dir or get_output_dir()
     if not outdir.exists():
@@ -63,16 +59,32 @@ def _load_output_files(log_func=None, output_dir: Path | None = None) -> dict:
 class ReportsScreen(Screen):
     BINDINGS = [("escape", "app.pop_screen", "Back"), ("question_mark", "toggle_help", "Help")]
 
-    def compose(self) -> ComposeResult:
-        from chainrecon.utils.config import get_output_dir
+    def _current_investigation(self) -> Case | None:
+        raw = getattr(self.app, "_case_path", None) or get_case_directory()
+        if not raw:
+            return None
+        try:
+            return Case.open(raw)
+        except (OSError, ValueError, KeyError):
+            return None
 
-        default_output = str(get_output_dir().resolve())
+    def compose(self) -> ComposeResult:
+        case = self._current_investigation()
         yield Header()
         with VerticalScroll(id="reports-form"):
-            yield Label("[bold]Report Generation[/]")
-            yield Label("[dim]Choose current session results or all saved JSON files from the configured output directory.[/]")
-            yield Label("Output directory or file path:")
-            yield Input(placeholder=default_output, value=default_output, id="output-path")
+            yield Label("[bold]Reports[/]")
+            yield Static("", id="report-source-detail")
+            yield Button("Choose investigation", id="report-choose-case")
+            yield Label("Report source")
+            yield Select(
+                [("Current investigation", "investigation"),
+                 ("This TUI session", "session"),
+                 ("Saved standalone results", "all_output")],
+                value="investigation" if case else "session",
+                id="source-mode",
+            )
+            yield Label("Output path (optional)")
+            yield PathInput(placeholder="Leave blank for the default reports folder", id="output-path")
             yield Label("Format:")
             yield Select(
                 [
@@ -84,28 +96,57 @@ class ReportsScreen(Screen):
                 value="xlsx",
                 id="format",
             )
-            yield Label("Source:")
-            yield Select(
-                [
-                    ("Current session only", "session"),
-                    ("All JSON files in configured output directory", "all_output"),
-                ],
-                value="session",
-                id="source-mode",
-            )
             with Horizontal():
-                yield Button("Generate Report", variant="primary", id="btn-gen")
+                yield Button("Export report", variant="primary", id="btn-gen")
                 yield Button("Back", id="btn-back")
             yield LogActionBar()
             yield LogViewer(id="reports-log")
-        yield Footer()
+        yield HelpFooter()
+
+    def on_mount(self) -> None:
+        self._refresh_source_detail()
+
+    def on_screen_resume(self) -> None:
+        self._refresh_source_detail()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "source-mode" and self.query("#report-source-detail"):
+            self._refresh_source_detail()
+
+    def _refresh_source_detail(self) -> None:
+        case = self._current_investigation()
+        mode = self.query_one("#source-mode", Select).value
+        detail = self.query_one("#report-source-detail", Static)
+        if mode == "investigation":
+            if case:
+                detail.update(escape(f"Investigation: {case.manifest['title']}  ·  {case.root}"))
+                detail.tooltip = str(case.root)
+            else:
+                detail.update("No investigation selected. Choose one above before exporting.")
+        elif mode == "all_output":
+            detail.update(escape(f"Saved standalone JSON files in {get_output_dir()}"))
+        else:
+            detail.update("Only results produced during this TUI session.")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "report-choose-case":
+            self.action_choose_investigation()
+            return
         if event.button.id == "btn-back":
             self.app.pop_screen()
             return
         if event.button.id == "btn-gen":
             self._generate()
+
+    def action_choose_investigation(self) -> None:
+        current = self._current_investigation()
+        self.app.push_screen(CasePickerScreen(current=current.root if current else None), self._investigation_chosen)
+
+    def _investigation_chosen(self, path: str | None) -> None:
+        if path:
+            setattr(self.app, "_case_path", path)
+            self.query_one("#source-mode", Select).value = "investigation"
+            self._refresh_source_detail()
 
     def _generate(self) -> None:
         out_path = self.query_one("#output-path", Input).value.strip().strip('"\'')
@@ -113,11 +154,15 @@ class ReportsScreen(Screen):
         source_mode = self.query_one("#source-mode", Select).value
         log = self.query_one("#reports-log", LogViewer)
 
-        if not out_path:
-            log.append("[red]Please provide an output path.[/]")
+        if not isinstance(fmt, str) or not isinstance(source_mode, str):
+            log.append("[red]Choose a report format and source.[/]")
+            return
+        case = self._current_investigation() if source_mode == "investigation" else None
+        if source_mode == "investigation" and case is None:
+            log.append("[yellow]Choose an investigation before exporting its report.[/]")
             return
 
-        log.append(f"[bold]Generating {fmt.upper()} report from {source_mode}...[/]")
+        log.append(f"[bold]Exporting {escape(fmt.upper())} report from {escape(source_mode)}...[/]")
 
         def _worker() -> None:
             try:
@@ -125,8 +170,15 @@ class ReportsScreen(Screen):
                 from chainrecon.plugins import get_plugin
 
                 plugin = get_plugin(fmt)
+                if source_mode == "investigation" and case is not None:
+                    destination = (_report_output_path(out_path, plugin.file_extension(), stem="investigation")
+                                   if out_path else str(case.root / "reports" / f"investigation{plugin.file_extension()}"))
+                    saved = export_case_report(Case.open(case.root), fmt, destination)
+                    self._post(log.set_last_output_path, saved)
+                    self._post(log.append, f"[green]Investigation report saved: {escape(str(saved))}[/]")
+                    return
                 stem = "report_all" if source_mode == "all_output" else "report_current"
-                full_path = _report_output_path(out_path, plugin.file_extension(), stem=stem)
+                full_path = _report_output_path(out_path or str(get_output_dir()), plugin.file_extension(), stem=stem)
                 if source_mode == "session":
                     gen = getattr(self.app, "_report_gen", None) or ReportGenerator()
                 else:
@@ -135,29 +187,36 @@ class ReportsScreen(Screen):
                 loaded_count = 0
                 if source_mode == "all_output":
                     for key, data in _load_output_files(
-                        log_func=lambda msg: self.app.call_from_thread(log.append, msg)
+                        log_func=lambda msg: self._post(log.append, msg)
                     ).items():
                         gen.add_results(key, data)
                         loaded_count += 1
 
                 if not _has_report_data(gen.get_data()):
-                    self.app.call_from_thread(
+                    self._post(
                         log.append,
                         "[yellow]No results found for the selected source. Run a scan or choose all output files.[/]",
                     )
 
                 Path(full_path).parent.mkdir(parents=True, exist_ok=True)
                 gen.generate(fmt, full_path)
-                self.app.call_from_thread(log.set_last_output_path, full_path)
-                self.app.call_from_thread(log.append, f"[green]Report saved: {Path(full_path).resolve()}[/]")
+                self._post(log.set_last_output_path, full_path)
+                self._post(log.append, f"[green]Report saved: {escape(str(Path(full_path).resolve()))}[/]")
                 if source_mode == "all_output":
-                    self.app.call_from_thread(log.append, f"[dim]{loaded_count} result file(s) included.[/]")
+                    self._post(log.append, f"[dim]{loaded_count} result file(s) included.[/]")
                 else:
-                    self.app.call_from_thread(log.append, "[dim]Current session results included.[/]")
+                    self._post(log.append, "[dim]Current session results included.[/]")
             except Exception as exc:
-                self.app.call_from_thread(log.append, f"[red]Error: {exc}[/]")
+                self._post(log.append, f"[red]Error: {escape(str(exc))}[/]")
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _post(self, callback, *args) -> None:
+        try:
+            self.app.call_from_thread(callback, *args)
+        except RuntimeError:
+            # A report can finish after the TUI has been closed.
+            pass
 
     def action_toggle_help(self) -> None:
         self.app.push_screen(HelpScreen(HELP_TEXT, title="Report Generation"))

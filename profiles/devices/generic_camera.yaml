@@ -1,7 +1,7 @@
 name: Generic Camera
 vendor: Generic
 model: Camera
-target: 192.168.1.50
+target: null
 ports:
   - 80
   - 554
@@ -12,19 +12,15 @@ expected_protocols:
 scan_defaults:
   profile: quick
 frida_defaults:
-  target: com.example.camera
+  target: null
 firmware_rules:
   keywords:
     - admin
     - password
-  domains:
-    - camera.local
-  ips:
-    - 192.168.1.1
 scan:
   profile: quick
 firmware:
-  image: firmware.bin
+  image: null
 report:
   formats:
     - json

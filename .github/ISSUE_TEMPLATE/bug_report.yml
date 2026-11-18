@@ -41,7 +41,7 @@ body:
     attributes:
       label: Command or TUI page
       description: Paste the command you ran or name the TUI page/module.
-      placeholder: "chainrecon workflow run workflows/nooie_mqtt_tls.yaml --dry-run"
+      placeholder: "chainrecon workflow plan path/to/workflow.yaml"
     validations:
       required: true
   - type: textarea

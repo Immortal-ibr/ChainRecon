@@ -10,7 +10,7 @@
 .PARAMETER InternetInterface
     Alias of the adapter with active internet (usually Wi-Fi).
 .PARAMETER StaticIP
-    Static IP address to assign to the Ethernet adapter (e.g. 192.168.123.100).
+    Static IP address to assign to the Ethernet adapter (e.g. 10.50.0.1).
 .PARAMETER SubnetPrefix
     Subnet prefix length (default 24 for /24 = 255.255.255.0).
 .PARAMETER NatName
@@ -27,7 +27,7 @@ param(
     [string]$InternetInterface,
 
     [Parameter(Mandatory = $false)]
-    [string]$StaticIP = "192.168.123.100",
+    [string]$StaticIP = "10.50.0.1",
 
     [Parameter(Mandatory = $false)]
     [int]$SubnetPrefix = 24,

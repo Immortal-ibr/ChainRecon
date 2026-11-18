@@ -14,6 +14,7 @@ logger = get_logger("cert_analyzer")
 
 try:
     from cryptography import x509
+    from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
     from cryptography.hazmat.primitives.asymmetric import rsa, ec
     _CRYPTO_AVAILABLE = True
 except ImportError:
@@ -33,6 +34,8 @@ class CertAnalyzer:
             if hasattr(capture, "close"):
                 capture.close()
         result.setdefault("metadata", {})["source"] = pcap_path
+        result["metadata"]["capture_truncated"] = packets.truncated
+        result.setdefault("summary", {})["result_truncated"] = packets.truncated
         return result
 
     def analyze(self, packets: Iterable[Any]) -> Dict[str, Any]:
@@ -47,26 +50,13 @@ class CertAnalyzer:
         for cert in weak:
             for w in cert["weaknesses"]:
                 indicators.append({
-                    "severity": "high" if "key" in w.lower() or "expired" in w.lower() else "medium",
+                    "severity": "medium",
                     "title": w,
-                    "details": f"Subject: {cert.get('subject', 'unknown')}",
+                    "details": f"Certificate observed for {cert.get('subject', 'unknown')}; verify that the client accepted it before treating this as a vulnerability.",
                 })
 
         expired = [c for c in parsed if c.get("expired")]
-        if expired:
-            indicators.append({
-                "severity": "high",
-                "title": f"{len(expired)} expired certificate(s) found",
-                "details": "Expired certificates indicate poor key management.",
-            })
-
         self_signed = [c for c in parsed if c.get("self_signed")]
-        if self_signed:
-            indicators.append({
-                "severity": "medium",
-                "title": f"{len(self_signed)} self-signed certificate(s)",
-                "details": "Self-signed certs bypass CA trust chain.",
-            })
 
         return {
             "metadata": {
@@ -131,16 +121,27 @@ class CertAnalyzer:
         now = datetime.now(timezone.utc)
         subject = cert.subject.rfc4514_string()
         issuer = cert.issuer.rfc4514_string()
-        expired = cert.not_valid_after_utc < now
-        self_signed = subject == issuer
+        not_before = getattr(cert, "not_valid_before_utc", None) or cert.not_valid_before.replace(tzinfo=timezone.utc)
+        not_after = getattr(cert, "not_valid_after_utc", None) or cert.not_valid_after.replace(tzinfo=timezone.utc)
+        expired = not_after < now
+        self_issued = subject == issuer
+        verify_issuer = getattr(cert, "verify_directly_issued_by", None)
+        self_signed: bool | None = False if not self_issued else None
+        if self_issued and callable(verify_issuer):
+            try:
+                verify_issuer(cert)
+                self_signed = True
+            except (ValueError, TypeError, InvalidSignature, UnsupportedAlgorithm):
+                self_signed = False
 
         info: Dict[str, Any] = {
             "subject": subject,
             "issuer": issuer,
             "serial": str(cert.serial_number),
-            "not_before": cert.not_valid_before_utc.isoformat(),
-            "not_after": cert.not_valid_after_utc.isoformat(),
+            "not_before": not_before.isoformat(),
+            "not_after": not_after.isoformat(),
             "expired": expired,
+            "self_issued": self_issued,
             "self_signed": self_signed,
             "sha256": extracted.get("sha256") or hashlib.sha256(der).hexdigest(),
             "signature_algorithm": cert.signature_algorithm_oid.dotted_string,
