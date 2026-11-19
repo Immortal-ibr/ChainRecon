@@ -133,6 +133,10 @@ class FridaScreen(Screen):
             with Horizontal():
                 yield Select([("Auto-select online device", "__auto__")], value="__auto__", id="device-select")
                 yield Button("List devices", id="btn-devices")
+            with Horizontal():
+                yield Button("Boot device", id="btn-boot")
+                yield Button("Setup device", id="btn-setup")
+                yield Button("List processes", id="btn-procs")
             yield Label("Auto-select uses the only online device.", id="device-note")
             yield Label("Target package or process")
             yield Input(placeholder="com.example.camera", id="target")
@@ -151,7 +155,7 @@ class FridaScreen(Screen):
                     pass
             with Collapsible(title="About selected script", collapsed=True):
                 yield Static("", id="script-info")
-            with Collapsible(title="Managed device setup", collapsed=True):
+            with Collapsible(title="Managed setup options", collapsed=True):
                 yield Label("APK directory (optional)")
                 yield Input(
                     placeholder="Folder containing APKs to install",
@@ -170,10 +174,6 @@ class FridaScreen(Screen):
                     value=str(frida_cfg.get("preferred_avd") or ""),
                     id="preferred-avd",
                 )
-                with Horizontal():
-                    yield Button("Boot device", id="btn-boot")
-                    yield Button("Setup device", id="btn-setup")
-                    yield Button("List processes", id="btn-procs")
             yield LogActionBar()
             yield LogViewer(id="frida-log")
         yield HelpFooter()

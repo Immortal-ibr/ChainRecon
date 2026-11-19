@@ -60,6 +60,7 @@ def test_case_screen_import_analyze_review_and_export(tmp_path: Path, monkeypatc
             assert screen.query_one("#evidence-select", Select).value == scan_id
             screen.query_one("#case-open-analysis", Button).press()
             await _until(lambda: isinstance(app.screen, CaseAnalysisScreen))
+            await pilot.pause()
             analysis = app.screen
             await _until(lambda: analysis.query_one("#analysis-evidence", Select).value == scan_id)
             assert analysis.query_one("#analysis-evidence", Select).value == scan_id

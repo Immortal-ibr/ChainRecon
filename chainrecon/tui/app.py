@@ -127,6 +127,9 @@ FridaScreen #frida-form { padding: 0 2; }
 FridaScreen #title, FridaScreen #frida-form Input,
 FridaScreen #frida-form Select { margin-bottom: 0; }
 FridaScreen #frida-form Button { margin: 0 1 0 0; }
+CaptureScreen #capture-form { padding: 0 2; }
+CaptureScreen #capture-form Input, CaptureScreen #capture-form Select { margin-bottom: 0; }
+CaptureScreen #capture-form Button { margin: 0 1 0 0; }
 Label {
     margin-bottom: 0;
 }
@@ -291,7 +294,14 @@ class ChainReconApp(App):
         import os
         import sys
 
-        disable_terminal_mouse_reporting()
+        if sys.platform == "win32":
+            from textual.drivers.windows_driver import WindowsDriver
+
+            if isinstance(self._driver, WindowsDriver):
+                # Keep clicks and drags, but stop the flood of SGR mouse-move
+                # reports that some Windows terminals reissue as typed text.
+                self._driver.write("\x1b[?1003l\x1b[?1002h")
+                self._driver.flush()
         if sys.platform == "win32" and os.environ.get("CHAINRECON_ASCII_UI") == "1":
             self.add_class("ascii-mode")
         self.push_screen("dashboard")
@@ -401,5 +411,7 @@ def run_tui(case_path: str | None = None) -> None:
             pass
         os.system("cls")
     disable_terminal_mouse_reporting()
-    ChainReconApp(case_path=case_path).run()
-    disable_terminal_mouse_reporting()
+    try:
+        ChainReconApp(case_path=case_path).run()
+    finally:
+        disable_terminal_mouse_reporting()
